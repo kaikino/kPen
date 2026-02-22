@@ -267,15 +267,6 @@ public:
                 (shapeMaxY - shapeMinY + 1) + half * 2
             };
         } else {
-            // For CIRCLE, snap the inset coords the same way drawOval will
-            if (type == ToolType::CIRCLE) {
-                int iMinX = shapeMinX + half, iMaxX = shapeMaxX - half;
-                int iMinY = shapeMinY + half, iMaxY = shapeMaxY - half;
-                int cx = (iMinX + iMaxX) / 2, rx = cx - iMinX;
-                int cy = (iMinY + iMaxY) / 2, ry = cy - iMinY;
-                shapeMinX = cx - rx - half; shapeMaxX = cx + rx + half;
-                shapeMinY = cy - ry - half; shapeMaxY = cy + ry + half;
-            }
             bounds = {
                 shapeMinX, shapeMinY,
                 (shapeMaxX - shapeMinX + 1),
@@ -343,7 +334,7 @@ public:
 
         mapper->getWindowCoords(curX, curY, &winCurX, &winCurY);
         int scaledBrush = mapper->getWindowSize(brushSize);
-        SDL_SetRenderDrawColor(winRenderer, 150, 150, 150, 255);
+        SDL_SetRenderDrawColor(winRenderer, color.r, color.g, color.b, 255);
 
         int winW, winH;
         SDL_GetRendererOutputSize(winRenderer, &winW, &winH);
@@ -615,12 +606,12 @@ private:
         {255,255,255,255},{0,0,0,255},      {64,64,64,255},    // white, black, dark grey
         {128,128,128,255},{180,180,180,255},{220,220,220,255},  // grey, light grey, lighter grey
         {101,55,0,255},   {160,100,40,255}, {210,170,110,255}, // brown, light brown, lighter brown
-        {180,0,0,255},    {255,80,80,255},  {255,180,190,255}, // red, light red, pink
+        {139,0,0,255},    {240,40,50,255},  {255,120,100,255}, // dark red, red, light red
         {230,100,0,255},  {255,165,60,255}, {255,230,0,255},   // orange, light orange, yellow
-        {0,100,0,255},    {34,160,34,255},  {140,220,140,255}, // dark green, green, light green
-        {0,0,160,255},    {30,100,220,255}, {140,190,255,255}, // dark blue, blue, light blue
+        {200,0,140,255},  {255,0,180,255},  {255,170,230,255}, // dark pink, magenta, light magenta
         {55,0,130,255},   {128,0,200,255},  {210,150,255,255}, // indigo, purple, light purple
-        {148,0,211,255},  {255,0,180,255},  {255,170,230,255}, // violet, magenta, light magenta
+        {0,0,160,255},    {30,100,220,255}, {140,190,255,255}, // dark blue, blue, light blue
+        {0,100,0,255},    {34,160,34,255},  {140,220,140,255}, // dark green, green, light green
     };
 
 
