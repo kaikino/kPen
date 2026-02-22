@@ -82,11 +82,6 @@ int kPen::getWindowSize(int canSize) {
 // ── Tool management ───────────────────────────────────────────────────────────
 
 void kPen::setTool(ToolType t) {
-    if (currentTool) {
-        SDL_SetRenderTarget(renderer, canvas);
-        currentTool->deactivate(renderer);
-        SDL_SetRenderTarget(renderer, nullptr);
-    }
     originalType = t;
     currentType  = t;
     toolbar.currentType = t;
@@ -158,6 +153,13 @@ void kPen::run() {
                     case SDLK_o: setTool(ToolType::CIRCLE); needsRedraw = true; break;
                     case SDLK_s: setTool(ToolType::SELECT); needsRedraw = true; break;
                     case SDLK_f: setTool(ToolType::FILL); needsRedraw = true; break;
+                    case SDLK_BACKSPACE:
+                    case SDLK_DELETE:
+                        if (currentType == ToolType::SELECT) {
+                            setTool(originalType);
+                            needsRedraw = true;
+                        }
+                        break;
                     case SDLK_UP:
                         toolbar.brushSize = std::min(20, toolbar.brushSize + 1);
                         needsRedraw = true; break;
