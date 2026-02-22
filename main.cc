@@ -200,6 +200,7 @@ public:
 
     virtual void onPreviewRender(SDL_Renderer* winRenderer, int brushSize) = 0;
     virtual void onOverlayRender(SDL_Renderer* overlayRenderer) {}
+    virtual bool hasOverlayContent() { return false; }
     virtual void deactivate(SDL_Renderer* canvasRenderer) {}
 };
 
@@ -555,6 +556,7 @@ public:
         isDrawing = false;
     }
 
+    bool hasOverlayContent() override { return state.active || isDrawing; }
     void onPreviewRender(SDL_Renderer* winRenderer, int brushSize) override {}
 };
 
@@ -668,22 +670,28 @@ public:
 
     void run() {
         bool running = true;
+        bool needsRedraw = true;
+        bool overlayDirty = false;
         SDL_Event e;
         while (running) {
             while (SDL_PollEvent(&e)) {
                 if (e.type == SDL_QUIT) running = false;
                 if (e.type == SDL_KEYDOWN) {
                     switch (e.key.keysym.sym) {
-                        case SDLK_b: setTool(ToolType::BRUSH); break;
-                        case SDLK_l: setTool(ToolType::LINE); break;
-                        case SDLK_r: setTool(ToolType::RECT); break;
-                        case SDLK_o: setTool(ToolType::CIRCLE); break;
-                        case SDLK_s: setTool(ToolType::SELECT); break;
-                        case SDLK_UP: brushSize = std::min(20, brushSize + 1); break;
-                        case SDLK_DOWN: brushSize = std::max(1, brushSize - 1); break;
-                        case SDLK_z: if (e.key.keysym.mod & KMOD_CTRL) { if(undoStack.size() > 1) { undoStack.pop_back(); applyState(undoStack.back()); } } break;
+                        case SDLK_b: setTool(ToolType::BRUSH); needsRedraw = true; break;
+                        case SDLK_l: setTool(ToolType::LINE);  needsRedraw = true; break;
+                        case SDLK_r: setTool(ToolType::RECT);  needsRedraw = true; break;
+                        case SDLK_o: setTool(ToolType::CIRCLE);needsRedraw = true; break;
+                        case SDLK_s: setTool(ToolType::SELECT);needsRedraw = true; break;
+                        case SDLK_UP:   brushSize = std::min(20, brushSize + 1); break;
+                        case SDLK_DOWN: brushSize = std::max(1,  brushSize - 1); break;
+                        case SDLK_z: if (e.key.keysym.mod & KMOD_CTRL) {
+                            if (undoStack.size() > 1) { undoStack.pop_back(); applyState(undoStack.back()); needsRedraw = true; }
+                        } break;
                     }
                 }
+                if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_RESIZED)
+                    needsRedraw = true;
 
                 int cX, cY;
                 if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
@@ -702,6 +710,7 @@ public:
                     SDL_SetRenderTarget(renderer, canvas);
                     currentTool->onMouseDown(cX, cY, renderer, brushSize);
                     SDL_SetRenderTarget(renderer, NULL);
+                    needsRedraw = true; overlayDirty = true;
                 }
                 if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                     getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
@@ -711,22 +720,40 @@ public:
                         saveState(undoStack);
                     }
                     SDL_SetRenderTarget(renderer, NULL);
+                    needsRedraw = true; overlayDirty = true;
                 }
                 if (e.type == SDL_MOUSEMOTION) {
                     getCanvasCoords(e.motion.x, e.motion.y, &cX, &cY);
                     SDL_SetRenderTarget(renderer, canvas);
                     currentTool->onMouseMove(cX, cY, renderer, brushSize);
                     SDL_SetRenderTarget(renderer, NULL);
+                    needsRedraw = true; overlayDirty = true;
                 }
             }
 
-            // Render cycle
-            // 1. Draw selection content to internal overlay texture (coordinate-aligned)
-            SDL_SetRenderTarget(renderer, overlay);
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-            SDL_RenderClear(renderer);
-            currentTool->onOverlayRender(renderer);
-            SDL_SetRenderTarget(renderer, NULL);
+            if (!needsRedraw) {
+                SDL_Delay(4); // ~240fps cap when idle
+                continue;
+            }
+            needsRedraw = false;
+
+            // 1. Only redraw overlay texture when state has changed
+            bool hasOverlay = currentTool->hasOverlayContent();
+            if (overlayDirty && hasOverlay) {
+                SDL_SetRenderTarget(renderer, overlay);
+                SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+                SDL_RenderClear(renderer);
+                currentTool->onOverlayRender(renderer);
+                SDL_SetRenderTarget(renderer, NULL);
+                overlayDirty = false;
+            } else if (!hasOverlay && overlayDirty) {
+                // Clear overlay if nothing to show
+                SDL_SetRenderTarget(renderer, overlay);
+                SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+                SDL_RenderClear(renderer);
+                SDL_SetRenderTarget(renderer, NULL);
+                overlayDirty = false;
+            }
 
             // 2. Main Window Render
             SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
@@ -734,9 +761,10 @@ public:
             
             SDL_Rect v = getViewport();
             SDL_RenderCopy(renderer, canvas, NULL, &v);
-            SDL_RenderCopy(renderer, overlay, NULL, &v);
+            if (hasOverlay)
+                SDL_RenderCopy(renderer, overlay, NULL, &v);
             
-            // 3. UI Helpers (Dotted selection box, shape previews)
+            // 3. UI Helpers (shape previews)
             currentTool->onPreviewRender(renderer, brushSize);
             
             SDL_RenderPresent(renderer);
