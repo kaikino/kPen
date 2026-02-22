@@ -580,6 +580,7 @@ private:
     
     std::unique_ptr<AbstractTool> currentTool;
     ToolType currentType = ToolType::BRUSH;
+    ToolType originalType = ToolType::BRUSH;
     int brushSize = 2;
     SDL_Color brushColor = {0, 0, 0, 255};
 
@@ -718,6 +719,7 @@ public:
             currentTool->deactivate(renderer);
             SDL_SetRenderTarget(renderer, NULL);
         }
+        originalType = t;
         currentType = t;
         switch(t) {
             case ToolType::BRUSH: currentTool = std::make_unique<BrushTool>(this); break;
@@ -1212,6 +1214,7 @@ public:
                             st->deactivate(renderer);
                             SDL_SetRenderTarget(renderer, NULL);
                             saveState(undoStack);
+                            setTool(originalType); // switch back to original tool after committing selection
                         }
                     }
                     
