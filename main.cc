@@ -313,7 +313,8 @@ public:
             if (r.w > 0 && r.h > 0) DrawingUtils::drawRect(canvasRenderer, &r, brushSize);
         }
         else if (type == ToolType::CIRCLE)
-            DrawingUtils::drawOval(canvasRenderer, lsx + half, lsy + half, lcx - half, lcy - half, brushSize);
+            DrawingUtils::drawOval(canvasRenderer, std::min(lsx, lcx) + half, std::min(lsy, lcy) + half,
+                                   std::max(lsx, lcx) - half, std::max(lsy, lcy) - half, brushSize);
 
         // Restore render target to canvas (kPen set it to canvas before calling us)
         SDL_SetRenderTarget(canvasRenderer, nullptr);
@@ -351,7 +352,8 @@ public:
                            std::abs(winCurX - winStartX) - scaledHalf * 2, std::abs(winCurY - winStartY) - scaledHalf * 2 };
             if (r.w > 0 && r.h > 0) DrawingUtils::drawRect(winRenderer, &r, scaledBrush, winW, winH);
         }
-        else if (type == ToolType::CIRCLE) DrawingUtils::drawOval(winRenderer, winStartX + scaledHalf, winStartY + scaledHalf, winCurX - scaledHalf, winCurY - scaledHalf, scaledBrush, winW, winH);
+        else if (type == ToolType::CIRCLE) DrawingUtils::drawOval(winRenderer, std::min(winStartX, winCurX) + scaledHalf, std::min(winStartY, winCurY) + scaledHalf,
+                                                                  std::max(winStartX, winCurX) - scaledHalf, std::max(winStartY, winCurY) - scaledHalf, scaledBrush, winW, winH);
     }
 };
 
