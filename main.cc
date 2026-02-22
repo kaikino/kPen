@@ -146,20 +146,22 @@ namespace DrawingUtils {
         spans.flush(renderer);
     }
 
-    void drawDottedRect(SDL_Renderer* renderer, const SDL_Rect* rect) {
-        int dashLen = 4;
-        // Top
-        for (int i = 0; i < rect->w; i += dashLen * 2) 
-            SDL_RenderDrawLine(renderer, rect->x + i, rect->y, rect->x + std::min(i + dashLen, rect->w), rect->y);
-        // Bottom
-        for (int i = 0; i < rect->w; i += dashLen * 2) 
-            SDL_RenderDrawLine(renderer, rect->x + i, rect->y + rect->h, rect->x + std::min(i + dashLen, rect->w), rect->y + rect->h);
-        // Left
-        for (int i = 0; i < rect->h; i += dashLen * 2) 
-            SDL_RenderDrawLine(renderer, rect->x, rect->y + i, rect->x, rect->y + std::min(i + dashLen, rect->h));
-        // Right
-        for (int i = 0; i < rect->h; i += dashLen * 2) 
-            SDL_RenderDrawLine(renderer, rect->x + rect->w, rect->y + i, rect->x + rect->w, rect->y + std::min(i + dashLen, rect->h));
+    // Alternating black/white dashes around the full perimeter (marching ants style).
+    // Always visible regardless of what color is underneath.
+    void drawMarchingRect(SDL_Renderer* renderer, const SDL_Rect* rect) {
+        const int dashLen = 4;
+        int x2 = rect->x + rect->w, y2 = rect->y + rect->h;
+        int perim = 2 * (rect->w + rect->h);
+        for (int p = 0; p < perim; p++) {
+            int x, y;
+            if      (p < rect->w)                 { x = rect->x + p;                       y = rect->y; }
+            else if (p < rect->w + rect->h)       { x = x2;                                y = rect->y + (p - rect->w); }
+            else if (p < 2*rect->w + rect->h)     { x = x2 - (p - rect->w - rect->h);     y = y2; }
+            else                                  { x = rect->x;                           y = y2 - (p - 2*rect->w - rect->h); }
+            bool black = (p / dashLen) % 2 == 0;
+            SDL_SetRenderDrawColor(renderer, black ? 0 : 255, black ? 0 : 255, black ? 0 : 255, 255);
+            SDL_RenderDrawPoint(renderer, x, y);
+        }
     }
 }
 
@@ -493,40 +495,47 @@ public:
     }
 
     void onOverlayRender(SDL_Renderer* overlayRenderer) override {
+        // Only render the texture content here (needs canvas coords).
+        // The outline, handles, and drag rect are drawn in onPreviewRender
+        // (window coords) so they are always exactly 1 window pixel wide.
+        if (state.active && state.selectionTexture) {
+            SDL_RenderCopy(overlayRenderer, state.selectionTexture, NULL, &state.area);
+        }
+    }
+
+    void onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Color color) override {
+        // Draw selection drag preview
         if (isDrawing) {
             int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
             int curX, curY; mapper->getCanvasCoords(mouseX, mouseY, &curX, &curY);
-            SDL_Rect r = {
-                std::min(startX, curX) - 1, std::min(startY, curY) - 1,
-                std::abs(curX - startX) + 1, std::abs(curY - startY) + 1
-            };
-            SDL_SetRenderDrawColor(overlayRenderer, 0, 0, 0, 255);
-            DrawingUtils::drawDottedRect(overlayRenderer, &r);
+            int wx1, wy1, wx2, wy2;
+            mapper->getWindowCoords(std::min(startX, curX), std::min(startY, curY), &wx1, &wy1);
+            mapper->getWindowCoords(std::max(startX, curX), std::max(startY, curY), &wx2, &wy2);
+            SDL_Rect r = { wx1, wy1, wx2 - wx1, wy2 - wy1 };
+            DrawingUtils::drawMarchingRect(winRenderer, &r);
         }
 
-        if (state.active && state.selectionTexture) {
-            SDL_RenderCopy(overlayRenderer, state.selectionTexture, NULL, &state.area);
-            SDL_Rect outline = { state.area.x - 1, state.area.y - 1, state.area.w + 1, state.area.h + 1 };
-            SDL_SetRenderDrawColor(overlayRenderer, 0, 0, 0, 255);
-            DrawingUtils::drawDottedRect(overlayRenderer, &outline);
+        if (state.active) {
+            int wx1, wy1, wx2, wy2;
+            mapper->getWindowCoords(state.area.x,                state.area.y,                &wx1, &wy1);
+            mapper->getWindowCoords(state.area.x + state.area.w, state.area.y + state.area.h, &wx2, &wy2);
+            SDL_Rect outline = { wx1, wy1, wx2 - wx1, wy2 - wy1 };
+            DrawingUtils::drawMarchingRect(winRenderer, &outline);
 
-            // Draw 8 handle squares at corners and edge midpoints
-            const int hs = 3; // half-size of handle square in canvas pixels
-            int mx = state.area.x + state.area.w / 2;
-            int my = state.area.y + state.area.h / 2;
-            int r = state.area.x + state.area.w;
-            int b = state.area.y + state.area.h;
+            // Draw 8 handle squares in window coords
+            const int hs = 4;
+            int wmx = (wx1 + wx2) / 2, wmy = (wy1 + wy2) / 2;
             SDL_Point handles[] = {
-                {state.area.x, state.area.y}, {mx, state.area.y}, {r, state.area.y},
-                {state.area.x, my},                                {r, my},
-                {state.area.x, b},             {mx, b},            {r, b}
+                {wx1, wy1}, {wmx, wy1}, {wx2, wy1},
+                {wx1, wmy},              {wx2, wmy},
+                {wx1, wy2}, {wmx, wy2}, {wx2, wy2}
             };
             for (auto& p : handles) {
-                SDL_Rect sq = { p.x - hs, p.y - hs, hs * 2, hs * 2 };
-                SDL_SetRenderDrawColor(overlayRenderer, 255, 255, 255, 255);
-                SDL_RenderFillRect(overlayRenderer, &sq);
-                SDL_SetRenderDrawColor(overlayRenderer, 0, 0, 0, 255);
-                SDL_RenderDrawRect(overlayRenderer, &sq);
+                SDL_Rect sq = { p.x - hs, p.y - hs, hs * 2 + 1, hs * 2 + 1 };
+                SDL_SetRenderDrawColor(winRenderer, 255, 255, 255, 255);
+                SDL_RenderFillRect(winRenderer, &sq);
+                SDL_SetRenderDrawColor(winRenderer, 0, 0, 0, 255);
+                SDL_RenderDrawRect(winRenderer, &sq);
             }
         }
     }
@@ -559,8 +568,7 @@ public:
         isDrawing = false;
     }
 
-    bool hasOverlayContent() override { return state.active || isDrawing; }
-    void onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Color color) override {}
+    bool hasOverlayContent() override { return state.active; }
 };
 
 class kPen : public ICoordinateMapper {
@@ -576,10 +584,10 @@ private:
     SDL_Color brushColor = {0, 0, 0, 255};
 
     // ── Toolbar ──────────────────────────────────────────────────────────────
-    static constexpr int TB_W      = 72;   // toolbar width in window pixels
-    static constexpr int TB_PAD    = 10;   // inner padding
-    static constexpr int ICON_SIZE = 40;   // tool icon button size
-    static constexpr int ICON_GAP  = 6;
+    static constexpr int TB_W      = 84;   // toolbar width in window pixels
+    static constexpr int TB_PAD    = 6;    // inner padding
+    static constexpr int ICON_SIZE = 24;   // tool icon button size (3 per row)
+    static constexpr int ICON_GAP  = 3;
 
     // HSV color state (converted to brushColor on change)
     float hue = 0.f, sat = 0.f, val = 0.f;  // 0-1 each
@@ -588,6 +596,34 @@ private:
     bool  draggingSlider = false;
     int   colorWheelCX = 0, colorWheelCY = 0, colorWheelR = 0;
     SDL_Rect brightnessRect = {0,0,0,0};
+
+    // Custom color slots (3x3 grid, configurable via color wheel)
+    static constexpr int NUM_CUSTOM = 9;
+    SDL_Color customColors[NUM_CUSTOM] = {
+        {220,220,220,255},{180,180,180,255},{120,120,120,255},
+        {255,100,100,255},{100,200,100,255},{100,150,255,255},
+        {255,200,80,255}, {200,100,255,255},{80,220,200,255},
+    };
+    int selectedCustomSlot = -1; // -1 = none selected
+    int selectedPresetSlot = -1; // -1 = none selected
+    bool draggingPreset = false;
+    int  draggingPresetIdx = -1;
+
+    // Preset colors (27 total, 3 per row = 9 rows)
+    static constexpr SDL_Color PRESETS[27] = {
+        {255,255,255,255},{0,0,0,255},      {64,64,64,255},    // white, black, dark grey
+        {128,128,128,255},{180,180,180,255},{220,220,220,255},  // grey, light grey, lighter grey
+        {101,55,0,255},   {160,100,40,255}, {210,170,110,255}, // brown, light brown, lighter brown
+        {139,0,0,255},    {240,40,50,255},  {255,120,100,255}, // dark red, red, light red
+        {230,100,0,255},  {255,165,60,255}, {255,230,0,255},   // orange, light orange, yellow
+        {200,0,140,255},  {255,0,180,255},  {255,170,230,255}, // dark pink, magenta, light magenta
+        {55,0,130,255},   {128,0,200,255},  {210,150,255,255}, // indigo, purple, light purple
+        {0,0,160,255},    {30,100,220,255}, {140,190,255,255}, // dark blue, blue, light blue
+        {0,100,0,255},    {34,160,34,255},  {140,220,140,255}, // dark green, green, light green
+    };
+    // Rect storage for hit-testing (filled during draw)
+    SDL_Rect customSwatchRects[NUM_CUSTOM];
+    SDL_Rect presetSwatchRects[27];
 
     static SDL_Color hsvToRgb(float h, float s, float v) {
         h = fmod(h, 1.f) * 6.f;
@@ -714,25 +750,20 @@ public:
     }
 
     // ── Toolbar layout helpers ───────────────────────────────────────────────
-    // Returns the y-top of the tool buttons section
-    int toolStartY() const { return TB_PAD; }
-    // Returns the top of the color wheel section
-    int wheelTop(int winH) const {
-        int tools = 5; // number of tools
-        return toolStartY() + tools*(ICON_SIZE+ICON_GAP) + 16;
-    }
+    int toolStartY()   const { return TB_PAD; }
+    int sliderSectionY() const { return toolStartY() + 3*(ICON_SIZE+ICON_GAP) + 2 + 20 + 2; }
+    int sliderSectionH() const { return 14; }
 
     // ── Icon drawing ─────────────────────────────────────────────────────────
     void drawIcon(int cx, int cy, ToolType t, bool active) {
-        SDL_Color fg = active ? SDL_Color{255,255,255,255} : SDL_Color{180,180,180,255};
+        SDL_Color fg = active ? SDL_Color{255,255,255,255} : SDL_Color{160,160,170,255};
         SDL_SetRenderDrawColor(renderer, fg.r, fg.g, fg.b, 255);
-        int s = ICON_SIZE/2 - 6;
+        int s = ICON_SIZE/2 - 3; // fits inside small button
         switch(t) {
             case ToolType::BRUSH: {
-                // Pencil: diagonal line with a tip
                 for(int i=-s; i<=s; i++) SDL_RenderDrawPoint(renderer, cx+i, cy+i);
                 for(int i=-s; i<=s; i++) SDL_RenderDrawPoint(renderer, cx+i+1, cy+i);
-                SDL_Rect tip = {cx+s-1, cy+s-1, 4, 4};
+                SDL_Rect tip = {cx+s-1, cy+s-1, 3, 3};
                 SDL_RenderFillRect(renderer, &tip);
                 break;
             }
@@ -744,29 +775,24 @@ public:
             case ToolType::RECT: {
                 SDL_Rect r={cx-s,cy-s,s*2,s*2};
                 SDL_RenderDrawRect(renderer, &r);
-                SDL_Rect r2={cx-s+1,cy-s+1,s*2-2,s*2-2};
-                SDL_RenderDrawRect(renderer, &r2);
                 break;
             }
             case ToolType::CIRCLE: {
-                // Simple circle approximation using points
-                for(int deg=0; deg<360; deg+=4) {
+                for(int deg=0; deg<360; deg+=5) {
                     float a=deg*M_PI/180.f;
                     SDL_RenderDrawPoint(renderer, cx+(int)(s*cos(a)), cy+(int)(s*sin(a)));
-                    SDL_RenderDrawPoint(renderer, cx+(int)((s-1)*cos(a)), cy+(int)((s-1)*sin(a)));
                 }
                 break;
             }
             case ToolType::SELECT: {
-                // Dashed rectangle
-                int dashLen=4;
-                for(int i=0;i<s*2;i+=dashLen*2){
-                    SDL_RenderDrawLine(renderer,cx-s+i,cy-s,cx-s+std::min(i+dashLen,s*2),cy-s);
-                    SDL_RenderDrawLine(renderer,cx-s+i,cy+s,cx-s+std::min(i+dashLen,s*2),cy+s);
+                int d=3;
+                for(int i=0;i<s*2;i+=d*2){
+                    SDL_RenderDrawLine(renderer,cx-s+i,cy-s,cx-s+std::min(i+d,s*2),cy-s);
+                    SDL_RenderDrawLine(renderer,cx-s+i,cy+s,cx-s+std::min(i+d,s*2),cy+s);
                 }
-                for(int i=0;i<s*2;i+=dashLen*2){
-                    SDL_RenderDrawLine(renderer,cx-s,cy-s+i,cx-s,cy-s+std::min(i+dashLen,s*2));
-                    SDL_RenderDrawLine(renderer,cx+s,cy-s+i,cx+s,cy-s+std::min(i+dashLen,s*2));
+                for(int i=0;i<s*2;i+=d*2){
+                    SDL_RenderDrawLine(renderer,cx-s,cy-s+i,cx-s,cy-s+std::min(i+d,s*2));
+                    SDL_RenderDrawLine(renderer,cx+s,cy-s+i,cx+s,cy-s+std::min(i+d,s*2));
                 }
                 break;
             }
@@ -786,57 +812,78 @@ public:
         SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
         SDL_RenderDrawLine(renderer, TB_W-1, 0, TB_W-1, winH);
 
-        // ── Tool buttons ──
-        const ToolType tools[] = {ToolType::BRUSH, ToolType::LINE, ToolType::RECT, ToolType::CIRCLE, ToolType::SELECT};
-        int cx = TB_W/2;
-        for(int i=0; i<5; i++) {
-            int y = toolStartY() + i*(ICON_SIZE+ICON_GAP);
-            bool active = (currentType == tools[i]);
-            // Button bg
-            SDL_Rect btn = {TB_PAD/2, y, TB_W-TB_PAD, ICON_SIZE};
-            if(active) {
-                SDL_SetRenderDrawColor(renderer, 70, 130, 220, 255);
-                SDL_RenderFillRect(renderer, &btn);
-            } else {
-                SDL_SetRenderDrawColor(renderer, 45, 45, 52, 255);
-                SDL_RenderFillRect(renderer, &btn);
+        // ── Tool buttons (3 per row) ──
+        // Layout: [brush, line, -] [rect, circle, -] [select, -, -]
+        // -1 means empty slot
+        const int toolGrid[3][3] = {
+            {0, 1, -1},  // brush, line, empty
+            {2, 3, -1},  // rect, circle, empty
+            {4, -1, -1}  // select, empty, empty
+        };
+        const ToolType toolTypes[] = {ToolType::BRUSH, ToolType::LINE, ToolType::RECT, ToolType::CIRCLE, ToolType::SELECT};
+        int cellW = (TB_W - TB_PAD) / 3;
+        int ty = toolStartY();
+        for(int row=0; row<3; row++) {
+            for(int col=0; col<3; col++) {
+                int idx = toolGrid[row][col];
+                int bx = TB_PAD/2 + col*cellW;
+                int by = ty + row*(ICON_SIZE+ICON_GAP);
+                SDL_Rect btn = {bx, by, cellW-2, ICON_SIZE};
+                if(idx < 0) {
+                    // empty slot - just dim background
+                    SDL_SetRenderDrawColor(renderer, 35, 35, 40, 255);
+                    SDL_RenderFillRect(renderer, &btn);
+                    SDL_SetRenderDrawColor(renderer, 55, 55, 62, 255);
+                    SDL_RenderDrawRect(renderer, &btn);
+                    continue;
+                }
+                bool active = (currentType == toolTypes[idx]);
+                if(active) {
+                    SDL_SetRenderDrawColor(renderer, 70, 130, 220, 255);
+                    SDL_RenderFillRect(renderer, &btn);
+                } else {
+                    SDL_SetRenderDrawColor(renderer, 45, 45, 52, 255);
+                    SDL_RenderFillRect(renderer, &btn);
+                }
+                SDL_SetRenderDrawColor(renderer, 80, 80, 90, 255);
+                SDL_RenderDrawRect(renderer, &btn);
+                drawIcon(bx + (cellW-2)/2, by + ICON_SIZE/2, toolTypes[idx], active);
             }
-            SDL_SetRenderDrawColor(renderer, 80, 80, 90, 255);
-            SDL_RenderDrawRect(renderer, &btn);
-            drawIcon(cx, y + ICON_SIZE/2, tools[i], active);
         }
 
-        // ── Thickness slider ──
-        int sliderY = toolStartY() + 5*(ICON_SIZE+ICON_GAP) + 8;
-        // Label (drawn as small dots to indicate "thickness")
-        SDL_SetRenderDrawColor(renderer, 140, 140, 150, 255);
-        SDL_RenderDrawLine(renderer, TB_PAD, sliderY+2, TB_W-TB_PAD, sliderY+2);
-        SDL_RenderDrawLine(renderer, TB_PAD, sliderY+3, TB_W-TB_PAD, sliderY+3);
-        sliderY += 10;
+        // ── Thickness slider (horizontal, compact) ──
+        // ── Brush size preview circle ──
+        // Fixed area of 20px height above the slider, circle scales with brushSize
+        int previewAreaH = 20;
+        int labelY = ty + 3*(ICON_SIZE+ICON_GAP) + 2;
+        int previewCX = TB_W / 2;
+        int previewCY = labelY + previewAreaH / 2;
+        int maxR = previewAreaH / 2 - 1;
+        int dotR = std::max(1, (int)((brushSize / 20.f) * maxR + 0.5f));
+        SDL_SetRenderDrawColor(renderer, brushColor.r, brushColor.g, brushColor.b, 255);
+        for(int py = -dotR; py <= dotR; py++)
+            for(int px = -dotR; px <= dotR; px++)
+                if(px*px + py*py <= dotR*dotR)
+                    SDL_RenderDrawPoint(renderer, previewCX + px, previewCY + py);
 
-        int sliderH = 120;
-        int trackX  = TB_W/2;
+        int sliderSectionY = labelY + previewAreaH + 2;
+        int sX = TB_PAD, sW = TB_W - TB_PAD*2;
+        int sH = 14; // total height of slider widget
+        int trackY = sliderSectionY + sH/2;
         // Track
         SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
-        SDL_RenderDrawLine(renderer, trackX, sliderY, trackX, sliderY+sliderH);
-        SDL_RenderDrawLine(renderer, trackX+1, sliderY, trackX+1, sliderY+sliderH);
-        // Thumb position: brushSize 1-20 mapped to sliderH
-        int thumbY = sliderY + sliderH - (int)((brushSize-1)/19.f * sliderH);
-        SDL_Rect thumb = {trackX-8, thumbY-5, 18, 10};
+        SDL_RenderDrawLine(renderer, sX, trackY, sX+sW, trackY);
+        SDL_RenderDrawLine(renderer, sX, trackY+1, sX+sW, trackY+1);
+        // Thumb
+        int thumbX = sX + (int)((brushSize-1)/19.f * sW);
+        SDL_Rect thumb = {thumbX-5, sliderSectionY, 10, sH};
         SDL_SetRenderDrawColor(renderer, 200, 200, 210, 255);
         SDL_RenderFillRect(renderer, &thumb);
         SDL_SetRenderDrawColor(renderer, 120, 120, 130, 255);
         SDL_RenderDrawRect(renderer, &thumb);
-        // Preview dot showing current size
-        int dotR = std::max(1, brushSize/2);
-        SDL_SetRenderDrawColor(renderer, brushColor.r, brushColor.g, brushColor.b, 255);
-        for(int dy=-dotR; dy<=dotR; dy++)
-            for(int dx=-dotR; dx<=dotR; dx++)
-                if(dx*dx+dy*dy<=dotR*dotR)
-                    SDL_RenderDrawPoint(renderer, trackX+20+dotR+dx, thumbY+dy);
 
         // ── Color wheel ──
-        int wTop = sliderY + sliderH + 14;
+        int wTop = sliderSectionY + sH + 8;
         int availH = winH - wTop - TB_PAD;
         int wheelDiam = std::min(TB_W - TB_PAD*2, availH - 20);
         if(wheelDiam < 10) return;
@@ -894,43 +941,96 @@ public:
         SDL_SetRenderDrawColor(renderer, 0,0,0,255);
         SDL_RenderDrawLine(renderer, bCurX+1, bTop-2, bCurX+1, bTop+bH+2);
 
-        // ── Current color swatch ──
-        int swY = bTop + bH + 6;
-        SDL_Rect sw = {TB_PAD, swY, TB_W-TB_PAD*2, 16};
-        SDL_SetRenderDrawColor(renderer, brushColor.r, brushColor.g, brushColor.b, 255);
-        SDL_RenderFillRect(renderer, &sw);
-        SDL_SetRenderDrawColor(renderer, 80,80,90,255);
-        SDL_RenderDrawRect(renderer, &sw);
+        // ── Custom color slots (3x3, configurable) ───────────────────────────
+        int csy = bTop + bH + 7;
+        // Section label line
+        SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
+        SDL_RenderDrawLine(renderer, TB_PAD, csy, TB_W-TB_PAD, csy);
+        csy += 4;
+        int csz = (TB_W - TB_PAD*2 - 4) / 3; // swatch size
+        for(int i = 0; i < NUM_CUSTOM; i++) {
+            int col = i % 3, row = i / 3;
+            int sx = TB_PAD + col*(csz+2);
+            int sy = csy + row*(csz+2);
+            customSwatchRects[i] = {sx, sy, csz, csz};
+            SDL_SetRenderDrawColor(renderer, customColors[i].r, customColors[i].g, customColors[i].b, 255);
+            SDL_RenderFillRect(renderer, &customSwatchRects[i]);
+            // Border: white+black double border for selected, dim for others
+            if(i == selectedCustomSlot) {
+                SDL_Rect outer = {sx-2, sy-2, csz+4, csz+4};
+                SDL_SetRenderDrawColor(renderer, 255,255,255,255);
+                SDL_RenderDrawRect(renderer, &outer);
+                SDL_Rect inner = {sx-1, sy-1, csz+2, csz+2};
+                SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+                SDL_RenderDrawRect(renderer, &inner);
+            } else {
+                SDL_SetRenderDrawColor(renderer, 70,70,80,255);
+                SDL_RenderDrawRect(renderer, &customSwatchRects[i]);
+            }
+        }
+
+        // ── Preset colors (21, 3 per row = 7 rows) ───────────────────────────
+        int psy = csy + 3*(csz+2) + 7;
+        SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
+        SDL_RenderDrawLine(renderer, TB_PAD, psy, TB_W-TB_PAD, psy);
+        psy += 4;
+        int psz = (TB_W - TB_PAD*2 - 4) / 3;
+        for(int i = 0; i < 27; i++) {
+            int col = i % 3, row = i / 3;
+            int sx = TB_PAD + col*(psz+2);
+            int sy = psy + row*(psz+2);
+            presetSwatchRects[i] = {sx, sy, psz, psz};
+            SDL_SetRenderDrawColor(renderer, PRESETS[i].r, PRESETS[i].g, PRESETS[i].b, 255);
+            SDL_RenderFillRect(renderer, &presetSwatchRects[i]);
+            // Highlight if this preset matches current brush color
+            bool match = (i == selectedPresetSlot);
+            if(match) {
+                SDL_Rect outer = {sx-2, sy-2, psz+4, psz+4};
+                SDL_SetRenderDrawColor(renderer, 255,255,255,255);
+                SDL_RenderDrawRect(renderer, &outer);
+                SDL_Rect inner = {sx-1, sy-1, psz+2, psz+2};
+                SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+                SDL_RenderDrawRect(renderer, &inner);
+            } else {
+                SDL_SetRenderDrawColor(renderer, 70,70,80,255);
+                SDL_RenderDrawRect(renderer, &presetSwatchRects[i]);
+            }
+        }
     }
 
     // ── Toolbar interaction ───────────────────────────────────────────────────
     // Returns true if the point is inside the toolbar
     bool inToolbar(int x, int y) const { return x < TB_W; }
 
-    int sliderTopY() const {
-        return toolStartY() + 5*(ICON_SIZE+ICON_GAP) + 18;
-    }
-    int sliderH() const { return 120; }
+    int sliderTopY() const { return sliderSectionY(); }
+    int sliderH()    const { return sliderSectionH(); }
 
     bool handleToolbarDown(int x, int y) {
         if(!inToolbar(x,y)) return false;
 
-        // Tool buttons
-        const ToolType tools[] = {ToolType::BRUSH, ToolType::LINE, ToolType::RECT, ToolType::CIRCLE, ToolType::SELECT};
-        for(int i=0;i<5;i++) {
-            int btnY = toolStartY() + i*(ICON_SIZE+ICON_GAP);
-            SDL_Rect btn = {TB_PAD/2, btnY, TB_W-TB_PAD, ICON_SIZE};
-            SDL_Point pt = {x,y};
-            if(SDL_PointInRect(&pt,&btn)) { setTool(tools[i]); return true; }
+        // Tool buttons (3-per-row grid)
+        const int toolGrid[3][3] = {{0,1,-1},{2,3,-1},{4,-1,-1}};
+        const ToolType toolTypes[] = {ToolType::BRUSH, ToolType::LINE, ToolType::RECT, ToolType::CIRCLE, ToolType::SELECT};
+        int cellW = (TB_W - TB_PAD) / 3;
+        for(int row=0;row<3;row++) {
+            for(int col=0;col<3;col++) {
+                int idx = toolGrid[row][col];
+                if(idx < 0) continue;
+                int bx = TB_PAD/2 + col*cellW;
+                int by = toolStartY() + row*(ICON_SIZE+ICON_GAP);
+                SDL_Rect btn = {bx, by, cellW-2, ICON_SIZE};
+                SDL_Point pt = {x,y};
+                if(SDL_PointInRect(&pt,&btn)) { setTool(toolTypes[idx]); return true; }
+            }
         }
 
-        // Thickness slider
+        // Thickness slider (horizontal)
         int sTop = sliderTopY(), sH = sliderH();
-        SDL_Rect sliderArea = {TB_PAD/2, sTop-10, TB_W-TB_PAD, sH+20};
+        SDL_Rect sliderArea = {TB_PAD/2, sTop-6, TB_W-TB_PAD, sH+12};
         SDL_Point pt={x,y};
         if(SDL_PointInRect(&pt,&sliderArea)) {
             draggingSlider = true;
-            updateSliderFromMouse(y);
+            updateSliderFromMouse(x);
             return true;
         }
 
@@ -954,28 +1054,79 @@ public:
             return true;
         }
 
+        // Custom color slots — click selected slot deselects it
+        for(int i = 0; i < NUM_CUSTOM; i++) {
+            SDL_Point cpt = {x, y};
+            if(SDL_PointInRect(&cpt, &customSwatchRects[i])) {
+                if(selectedCustomSlot == i) {
+                    selectedCustomSlot = -1; // deselect
+                } else {
+                    selectedCustomSlot = i;
+                    selectedPresetSlot = -1;
+                    brushColor = customColors[i];
+                    rgbToHsv(brushColor, hue, sat, val);
+                }
+                return true;
+            }
+        }
+
+        // Preset color swatches — click selected deselects; otherwise select + drag
+        for(int i = 0; i < 27; i++) {
+            SDL_Point ppt = {x, y};
+            if(SDL_PointInRect(&ppt, &presetSwatchRects[i])) {
+                if(selectedPresetSlot == i) {
+                    selectedPresetSlot = -1; // deselect
+                } else {
+                    selectedPresetSlot = i;
+                    selectedCustomSlot = -1;
+                    draggingPreset = true;
+                    draggingPresetIdx = i;
+                    brushColor = PRESETS[i];
+                    rgbToHsv(brushColor, hue, sat, val);
+                }
+                return true;
+            }
+        }
+
         return true; // eat all toolbar clicks
     }
 
     bool handleToolbarMotion(int x, int y) {
-        if(draggingSlider)      { updateSliderFromMouse(y);       return true; }
-        if(draggingWheel)       { updateWheelFromMouse(x,y);     return true; }
-        if(draggingBrightness)  { updateBrightnessFromMouse(x);  return true; }
+        if(draggingSlider)      { updateSliderFromMouse(x);    return true; }
+        if(draggingWheel)       { updateWheelFromMouse(x,y);  return true; }
+        if(draggingBrightness)  { updateBrightnessFromMouse(x); return true; }
+        if(draggingPreset)      { return true; } // absorb motion, drop handled on up
         return inToolbar(x,y);
     }
 
-    void handleToolbarUp() {
+    void handleToolbarUp(int x, int y) {
+        // Preset drag → drop onto custom slot copies the color
+        if(draggingPreset && draggingPresetIdx >= 0) {
+            for(int i = 0; i < NUM_CUSTOM; i++) {
+                SDL_Point pt = {x, y};
+                if(SDL_PointInRect(&pt, &customSwatchRects[i])) {
+                    customColors[i] = PRESETS[draggingPresetIdx];
+                    selectedCustomSlot = i;
+                    selectedPresetSlot = -1;
+                    brushColor = customColors[i];
+                    rgbToHsv(brushColor, hue, sat, val);
+                    break;
+                }
+            }
+        }
+        draggingPreset = false;
+        draggingPresetIdx = -1;
         draggingSlider = false;
         draggingWheel = false;
         draggingBrightness = false;
     }
 
-    bool isDraggingToolbar() const { return draggingWheel || draggingBrightness || draggingSlider; }
+    bool isDraggingToolbar() const { return draggingWheel || draggingBrightness || draggingSlider || draggingPreset; }
 
-    void updateSliderFromMouse(int y) {
-        int sTop = sliderTopY(), sH = sliderH();
-        int clamped = std::max(sTop, std::min(sTop + sH, y));
-        brushSize = 1 + (int)((1.f - (float)(clamped - sTop) / sH) * 19.f + 0.5f);
+    void updateSliderFromMouse(int x) {
+        int sX = TB_PAD, sW = TB_W - TB_PAD*2;
+        int clamped = std::max(sX, std::min(sX + sW, x));
+        brushSize = 1 + (int)((float)(clamped - sX) / sW * 19.f + 0.5f);
         brushSize = std::max(1, std::min(20, brushSize));
     }
 
@@ -985,12 +1136,16 @@ public:
         hue = fmod(atan2(dy,dx)/(2*M_PI)+1.f,1.f);
         sat = std::min(1.f, dist/colorWheelR);
         brushColor = hsvToRgb(hue, sat, val);
+        selectedPresetSlot = -1; // deselect preset when using wheel
+        if(selectedCustomSlot >= 0) customColors[selectedCustomSlot] = brushColor;
     }
 
     void updateBrightnessFromMouse(int x) {
         float t = (float)(x - brightnessRect.x) / brightnessRect.w;
         val = std::max(0.f, std::min(1.f, t));
         brushColor = hsvToRgb(hue, sat, val);
+        selectedPresetSlot = -1; // deselect preset when using brightness
+        if(selectedCustomSlot >= 0) customColors[selectedCustomSlot] = brushColor;
     }
 
     void run() {
@@ -1039,7 +1194,7 @@ public:
                     needsRedraw = true; overlayDirty = true;
                 }
                 if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
-                    handleToolbarUp();
+                    handleToolbarUp(e.button.x, e.button.y);
                     getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
                     SDL_SetRenderTarget(renderer, canvas);
                     if (currentTool->onMouseUp(cX, cY, renderer, brushSize, brushColor)) {
