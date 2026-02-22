@@ -69,7 +69,6 @@ namespace DrawingUtils {
         float centerY = top + ry;
 
         int radius = size / 2;
-        // Estimate steps based on circumference of ellipse (Ramanujan approximation)
         float h_val = pow(rx - ry, 2) / pow(rx + ry, 2);
         float circumference = M_PI * (rx + ry) * (1 + (3 * h_val) / (10 + sqrt(4 - 3 * h_val)));
         int steps = (int)std::max(circumference * 1.5f, 10.0f);
@@ -84,18 +83,21 @@ namespace DrawingUtils {
 
     void drawDottedRect(SDL_Renderer* renderer, const SDL_Rect* rect) {
         int dashLen = 4;
-        for (int i = 0; i < rect->w; i += dashLen * 2) {
+        // Top
+        for (int i = 0; i < rect->w; i += dashLen * 2) 
             SDL_RenderDrawLine(renderer, rect->x + i, rect->y, rect->x + std::min(i + dashLen, rect->w), rect->y);
+        // Bottom
+        for (int i = 0; i < rect->w; i += dashLen * 2) 
             SDL_RenderDrawLine(renderer, rect->x + i, rect->y + rect->h, rect->x + std::min(i + dashLen, rect->w), rect->y + rect->h);
-        }
-        for (int i = 0; i < rect->h; i += dashLen * 2) {
+        // Left
+        for (int i = 0; i < rect->h; i += dashLen * 2) 
             SDL_RenderDrawLine(renderer, rect->x, rect->y + i, rect->x, rect->y + std::min(i + dashLen, rect->h));
+        // Right
+        for (int i = 0; i < rect->h; i += dashLen * 2) 
             SDL_RenderDrawLine(renderer, rect->x + rect->w, rect->y + i, rect->x + rect->w, rect->y + std::min(i + dashLen, rect->h));
-        }
     }
 }
 
-// Coordinate Mapper Interface
 class ICoordinateMapper {
 public:
     virtual void getCanvasCoords(int winX, int winY, int* canX, int* canY) = 0;
@@ -103,7 +105,6 @@ public:
     virtual int getWindowSize(int canSize) = 0;
 };
 
-// Abstract Base Tool
 class AbstractTool {
 protected:
     ICoordinateMapper* mapper;
@@ -134,10 +135,9 @@ public:
     }
 
     virtual void onPreviewRender(SDL_Renderer* winRenderer, int brushSize) = 0;
+    virtual void onOverlayRender(SDL_Renderer* overlayRenderer) {}
     virtual void deactivate(SDL_Renderer* canvasRenderer) {}
 };
-
-// --- TOOL IMPLEMENTATIONS ---
 
 class BrushTool : public AbstractTool {
 public:
@@ -145,7 +145,6 @@ public:
 
     void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
         AbstractTool::onMouseDown(cX, cY, canvasRenderer, brushSize);
-        // Paint a tiny dot at the exact coordinate immediately on click
         SDL_SetRenderDrawColor(canvasRenderer, 0, 0, 0, 255);
         DrawingUtils::drawFillCircle(canvasRenderer, cX, cY, brushSize / 2);
     }
@@ -168,7 +167,6 @@ public:
     ShapeTool(ICoordinateMapper* m, ToolType t) : AbstractTool(m), type(t) {}
 
     void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
-        // Shapes do not perform immediate actions on click (no dots)
         isDrawing = true;
         startX = lastX = cX;
         startY = lastY = cY;
@@ -176,7 +174,6 @@ public:
 
     bool onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
         if (!isDrawing) return false;
-        // Only perform action if mouse has moved from start point (to avoid clicking dots)
         if (cX == startX && cY == startY) {
             isDrawing = false;
             return false;
@@ -201,11 +198,9 @@ public:
         SDL_GetMouseState(&mouseX, &mouseY);
         int curX, curY;
         mapper->getCanvasCoords(mouseX, mouseY, &curX, &curY);
-        // Only show preview if dragging
         if (curX == startX && curY == startY) return;
 
         mapper->getWindowCoords(curX, curY, &winCurX, &winCurY);
-
         int scaledBrush = mapper->getWindowSize(brushSize);
         SDL_SetRenderDrawColor(winRenderer, 150, 150, 150, 255);
 
@@ -222,13 +217,17 @@ class SelectTool : public AbstractTool {
     struct SelectionState {
         bool active = false;
         SDL_Rect area = {0, 0, 0, 0};
-        std::vector<uint32_t> pixels;
+        SDL_Texture* selectionTexture = nullptr;
         bool isMoving = false;
         int dragOffsetX = 0, dragOffsetY = 0;
     } state;
 
 public:
     using AbstractTool::AbstractTool;
+
+    ~SelectTool() {
+        if (state.selectionTexture) SDL_DestroyTexture(state.selectionTexture);
+    }
 
     void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
         if (state.active) {
@@ -259,34 +258,48 @@ public:
             return false; 
         }
         if (isDrawing) {
-            // Only create selection if we actually dragged a box
             if (cX == startX && cY == startY) {
                 isDrawing = false;
                 return false;
             }
             state.area = { std::min(startX, cX), std::min(startY, cY), 
                            std::max(1, std::abs(cX - startX)), std::max(1, std::abs(cY - startY)) };
-            state.pixels.resize(state.area.w * state.area.h);
             
-            SDL_RenderReadPixels(canvasRenderer, &state.area, SDL_PIXELFORMAT_ARGB8888, state.pixels.data(), state.area.w * 4);
-            
+            if (state.selectionTexture) SDL_DestroyTexture(state.selectionTexture);
+            state.selectionTexture = SDL_CreateTexture(canvasRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, state.area.w, state.area.h);
+            SDL_SetTextureBlendMode(state.selectionTexture, SDL_BLENDMODE_BLEND);
+
+            // Read pixels directly from the current canvas target
+            std::vector<uint32_t> pixels(state.area.w * state.area.h);
+            SDL_RenderReadPixels(canvasRenderer, &state.area, SDL_PIXELFORMAT_ARGB8888, pixels.data(), state.area.w * 4);
+            SDL_UpdateTexture(state.selectionTexture, NULL, pixels.data(), state.area.w * 4);
+
+            // Clear the area on the main canvas to WHITE
             SDL_SetRenderDrawColor(canvasRenderer, 255, 255, 255, 255);
             SDL_RenderFillRect(canvasRenderer, &state.area);
             
             state.active = true;
             isDrawing = false;
-            return false; 
+            return true; // Return true to save undo state after the selection "cut"
         }
         return false;
     }
 
+    void onOverlayRender(SDL_Renderer* overlayRenderer) override {
+        if (state.active && state.selectionTexture) {
+            // Render the "knot" selection content only
+            SDL_RenderCopy(overlayRenderer, state.selectionTexture, NULL, &state.area);
+        }
+    }
+
     void deactivate(SDL_Renderer* canvasRenderer) override {
         if (!state.active) return;
-        SDL_Texture* tempTex = SDL_CreateTexture(canvasRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, state.area.w, state.area.h);
-        SDL_SetTextureBlendMode(tempTex, SDL_BLENDMODE_BLEND);
-        SDL_UpdateTexture(tempTex, NULL, state.pixels.data(), state.area.w * 4);
-        SDL_RenderCopy(canvasRenderer, tempTex, NULL, &state.area);
-        SDL_DestroyTexture(tempTex);
+        // Merge selection back to canvas
+        if (state.selectionTexture) {
+            SDL_RenderCopy(canvasRenderer, state.selectionTexture, NULL, &state.area);
+            SDL_DestroyTexture(state.selectionTexture);
+            state.selectionTexture = nullptr;
+        }
         state.active = false;
     }
 
@@ -300,10 +313,9 @@ public:
         if (isDrawing) {
             int winStartX, winStartY, winCurX, winCurY;
             mapper->getWindowCoords(startX, startY, &winStartX, &winStartY);
+            
             int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
             int curX, curY; mapper->getCanvasCoords(mouseX, mouseY, &curX, &curY);
-            if (curX == startX && curY == startY) return;
-
             mapper->getWindowCoords(curX, curY, &winCurX, &winCurY);
             
             SDL_Rect r = { std::min(winStartX, winCurX), std::min(winStartY, winCurY), std::abs(winCurX - winStartX), std::abs(winCurY - winStartY) };
@@ -316,33 +328,24 @@ public:
             mapper->getWindowCoords(state.area.x, state.area.y, &wX, &wY);
             mapper->getWindowCoords(state.area.x + state.area.w, state.area.y + state.area.h, &wX2, &wY2);
             SDL_Rect scaledRect = { wX, wY, wX2 - wX, wY2 - wY };
-
-            SDL_Texture* tex = SDL_CreateTexture(winRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, state.area.w, state.area.h);
-            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-            SDL_UpdateTexture(tex, NULL, state.pixels.data(), state.area.w * 4);
-            SDL_RenderCopy(winRenderer, tex, NULL, &scaledRect);
-            
             SDL_SetRenderDrawColor(winRenderer, 0, 0, 0, 255);
             DrawingUtils::drawDottedRect(winRenderer, &scaledRect);
-            SDL_DestroyTexture(tex);
         }
     }
 };
-
-// --- APPLICATION ---
 
 class kPen : public ICoordinateMapper {
 private:
     SDL_Window* window;
     SDL_Renderer* renderer;
     SDL_Texture* canvas;
+    SDL_Texture* overlay; 
     
     std::unique_ptr<AbstractTool> currentTool;
     ToolType currentType = ToolType::BRUSH;
     int brushSize = 2;
     
     std::vector<std::vector<uint32_t>> undoStack;
-    std::vector<std::vector<uint32_t>> redoStack;
 
     SDL_Rect getViewport() {
         int winW, winH;
@@ -361,11 +364,11 @@ private:
     }
 
 public:
-    // Mapper implementation
     void getCanvasCoords(int winX, int winY, int* cX, int* cY) override {
         SDL_Rect v = getViewport();
-        *cX = (int)std::floor((winX - v.x) * ((float)CANVAS_WIDTH / v.w));
-        *cY = (int)std::floor((winY - v.y) * ((float)CANVAS_HEIGHT / v.h));
+        // Clamping to ensure we don't pick outside canvas range
+        *cX = std::max(0, std::min(CANVAS_WIDTH - 1, (int)std::floor((winX - v.x) * ((float)CANVAS_WIDTH / v.w))));
+        *cY = std::max(0, std::min(CANVAS_HEIGHT - 1, (int)std::floor((winY - v.y) * ((float)CANVAS_HEIGHT / v.h))));
     }
     void getWindowCoords(int canX, int canY, int* wX, int* wY) override {
         SDL_Rect v = getViewport();
@@ -378,9 +381,14 @@ public:
 
     kPen() {
         SDL_Init(SDL_INIT_VIDEO);
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+        
         window = SDL_CreateWindow("kPen", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1000, 700, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
         renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE);
+        
         canvas = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, CANVAS_WIDTH, CANVAS_HEIGHT);
+        overlay = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, CANVAS_WIDTH, CANVAS_HEIGHT);
+        SDL_SetTextureBlendMode(overlay, SDL_BLENDMODE_BLEND);
         
         SDL_SetRenderTarget(renderer, canvas);
         SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
@@ -393,6 +401,7 @@ public:
 
     ~kPen() {
         SDL_DestroyTexture(canvas);
+        SDL_DestroyTexture(overlay);
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
         SDL_Quit();
@@ -445,7 +454,6 @@ public:
                 if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
                     
-                    // Logic for Select Tool "pasting" on click-away
                     if (currentType == ToolType::SELECT) {
                         auto st = static_cast<SelectTool*>(currentTool.get());
                         if (st->isSelectionActive() && !st->isHit(cX, cY)) {
@@ -453,14 +461,12 @@ public:
                             st->deactivate(renderer);
                             SDL_SetRenderTarget(renderer, NULL);
                             saveState(undoStack);
-                            continue; // Don't start a new action immediately on deselect
                         }
                     }
                     
                     SDL_SetRenderTarget(renderer, canvas);
                     currentTool->onMouseDown(cX, cY, renderer, brushSize);
                     SDL_SetRenderTarget(renderer, NULL);
-                    redoStack.clear();
                 }
                 if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                     getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
@@ -479,11 +485,23 @@ public:
                 }
             }
 
+            // Render cycle
+            // 1. Draw selection content to internal overlay texture (coordinate-aligned)
+            SDL_SetRenderTarget(renderer, overlay);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+            SDL_RenderClear(renderer);
+            currentTool->onOverlayRender(renderer);
+            SDL_SetRenderTarget(renderer, NULL);
+
+            // 2. Main Window Render
             SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
             SDL_RenderClear(renderer);
+            
             SDL_Rect v = getViewport();
             SDL_RenderCopy(renderer, canvas, NULL, &v);
+            SDL_RenderCopy(renderer, overlay, NULL, &v);
             
+            // 3. UI Helpers (Dotted selection box, shape previews)
             currentTool->onPreviewRender(renderer, brushSize);
             
             SDL_RenderPresent(renderer);
