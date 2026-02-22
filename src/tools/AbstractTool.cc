@@ -19,6 +19,8 @@ bool AbstractTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int b
     return changed;
 }
 
+void AbstractTool::onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Color color) {}
+
 void AbstractTool::onOverlayRender(SDL_Renderer* overlayRenderer) {}
 
 bool AbstractTool::hasOverlayContent() {return false;}

@@ -4,8 +4,12 @@
 #include <cmath>
 #include <algorithm>
 
-// ── Static constexpr definitions (required in .cc for ODR) ───────────────────
-constexpr SDL_Color Toolbar::PRESETS[27];
+// ── ToolTypes ────────────────────────────────────────────────────────────────
+constexpr int toolGrid[3][3] = {{0,1,-1},{2,3,-1},{4,5,-1}};
+constexpr ToolType toolTypes[] = {
+    ToolType::BRUSH, ToolType::LINE, ToolType::RECT,
+    ToolType::CIRCLE, ToolType::SELECT, ToolType::FILL
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -106,6 +110,37 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
             }
             break;
         }
+        case ToolType::FILL: {
+            int ox = cx - 2;
+            int oy = cy + 2;
+            s -= 2;
+
+            // Diamond outline
+            SDL_RenderDrawLine(renderer, ox,    oy-s, ox+s, oy  ); // top-right
+            SDL_RenderDrawLine(renderer, ox+s,  oy,   ox,   oy+s); // bottom-right
+            SDL_RenderDrawLine(renderer, ox,    oy+s, ox-s, oy  ); // bottom-left
+            SDL_RenderDrawLine(renderer, ox-s,  oy,   ox,   oy-s); // top-left
+
+            // Fill bottom half: triangle with wide base at middle, narrows to point at bottom
+            for (int row = 2; row <= s; row++) {
+                int halfW = s - row;
+                SDL_RenderDrawLine(renderer, ox - halfW, oy + row, ox + halfW, oy + row);
+            }
+
+            // Handle: angled same direction as top-right edge (slope +1, going up-right from top corner)
+            int hLen = 3; // stay within icon box
+            SDL_RenderDrawLine(renderer, ox,      oy-s,      ox-hLen,   oy-s-hLen);
+            SDL_RenderDrawLine(renderer, ox-1,    oy-s,      ox-hLen-1, oy-s-hLen);
+
+            // Drip below bottom-right
+            int dx = ox + s + 2, dy = cy + 2;
+            SDL_RenderDrawPoint(renderer, dx,   dy  );
+            SDL_RenderDrawLine(renderer, dx-1, dy+1, dx+1, dy+1);
+            SDL_RenderDrawLine(renderer, dx-2, dy+2, dx+2, dy+2);
+            SDL_RenderDrawLine(renderer, dx-2, dy+3, dx+2, dy+3);
+            SDL_RenderDrawLine(renderer, dx-1, dy+4, dx+1, dy+4);
+            break;
+        }
     }
 }
 
@@ -123,11 +158,6 @@ void Toolbar::draw() {
     SDL_RenderDrawLine(renderer, TB_W-1, 0, TB_W-1, winH);
 
     // ── Tool buttons (3 per row) ──
-    const int toolGrid[3][3] = {{0,1,-1},{2,3,-1},{4,-1,-1}};
-    const ToolType toolTypes[] = {
-        ToolType::BRUSH, ToolType::LINE, ToolType::RECT,
-        ToolType::CIRCLE, ToolType::SELECT
-    };
     int cellW = (TB_W - TB_PAD) / 3;
     int ty = toolStartY();
     for (int row=0; row<3; row++) {
@@ -306,11 +336,6 @@ bool Toolbar::onMouseDown(int x, int y) {
     if (!inToolbar(x, y)) return false;
 
     // Tool buttons
-    const int toolGrid[3][3] = {{0,1,-1},{2,3,-1},{4,-1,-1}};
-    const ToolType toolTypes[] = {
-        ToolType::BRUSH, ToolType::LINE, ToolType::RECT,
-        ToolType::CIRCLE, ToolType::SELECT
-    };
     int cellW = (TB_W - TB_PAD) / 3;
     for (int row=0; row<3; row++) {
         for (int col=0; col<3; col++) {

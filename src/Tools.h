@@ -5,7 +5,7 @@
 #include "DrawingUtils.h"
 #include "Constants.h"
 
-enum class ToolType { BRUSH, LINE, RECT, CIRCLE, SELECT };
+enum class ToolType { BRUSH, LINE, RECT, CIRCLE, SELECT, FILL};
 
 class ICoordinateMapper {
   public:
@@ -25,7 +25,7 @@ class AbstractTool {
     virtual void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color);
     virtual void onMouseMove(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color);
     virtual bool onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color);
-    virtual void onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Color color) = 0;
+    virtual void onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Color color);
     virtual void onOverlayRender(SDL_Renderer* overlayRenderer);
     virtual bool hasOverlayContent();
     virtual void deactivate(SDL_Renderer* canvasRenderer);
@@ -79,4 +79,10 @@ class SelectTool : public AbstractTool {
     bool isHit(int cX, int cY) const;
     void activateWithTexture(SDL_Texture* tex, SDL_Rect area);
     bool hasOverlayContent() override;
+};
+
+class FillTool : public AbstractTool {
+  public:
+    using AbstractTool::AbstractTool;
+    void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
 };

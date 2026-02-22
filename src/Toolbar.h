@@ -10,7 +10,7 @@
 class kPen;
 
 class Toolbar {
-public:
+  public:
     static constexpr int TB_W      = 84;
     static constexpr int TB_PAD    = 6;
     static constexpr int ICON_SIZE = 24;
@@ -60,7 +60,7 @@ public:
     static SDL_Color hsvToRgb(float h, float s, float v);
     static void      rgbToHsv(SDL_Color c, float& h, float& s, float& v);
 
-private:
+  private:
     SDL_Renderer* renderer;
     kPen*         app;      // for setTool() callbacks
 
