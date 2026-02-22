@@ -4,6 +4,7 @@
 #include <iostream>
 #include <cmath>
 #include <memory>
+#include <functional>
 
 // Forward declarations and constants
 const int CANVAS_WIDTH = 1000;
@@ -18,67 +19,130 @@ namespace DrawingUtils {
             SDL_RenderDrawPoint(renderer, centerX, centerY);
             return;
         }
-        for (int w = -radius; w <= radius; w++) {
-            for (int h = -radius; h <= radius; h++) {
-                if ((w * w + h * h) <= (radius * radius)) {
-                    SDL_RenderDrawPoint(renderer, centerX + w, centerY + h);
-                }
-            }
+        for (int h = -radius; h <= radius; h++) {
+            int half = (int)std::sqrt((float)(radius * radius - h * h));
+            SDL_RenderDrawLine(renderer, centerX - half, centerY + h, centerX + half, centerY + h);
         }
     }
 
-    void drawLine(SDL_Renderer* renderer, int x1, int y1, int x2, int y2, int size) {
+    // Accumulates horizontal spans across multiple circle stamps, then flushes in one pass.
+    // Dramatically faster than calling drawFillCircle per outline point for thick brushes.
+    struct SpanBuffer {
+        int canvasW, canvasH;
+        std::vector<std::vector<std::pair<int,int>>> spans;
+
+        SpanBuffer(int w, int h) : canvasW(w), canvasH(h), spans(h) {}
+
+        void addCircle(int cx, int cy, int radius) {
+            int r = std::max(0, radius);
+            for (int h = -r; h <= r; h++) {
+                int row = cy + h;
+                if (row < 0 || row >= canvasH) continue;
+                int half = (int)std::sqrt((float)(r * r - h * h));
+                int x0 = std::max(0, cx - half);
+                int x1 = std::min(canvasW - 1, cx + half);
+                spans[row].push_back({x0, x1});
+            }
+        }
+
+        void flush(SDL_Renderer* renderer) {
+            for (int row = 0; row < canvasH; row++) {
+                for (auto& seg : spans[row])
+                    SDL_RenderDrawLine(renderer, seg.first, row, seg.second, row);
+            }
+        }
+    };
+
+    void drawLine(SDL_Renderer* renderer, int x1, int y1, int x2, int y2, int size, int w = CANVAS_WIDTH, int h = CANVAS_HEIGHT) {
         if (size <= 1) {
             SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
             return;
         }
         int radius = size / 2;
+        SpanBuffer spans(w, h);
         int dx = std::abs(x2 - x1);
         int dy = std::abs(y2 - y1);
         int sx = (x1 < x2) ? 1 : -1;
         int sy = (y1 < y2) ? 1 : -1;
         int err = dx - dy;
-
         while (true) {
-            drawFillCircle(renderer, x1, y1, radius);
+            spans.addCircle(x1, y1, radius);
             if (x1 == x2 && y1 == y2) break;
             int e2 = 2 * err;
             if (e2 > -dy) { err -= dy; x1 += sx; }
-            if (e2 < dx) { err += dx; y1 += sy; }
+            if (e2 < dx)  { err += dx; y1 += sy; }
         }
+        spans.flush(renderer);
     }
 
-    void drawRect(SDL_Renderer* renderer, const SDL_Rect* rect, int size) {
-        drawLine(renderer, rect->x, rect->y, rect->x + rect->w, rect->y, size); 
-        drawLine(renderer, rect->x + rect->w, rect->y, rect->x + rect->w, rect->y + rect->h, size); 
-        drawLine(renderer, rect->x + rect->w, rect->y + rect->h, rect->x, rect->y + rect->h, size); 
-        drawLine(renderer, rect->x, rect->y + rect->h, rect->x, rect->y, size); 
+    void drawRect(SDL_Renderer* renderer, const SDL_Rect* rect, int size, int w = CANVAS_WIDTH, int h = CANVAS_HEIGHT) {
+        drawLine(renderer, rect->x, rect->y, rect->x + rect->w, rect->y, size, w, h); 
+        drawLine(renderer, rect->x + rect->w, rect->y, rect->x + rect->w, rect->y + rect->h, size, w, h); 
+        drawLine(renderer, rect->x + rect->w, rect->y + rect->h, rect->x, rect->y + rect->h, size, w, h); 
+        drawLine(renderer, rect->x, rect->y + rect->h, rect->x, rect->y, size, w, h); 
     }
 
-    void drawOval(SDL_Renderer* renderer, int x0, int y0, int x1, int y1, int size) {
-        int left = std::min(x0, x1);
-        int top = std::min(y0, y1);
-        int width = std::abs(x1 - x0);
-        int height = std::abs(y1 - y0);
-        
-        if (width == 0 || height == 0) return;
+    void drawOval(SDL_Renderer* renderer, int x0, int y0, int x1, int y1, int size, int w = CANVAS_WIDTH, int h = CANVAS_HEIGHT) {
+        int left   = std::min(x0, x1);
+        int top    = std::min(y0, y1);
+        int right  = std::max(x0, x1);
+        int bottom = std::max(y0, y1);
 
-        float rx = width / 2.0f;
-        float ry = height / 2.0f;
-        float centerX = left + rx;
-        float centerY = top + ry;
+        if (left == right || top == bottom) return;
 
-        int radius = size / 2;
-        float h_val = pow(rx - ry, 2) / pow(rx + ry, 2);
-        float circumference = M_PI * (rx + ry) * (1 + (3 * h_val) / (10 + sqrt(4 - 3 * h_val)));
-        int steps = (int)std::max(circumference * 1.5f, 10.0f);
+        int cx = (left + right) / 2;
+        int cy = (top + bottom) / 2;
+        int rx = cx - left;
+        int ry = cy - top;
+        int brushRadius = size / 2;
 
-        for (int i = 0; i < steps; i++) {
-            float angle = 2.0f * M_PI * i / steps;
-            int x = (int)(centerX + rx * cos(angle));
-            int y = (int)(centerY + ry * sin(angle));
-            drawFillCircle(renderer, x, y, radius);
+        long rx2 = (long)rx * rx, ry2 = (long)ry * ry;
+
+        auto plot = [&](SpanBuffer& spans, int x, int y) {
+            spans.addCircle(cx + x, cy + y, brushRadius);
+            spans.addCircle(cx - x, cy + y, brushRadius);
+            spans.addCircle(cx + x, cy - y, brushRadius);
+            spans.addCircle(cx - x, cy - y, brushRadius);
+        };
+
+        SpanBuffer spans(w, h);
+
+        // Midpoint ellipse algorithm — decides pixel placement based on
+        // which candidate is closer to the true ellipse, giving rounder
+        // results at small radii compared to the sqrt-based approach.
+
+        // Region 1: slope magnitude < 1 (step in x)
+        int x = 0, y = ry;
+        long d1 = ry2 - rx2 * ry + rx2 / 4;
+        long dx = 2 * ry2 * x, dy = 2 * rx2 * y;
+        while (dx < dy) {
+            plot(spans, x, y);
+            x++;
+            dx += 2 * ry2;
+            if (d1 < 0) {
+                d1 += dx + ry2;
+            } else {
+                y--;
+                dy -= 2 * rx2;
+                d1 += dx - dy + ry2;
+            }
         }
+
+        // Region 2: slope magnitude >= 1 (step in y)
+        long d2 = ry2 * ((long)(x) * x + x) + rx2 * ((long)(y - 1) * (y - 1)) - rx2 * ry2;
+        while (y >= 0) {
+            plot(spans, x, y);
+            y--;
+            dy -= 2 * rx2;
+            if (d2 > 0) {
+                d2 += rx2 - dy;
+            } else {
+                x++;
+                dx += 2 * ry2;
+                d2 += dx - dy + rx2;
+            }
+        }
+        spans.flush(renderer);
     }
 
     void drawDottedRect(SDL_Renderer* renderer, const SDL_Rect* rect) {
@@ -161,10 +225,15 @@ public:
     void onPreviewRender(SDL_Renderer* winRenderer, int brushSize) override {}
 };
 
+// Callback: receives ownership of the shape texture and its canvas-space bounding rect
+using ShapeReadyCallback = std::function<void(SDL_Texture*, SDL_Rect)>;
+
 class ShapeTool : public AbstractTool {
     ToolType type;
+    ShapeReadyCallback onShapeReady;
 public:
-    ShapeTool(ICoordinateMapper* m, ToolType t) : AbstractTool(m), type(t) {}
+    ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb)
+        : AbstractTool(m), type(t), onShapeReady(std::move(cb)) {}
 
     void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
         isDrawing = true;
@@ -178,15 +247,82 @@ public:
             isDrawing = false;
             return false;
         }
-        SDL_SetRenderDrawColor(canvasRenderer, 0, 0, 0, 255);
-        if (type == ToolType::LINE) DrawingUtils::drawLine(canvasRenderer, startX, startY, cX, cY, brushSize);
-        else if (type == ToolType::RECT) {
-            SDL_Rect r = { std::min(startX, cX), std::min(startY, cY), std::abs(cX - startX), std::abs(cY - startY) };
-            DrawingUtils::drawRect(canvasRenderer, &r, brushSize);
+
+        int half = std::max(1, brushSize / 2);
+        int shapeMinX = std::min(startX, cX),  shapeMaxX = std::max(startX, cX);
+        int shapeMinY = std::min(startY, cY),  shapeMaxY = std::max(startY, cY);
+
+        // For RECT and CIRCLE, geometry is inset by half so the stroke outer edge
+        // lands exactly at the mouse coords — no extra padding needed.
+        // For LINE, stroke is centered on the path so half padding is still required.
+        SDL_Rect bounds;
+        if (type == ToolType::LINE) {
+            bounds = {
+                shapeMinX - half, shapeMinY - half,
+                (shapeMaxX - shapeMinX + 1) + half * 2,
+                (shapeMaxY - shapeMinY + 1) + half * 2
+            };
+        } else {
+            // For CIRCLE, snap the inset coords the same way drawOval will
+            if (type == ToolType::CIRCLE) {
+                int iMinX = shapeMinX + half, iMaxX = shapeMaxX - half;
+                int iMinY = shapeMinY + half, iMaxY = shapeMaxY - half;
+                int cx = (iMinX + iMaxX) / 2, rx = cx - iMinX;
+                int cy = (iMinY + iMaxY) / 2, ry = cy - iMinY;
+                shapeMinX = cx - rx - half; shapeMaxX = cx + rx + half;
+                shapeMinY = cy - ry - half; shapeMaxY = cy + ry + half;
+            }
+            bounds = {
+                shapeMinX, shapeMinY,
+                (shapeMaxX - shapeMinX + 1),
+                (shapeMaxY - shapeMinY + 1)
+            };
         }
-        else if (type == ToolType::CIRCLE) DrawingUtils::drawOval(canvasRenderer, startX, startY, cX, cY, brushSize);
+        // Clamp to canvas
+        int right  = std::min(bounds.x + bounds.w, CANVAS_WIDTH);
+        int bottom = std::min(bounds.y + bounds.h, CANVAS_HEIGHT);
+        bounds.x = std::max(0, bounds.x);
+        bounds.y = std::max(0, bounds.y);
+        bounds.w = right  - bounds.x;
+        bounds.h = bottom - bounds.y;
+        if (bounds.w <= 0 || bounds.h <= 0) { isDrawing = false; return false; }
+
+        // Create a transparent offscreen texture sized to the bounding rect
+        SDL_Texture* buf = SDL_CreateTexture(canvasRenderer, SDL_PIXELFORMAT_ARGB8888,
+                                             SDL_TEXTUREACCESS_TARGET, bounds.w, bounds.h);
+        SDL_SetTextureBlendMode(buf, SDL_BLENDMODE_BLEND);
+
+        // Render shape into buffer.
+        // IMPORTANT: local offsets must be computed from the post-clamp bounds origin,
+        // since that is what the texture is sized and positioned against.
+        SDL_SetRenderTarget(canvasRenderer, buf);
+        SDL_SetRenderDrawColor(canvasRenderer, 0, 0, 0, 0);
+        SDL_RenderClear(canvasRenderer);
+
+        int lsx = startX - bounds.x, lsy = startY - bounds.y;
+        int lcx = cX     - bounds.x, lcy = cY     - bounds.y;
+
+        SDL_SetRenderDrawColor(canvasRenderer, 0, 0, 0, 255);
+        if (type == ToolType::LINE)
+            DrawingUtils::drawLine(canvasRenderer, lsx, lsy, lcx, lcy, brushSize);
+        else if (type == ToolType::RECT) {
+            SDL_Rect r = { std::min(lsx, lcx) + half, std::min(lsy, lcy) + half,
+                           std::abs(lcx - lsx) - half * 2, std::abs(lcy - lsy) - half * 2 };
+            if (r.w > 0 && r.h > 0) DrawingUtils::drawRect(canvasRenderer, &r, brushSize);
+        }
+        else if (type == ToolType::CIRCLE)
+            DrawingUtils::drawOval(canvasRenderer, lsx + half, lsy + half, lcx - half, lcy - half, brushSize);
+
+        // Restore render target to canvas (kPen set it to canvas before calling us)
+        SDL_SetRenderTarget(canvasRenderer, nullptr);
+
         isDrawing = false;
-        return true;
+
+        // Hand texture off to kPen which will switch to SelectTool with it pre-loaded
+        if (onShapeReady) onShapeReady(buf, bounds);
+
+        // Canvas unchanged — return false so kPen doesn't push an undo state here
+        return false;
     }
 
     void onPreviewRender(SDL_Renderer* winRenderer, int brushSize) override {
@@ -204,12 +340,16 @@ public:
         int scaledBrush = mapper->getWindowSize(brushSize);
         SDL_SetRenderDrawColor(winRenderer, 150, 150, 150, 255);
 
-        if (type == ToolType::LINE) DrawingUtils::drawLine(winRenderer, winStartX, winStartY, winCurX, winCurY, scaledBrush);
+        int winW, winH;
+        SDL_GetRendererOutputSize(winRenderer, &winW, &winH);
+        int scaledHalf = scaledBrush / 2;
+        if (type == ToolType::LINE) DrawingUtils::drawLine(winRenderer, winStartX, winStartY, winCurX, winCurY, scaledBrush, winW, winH);
         else if (type == ToolType::RECT) {
-            SDL_Rect r = { std::min(winStartX, winCurX), std::min(winStartY, winCurY), std::abs(winCurX - winStartX), std::abs(winCurY - winStartY) };
-            DrawingUtils::drawRect(winRenderer, &r, scaledBrush);
+            SDL_Rect r = { std::min(winStartX, winCurX) + scaledHalf, std::min(winStartY, winCurY) + scaledHalf,
+                           std::abs(winCurX - winStartX) - scaledHalf * 2, std::abs(winCurY - winStartY) - scaledHalf * 2 };
+            if (r.w > 0 && r.h > 0) DrawingUtils::drawRect(winRenderer, &r, scaledBrush, winW, winH);
         }
-        else if (type == ToolType::CIRCLE) DrawingUtils::drawOval(winRenderer, winStartX, winStartY, winCurX, winCurY, scaledBrush);
+        else if (type == ToolType::CIRCLE) DrawingUtils::drawOval(winRenderer, winStartX + scaledHalf, winStartY + scaledHalf, winCurX - scaledHalf, winCurY - scaledHalf, scaledBrush, winW, winH);
     }
 };
 
@@ -286,9 +426,24 @@ public:
     }
 
     void onOverlayRender(SDL_Renderer* overlayRenderer) override {
+        // Drag preview while the user is drawing a selection
+        if (isDrawing) {
+            int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
+            int curX, curY; mapper->getCanvasCoords(mouseX, mouseY, &curX, &curY);
+            SDL_Rect r = {
+                std::min(startX, curX) - 1, std::min(startY, curY) - 1,
+                std::abs(curX - startX) + 1, std::abs(curY - startY) + 1
+            };
+            SDL_SetRenderDrawColor(overlayRenderer, 0, 0, 0, 255);
+            DrawingUtils::drawDottedRect(overlayRenderer, &r);
+        }
+
         if (state.active && state.selectionTexture) {
-            // Render the "knot" selection content only
             SDL_RenderCopy(overlayRenderer, state.selectionTexture, NULL, &state.area);
+            // Outline is drawn 1px outside so it never overlaps the content pixels
+            SDL_Rect outline = { state.area.x - 1, state.area.y - 1, state.area.w + 1, state.area.h + 1 };
+            SDL_SetRenderDrawColor(overlayRenderer, 0, 0, 0, 255);
+            DrawingUtils::drawDottedRect(overlayRenderer, &outline);
         }
     }
 
@@ -309,29 +464,17 @@ public:
         return state.active && SDL_PointInRect(&pt, &state.area);
     }
 
-    void onPreviewRender(SDL_Renderer* winRenderer, int brushSize) override {
-        if (isDrawing) {
-            int winStartX, winStartY, winCurX, winCurY;
-            mapper->getWindowCoords(startX, startY, &winStartX, &winStartY);
-            
-            int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
-            int curX, curY; mapper->getCanvasCoords(mouseX, mouseY, &curX, &curY);
-            mapper->getWindowCoords(curX, curY, &winCurX, &winCurY);
-            
-            SDL_Rect r = { std::min(winStartX, winCurX), std::min(winStartY, winCurY), std::abs(winCurX - winStartX), std::abs(winCurY - winStartY) };
-            SDL_SetRenderDrawColor(winRenderer, 0, 0, 0, 255);
-            DrawingUtils::drawDottedRect(winRenderer, &r);
-        }
-
-        if (state.active) {
-            int wX, wY, wX2, wY2;
-            mapper->getWindowCoords(state.area.x, state.area.y, &wX, &wY);
-            mapper->getWindowCoords(state.area.x + state.area.w, state.area.y + state.area.h, &wX2, &wY2);
-            SDL_Rect scaledRect = { wX, wY, wX2 - wX, wY2 - wY };
-            SDL_SetRenderDrawColor(winRenderer, 0, 0, 0, 255);
-            DrawingUtils::drawDottedRect(winRenderer, &scaledRect);
-        }
+    // Called by kPen after a ShapeTool finishes: injects a pre-rendered texture as the active selection
+    void activateWithTexture(SDL_Texture* tex, SDL_Rect area) {
+        if (state.selectionTexture) SDL_DestroyTexture(state.selectionTexture);
+        state.selectionTexture = tex;
+        state.area = area;
+        state.active = true;
+        state.isMoving = false;
+        isDrawing = false;
     }
+
+    void onPreviewRender(SDL_Renderer* winRenderer, int brushSize) override {}
 };
 
 class kPen : public ICoordinateMapper {
@@ -416,11 +559,22 @@ public:
         currentType = t;
         switch(t) {
             case ToolType::BRUSH: currentTool = std::make_unique<BrushTool>(this); break;
-            case ToolType::LINE:  currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE); break;
-            case ToolType::RECT:  currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT); break;
-            case ToolType::CIRCLE:currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE); break;
+            case ToolType::LINE:  currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE,   [this](SDL_Texture* tex, SDL_Rect r){ activateShapeSelection(tex, r); }); break;
+            case ToolType::RECT:  currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT,   [this](SDL_Texture* tex, SDL_Rect r){ activateShapeSelection(tex, r); }); break;
+            case ToolType::CIRCLE:currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE, [this](SDL_Texture* tex, SDL_Rect r){ activateShapeSelection(tex, r); }); break;
             case ToolType::SELECT:currentTool = std::make_unique<SelectTool>(this); break;
         }
+    }
+
+    // Switches to SELECT mode and injects the shape texture as the floating selection
+    void activateShapeSelection(SDL_Texture* tex, SDL_Rect bounds) {
+        // Switch tool to SELECT without deactivating (there's nothing active yet)
+        currentType = ToolType::SELECT;
+        currentTool = std::make_unique<SelectTool>(this);
+        auto* st = static_cast<SelectTool*>(currentTool.get());
+        st->activateWithTexture(tex, bounds);
+        // Save undo state so the user can undo committing the shape
+        saveState(undoStack);
     }
 
     void saveState(std::vector<std::vector<uint32_t>>& stack) {
