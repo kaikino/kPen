@@ -606,24 +606,22 @@ private:
     };
     int selectedCustomSlot = -1; // -1 = none selected
     int selectedPresetSlot = -1; // -1 = none selected
-    bool draggingPreset = false;
-    int  draggingPresetIdx = -1;
+    bool draggingSwatch = false;
+    int  draggingSwatchIdx = -1;
 
     // Preset colors (27 total, 3 per row = 9 rows)
     static constexpr SDL_Color PRESETS[27] = {
         {255,255,255,255},{0,0,0,255},      {64,64,64,255},    // white, black, dark grey
         {128,128,128,255},{180,180,180,255},{220,220,220,255},  // grey, light grey, lighter grey
         {101,55,0,255},   {160,100,40,255}, {210,170,110,255}, // brown, light brown, lighter brown
-        {139,0,0,255},    {240,40,50,255},  {255,120,100,255}, // dark red, red, light red
+        {180,0,0,255},    {255,80,80,255},  {255,180,190,255}, // red, light red, pink
         {230,100,0,255},  {255,165,60,255}, {255,230,0,255},   // orange, light orange, yellow
-        {200,0,140,255},  {255,0,180,255},  {255,170,230,255}, // dark pink, magenta, light magenta
-        {55,0,130,255},   {128,0,200,255},  {210,150,255,255}, // indigo, purple, light purple
-        {0,0,160,255},    {30,100,220,255}, {140,190,255,255}, // dark blue, blue, light blue
         {0,100,0,255},    {34,160,34,255},  {140,220,140,255}, // dark green, green, light green
+        {0,0,160,255},    {30,100,220,255}, {140,190,255,255}, // dark blue, blue, light blue
+        {55,0,130,255},   {128,0,200,255},  {210,150,255,255}, // indigo, purple, light purple
+        {148,0,211,255},  {255,0,180,255},  {255,170,230,255}, // violet, magenta, light magenta
     };
-    // Rect storage for hit-testing (filled during draw)
-    SDL_Rect customSwatchRects[NUM_CUSTOM];
-    SDL_Rect presetSwatchRects[27];
+
 
     static SDL_Color hsvToRgb(float h, float s, float v) {
         h = fmod(h, 1.f) * 6.f;
@@ -754,6 +752,37 @@ public:
     int sliderSectionY() const { return toolStartY() + 3*(ICON_SIZE+ICON_GAP) + 2 + 20 + 2; }
     int sliderSectionH() const { return 14; }
 
+    // Swatch grid geometry helpers — single source of truth for draw + hit-test
+    int swatchCellSize()    const { return (TB_W - TB_PAD*2 - 4) / 3; }
+    int swatchCellStride()  const { return swatchCellSize() + 2; }
+    // Custom grid: origin is below brightness bar — computed at draw time and cached
+    // We cache just the top-Y of each grid since it depends on window height via wheel.
+    // Instead, hit-testing reads customGridY / presetGridY which are set during draw.
+    mutable int customGridY = 0;
+    mutable int presetGridY = 0;
+
+    // Given a point, returns the swatch index (0-based) or -1 if not in the grid.
+    int hitCustomSwatch(int x, int y) const {
+        int sz = swatchCellSize(), stride = swatchCellStride();
+        int lx = x - TB_PAD, ly = y - customGridY;
+        if(lx < 0 || ly < 0) return -1;
+        int col = lx / stride, row = ly / stride;
+        if(col >= 3 || row >= 3) return -1;
+        // Check we're inside the cell (not in the 2px gap)
+        if(lx % stride >= sz || ly % stride >= sz) return -1;
+        return row * 3 + col;
+    }
+
+    int hitPresetSwatch(int x, int y) const {
+        int sz = swatchCellSize(), stride = swatchCellStride();
+        int lx = x - TB_PAD, ly = y - presetGridY;
+        if(lx < 0 || ly < 0) return -1;
+        int col = lx / stride, row = ly / stride;
+        if(col >= 3 || row >= 9) return -1;
+        if(lx % stride >= sz || ly % stride >= sz) return -1;
+        return row * 3 + col;
+    }
+
     // ── Icon drawing ─────────────────────────────────────────────────────────
     void drawIcon(int cx, int cy, ToolType t, bool active) {
         SDL_Color fg = active ? SDL_Color{255,255,255,255} : SDL_Color{160,160,170,255};
@@ -860,7 +889,7 @@ public:
         int previewCY = labelY + previewAreaH / 2;
         int maxR = previewAreaH / 2 - 1;
         int dotR = std::max(1, (int)((brushSize / 20.f) * maxR + 0.5f));
-        SDL_SetRenderDrawColor(renderer, brushColor.r, brushColor.g, brushColor.b, 255);
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
         for(int py = -dotR; py <= dotR; py++)
             for(int px = -dotR; px <= dotR; px++)
                 if(px*px + py*py <= dotR*dotR)
@@ -943,57 +972,52 @@ public:
 
         // ── Custom color slots (3x3, configurable) ───────────────────────────
         int csy = bTop + bH + 7;
-        // Section label line
         SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
         SDL_RenderDrawLine(renderer, TB_PAD, csy, TB_W-TB_PAD, csy);
         csy += 4;
-        int csz = (TB_W - TB_PAD*2 - 4) / 3; // swatch size
+        customGridY = csy; // cache for O(1) hit-testing
+        int sz = swatchCellSize(), stride = swatchCellStride();
         for(int i = 0; i < NUM_CUSTOM; i++) {
             int col = i % 3, row = i / 3;
-            int sx = TB_PAD + col*(csz+2);
-            int sy = csy + row*(csz+2);
-            customSwatchRects[i] = {sx, sy, csz, csz};
+            int sx = TB_PAD + col*stride, sy = csy + row*stride;
+            SDL_Rect r = {sx, sy, sz, sz};
             SDL_SetRenderDrawColor(renderer, customColors[i].r, customColors[i].g, customColors[i].b, 255);
-            SDL_RenderFillRect(renderer, &customSwatchRects[i]);
-            // Border: white+black double border for selected, dim for others
+            SDL_RenderFillRect(renderer, &r);
             if(i == selectedCustomSlot) {
-                SDL_Rect outer = {sx-2, sy-2, csz+4, csz+4};
+                SDL_Rect outer = {sx-2, sy-2, sz+4, sz+4};
                 SDL_SetRenderDrawColor(renderer, 255,255,255,255);
                 SDL_RenderDrawRect(renderer, &outer);
-                SDL_Rect inner = {sx-1, sy-1, csz+2, csz+2};
+                SDL_Rect inner = {sx-1, sy-1, sz+2, sz+2};
                 SDL_SetRenderDrawColor(renderer, 0,0,0,255);
                 SDL_RenderDrawRect(renderer, &inner);
             } else {
                 SDL_SetRenderDrawColor(renderer, 70,70,80,255);
-                SDL_RenderDrawRect(renderer, &customSwatchRects[i]);
+                SDL_RenderDrawRect(renderer, &r);
             }
         }
 
-        // ── Preset colors (21, 3 per row = 7 rows) ───────────────────────────
-        int psy = csy + 3*(csz+2) + 7;
+        // ── Preset colors (27, 3 per row = 9 rows) ───────────────────────────
+        int psy = csy + 3*stride + 7;
         SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
         SDL_RenderDrawLine(renderer, TB_PAD, psy, TB_W-TB_PAD, psy);
         psy += 4;
-        int psz = (TB_W - TB_PAD*2 - 4) / 3;
+        presetGridY = psy; // cache for O(1) hit-testing
         for(int i = 0; i < 27; i++) {
             int col = i % 3, row = i / 3;
-            int sx = TB_PAD + col*(psz+2);
-            int sy = psy + row*(psz+2);
-            presetSwatchRects[i] = {sx, sy, psz, psz};
+            int sx = TB_PAD + col*stride, sy = psy + row*stride;
+            SDL_Rect r = {sx, sy, sz, sz};
             SDL_SetRenderDrawColor(renderer, PRESETS[i].r, PRESETS[i].g, PRESETS[i].b, 255);
-            SDL_RenderFillRect(renderer, &presetSwatchRects[i]);
-            // Highlight if this preset matches current brush color
-            bool match = (i == selectedPresetSlot);
-            if(match) {
-                SDL_Rect outer = {sx-2, sy-2, psz+4, psz+4};
+            SDL_RenderFillRect(renderer, &r);
+            if(i == selectedPresetSlot) {
+                SDL_Rect outer = {sx-2, sy-2, sz+4, sz+4};
                 SDL_SetRenderDrawColor(renderer, 255,255,255,255);
                 SDL_RenderDrawRect(renderer, &outer);
-                SDL_Rect inner = {sx-1, sy-1, psz+2, psz+2};
+                SDL_Rect inner = {sx-1, sy-1, sz+2, sz+2};
                 SDL_SetRenderDrawColor(renderer, 0,0,0,255);
                 SDL_RenderDrawRect(renderer, &inner);
             } else {
                 SDL_SetRenderDrawColor(renderer, 70,70,80,255);
-                SDL_RenderDrawRect(renderer, &presetSwatchRects[i]);
+                SDL_RenderDrawRect(renderer, &r);
             }
         }
     }
@@ -1054,36 +1078,38 @@ public:
             return true;
         }
 
-        // Custom color slots — click selected slot deselects it
-        for(int i = 0; i < NUM_CUSTOM; i++) {
-            SDL_Point cpt = {x, y};
-            if(SDL_PointInRect(&cpt, &customSwatchRects[i])) {
+        // Custom color slots — O(1) grid math hit-test
+        {
+            int i = hitCustomSwatch(x, y);
+            if(i >= 0) {
                 if(selectedCustomSlot == i) {
-                    selectedCustomSlot = -1; // deselect
+                    selectedCustomSlot = -1;
                 } else {
                     selectedCustomSlot = i;
                     selectedPresetSlot = -1;
                     brushColor = customColors[i];
                     rgbToHsv(brushColor, hue, sat, val);
                 }
+                draggingSwatch = true;
+                draggingSwatchIdx = i;
                 return true;
             }
         }
 
-        // Preset color swatches — click selected deselects; otherwise select + drag
-        for(int i = 0; i < 27; i++) {
-            SDL_Point ppt = {x, y};
-            if(SDL_PointInRect(&ppt, &presetSwatchRects[i])) {
+        // Preset swatches — O(1) grid math hit-test
+        {
+            int i = hitPresetSwatch(x, y);
+            if(i >= 0 && i < 27) {
                 if(selectedPresetSlot == i) {
-                    selectedPresetSlot = -1; // deselect
+                    selectedPresetSlot = -1;
                 } else {
                     selectedPresetSlot = i;
                     selectedCustomSlot = -1;
-                    draggingPreset = true;
-                    draggingPresetIdx = i;
                     brushColor = PRESETS[i];
                     rgbToHsv(brushColor, hue, sat, val);
                 }
+                draggingSwatch = true;
+                draggingSwatchIdx = i + NUM_CUSTOM; // index in combined preset+custom list
                 return true;
             }
         }
@@ -1095,33 +1121,34 @@ public:
         if(draggingSlider)      { updateSliderFromMouse(x);    return true; }
         if(draggingWheel)       { updateWheelFromMouse(x,y);  return true; }
         if(draggingBrightness)  { updateBrightnessFromMouse(x); return true; }
-        if(draggingPreset)      { return true; } // absorb motion, drop handled on up
+        if(draggingSwatch)      { return true; } // absorb motion, drop handled on up
         return inToolbar(x,y);
     }
 
     void handleToolbarUp(int x, int y) {
         // Preset drag → drop onto custom slot copies the color
-        if(draggingPreset && draggingPresetIdx >= 0) {
-            for(int i = 0; i < NUM_CUSTOM; i++) {
-                SDL_Point pt = {x, y};
-                if(SDL_PointInRect(&pt, &customSwatchRects[i])) {
-                    customColors[i] = PRESETS[draggingPresetIdx];
-                    selectedCustomSlot = i;
-                    selectedPresetSlot = -1;
-                    brushColor = customColors[i];
-                    rgbToHsv(brushColor, hue, sat, val);
-                    break;
+        if(draggingSwatch && draggingSwatchIdx >= 0) {
+            int i = hitCustomSwatch(x, y);
+            if(i >= 0 && i != draggingSwatchIdx) {
+                if (draggingSwatchIdx < NUM_CUSTOM) {
+                    customColors[i] = customColors[draggingSwatchIdx];
+                } else {
+                    customColors[i] = PRESETS[draggingSwatchIdx - NUM_CUSTOM];
                 }
+                selectedCustomSlot = i;
+                selectedPresetSlot = -1;
+                brushColor = customColors[i];
+                rgbToHsv(brushColor, hue, sat, val);
             }
         }
-        draggingPreset = false;
-        draggingPresetIdx = -1;
+        draggingSwatch = false;
+        draggingSwatchIdx = -1;
         draggingSlider = false;
         draggingWheel = false;
         draggingBrightness = false;
     }
 
-    bool isDraggingToolbar() const { return draggingWheel || draggingBrightness || draggingSlider || draggingPreset; }
+    bool isDraggingToolbar() const { return draggingWheel || draggingBrightness || draggingSlider || draggingSwatch; }
 
     void updateSliderFromMouse(int x) {
         int sX = TB_PAD, sW = TB_W - TB_PAD*2;
