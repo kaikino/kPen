@@ -354,13 +354,40 @@ public:
 };
 
 class SelectTool : public AbstractTool {
+    enum class Handle { NONE, N, S, E, W, NE, NW, SE, SW };
+
     struct SelectionState {
         bool active = false;
         SDL_Rect area = {0, 0, 0, 0};
         SDL_Texture* selectionTexture = nullptr;
         bool isMoving = false;
         int dragOffsetX = 0, dragOffsetY = 0;
+        Handle resizing = Handle::NONE;
+        // Anchor edge positions kept fixed during resize
+        int anchorX = 0, anchorY = 0;
     } state;
+
+    static const int GRAB = 6; // canvas-pixel grab margin for handles
+
+    Handle getHandle(int cX, int cY) const {
+        if (!state.active) return Handle::NONE;
+        const SDL_Rect& a = state.area;
+        bool onL = std::abs(cX - a.x) <= GRAB;
+        bool onR = std::abs(cX - (a.x + a.w)) <= GRAB;
+        bool onT = std::abs(cY - a.y) <= GRAB;
+        bool onB = std::abs(cY - (a.y + a.h)) <= GRAB;
+        bool inX = cX >= a.x - GRAB && cX <= a.x + a.w + GRAB;
+        bool inY = cY >= a.y - GRAB && cY <= a.y + a.h + GRAB;
+        if (onL && onT) return Handle::NW;
+        if (onR && onT) return Handle::NE;
+        if (onL && onB) return Handle::SW;
+        if (onR && onB) return Handle::SE;
+        if (onT && inX) return Handle::N;
+        if (onB && inX) return Handle::S;
+        if (onL && inY) return Handle::W;
+        if (onR && inY) return Handle::E;
+        return Handle::NONE;
+    }
 
 public:
     using AbstractTool::AbstractTool;
@@ -371,6 +398,16 @@ public:
 
     void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
         if (state.active) {
+            Handle h = getHandle(cX, cY);
+            if (h != Handle::NONE) {
+                state.resizing = h;
+                // Store the opposite edge as the fixed anchor
+                state.anchorX = (h == Handle::W || h == Handle::NW || h == Handle::SW)
+                    ? state.area.x + state.area.w : state.area.x;
+                state.anchorY = (h == Handle::N || h == Handle::NW || h == Handle::NE)
+                    ? state.area.y + state.area.h : state.area.y;
+                return;
+            }
             SDL_Point pt = {cX, cY};
             if (SDL_PointInRect(&pt, &state.area)) {
                 state.isMoving = true;
@@ -383,7 +420,31 @@ public:
     }
 
     void onMouseMove(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
-        if (state.isMoving) {
+        if (state.resizing != Handle::NONE) {
+            Handle h = state.resizing;
+            int newX = state.area.x, newY = state.area.y;
+            int newW = state.area.w, newH = state.area.h;
+            // Update the dragged edge(s), keep anchor fixed
+            if (h == Handle::W || h == Handle::NW || h == Handle::SW) {
+                newX = std::min(cX, state.anchorX);
+                newW = std::abs(state.anchorX - cX);
+            }
+            if (h == Handle::E || h == Handle::NE || h == Handle::SE) {
+                newX = std::min(cX, state.anchorX);
+                newW = std::abs(cX - state.anchorX);
+            }
+            if (h == Handle::N || h == Handle::NW || h == Handle::NE) {
+                newY = std::min(cY, state.anchorY);
+                newH = std::abs(state.anchorY - cY);
+            }
+            if (h == Handle::S || h == Handle::SW || h == Handle::SE) {
+                newY = std::min(cY, state.anchorY);
+                newH = std::abs(cY - state.anchorY);
+            }
+            if (newW > 0 && newH > 0) {
+                state.area = { newX, newY, newW, newH };
+            }
+        } else if (state.isMoving) {
             state.area.x = cX - state.dragOffsetX;
             state.area.y = cY - state.dragOffsetY;
         } else if (isDrawing) {
@@ -393,6 +454,10 @@ public:
     }
 
     bool onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
+        if (state.resizing != Handle::NONE) {
+            state.resizing = Handle::NONE;
+            return false;
+        }
         if (state.isMoving) {
             state.isMoving = false;
             return false; 
@@ -409,24 +474,21 @@ public:
             state.selectionTexture = SDL_CreateTexture(canvasRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, state.area.w, state.area.h);
             SDL_SetTextureBlendMode(state.selectionTexture, SDL_BLENDMODE_BLEND);
 
-            // Read pixels directly from the current canvas target
             std::vector<uint32_t> pixels(state.area.w * state.area.h);
             SDL_RenderReadPixels(canvasRenderer, &state.area, SDL_PIXELFORMAT_ARGB8888, pixels.data(), state.area.w * 4);
             SDL_UpdateTexture(state.selectionTexture, NULL, pixels.data(), state.area.w * 4);
 
-            // Clear the area on the main canvas to WHITE
             SDL_SetRenderDrawColor(canvasRenderer, 255, 255, 255, 255);
             SDL_RenderFillRect(canvasRenderer, &state.area);
             
             state.active = true;
             isDrawing = false;
-            return true; // Return true to save undo state after the selection "cut"
+            return true;
         }
         return false;
     }
 
     void onOverlayRender(SDL_Renderer* overlayRenderer) override {
-        // Drag preview while the user is drawing a selection
         if (isDrawing) {
             int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
             int curX, curY; mapper->getCanvasCoords(mouseX, mouseY, &curX, &curY);
@@ -440,16 +502,33 @@ public:
 
         if (state.active && state.selectionTexture) {
             SDL_RenderCopy(overlayRenderer, state.selectionTexture, NULL, &state.area);
-            // Outline is drawn 1px outside so it never overlaps the content pixels
             SDL_Rect outline = { state.area.x - 1, state.area.y - 1, state.area.w + 1, state.area.h + 1 };
             SDL_SetRenderDrawColor(overlayRenderer, 0, 0, 0, 255);
             DrawingUtils::drawDottedRect(overlayRenderer, &outline);
+
+            // Draw 8 handle squares at corners and edge midpoints
+            const int hs = 3; // half-size of handle square in canvas pixels
+            int mx = state.area.x + state.area.w / 2;
+            int my = state.area.y + state.area.h / 2;
+            int r = state.area.x + state.area.w;
+            int b = state.area.y + state.area.h;
+            SDL_Point handles[] = {
+                {state.area.x, state.area.y}, {mx, state.area.y}, {r, state.area.y},
+                {state.area.x, my},                                {r, my},
+                {state.area.x, b},             {mx, b},            {r, b}
+            };
+            for (auto& p : handles) {
+                SDL_Rect sq = { p.x - hs, p.y - hs, hs * 2, hs * 2 };
+                SDL_SetRenderDrawColor(overlayRenderer, 255, 255, 255, 255);
+                SDL_RenderFillRect(overlayRenderer, &sq);
+                SDL_SetRenderDrawColor(overlayRenderer, 0, 0, 0, 255);
+                SDL_RenderDrawRect(overlayRenderer, &sq);
+            }
         }
     }
 
     void deactivate(SDL_Renderer* canvasRenderer) override {
         if (!state.active) return;
-        // Merge selection back to canvas
         if (state.selectionTexture) {
             SDL_RenderCopy(canvasRenderer, state.selectionTexture, NULL, &state.area);
             SDL_DestroyTexture(state.selectionTexture);
@@ -460,17 +539,19 @@ public:
 
     bool isSelectionActive() const { return state.active; }
     bool isHit(int cX, int cY) const {
+        if (!state.active) return false;
+        // Consider a hit if clicking inside OR on a handle
         SDL_Point pt = {cX, cY};
-        return state.active && SDL_PointInRect(&pt, &state.area);
+        return SDL_PointInRect(&pt, &state.area) || getHandle(cX, cY) != Handle::NONE;
     }
 
-    // Called by kPen after a ShapeTool finishes: injects a pre-rendered texture as the active selection
     void activateWithTexture(SDL_Texture* tex, SDL_Rect area) {
         if (state.selectionTexture) SDL_DestroyTexture(state.selectionTexture);
         state.selectionTexture = tex;
         state.area = area;
         state.active = true;
         state.isMoving = false;
+        state.resizing = Handle::NONE;
         isDrawing = false;
     }
 
