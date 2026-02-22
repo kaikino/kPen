@@ -1,31 +1,58 @@
-name: Build Windows EXE
+name: Build Multi-Platform
 
 on: [push, pull_request]
 
 jobs:
   build:
-    runs-on: windows-latest
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: kPen-Windows.exe
+          - os: ubuntu-latest
+            artifact: kPen-Linux
+          - os: macos-latest
+            artifact: kPen-Mac
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Static SDL2 via vcpkg
+    # --- WINDOWS BUILD ---
+    - name: Windows - Install SDL2 & Build
+      if: matrix.os == 'windows-latest'
       run: |
         vcpkg install sdl2:x64-windows-static
-
-    - name: Configure CMake
-      run: |
         cmake -B build -S . `
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
           -DVCPKG_TARGET_TRIPLET=x64-windows-static `
           -DCMAKE_CXX_FLAGS="/DSDL_MAIN_HANDLED" `
           -DCMAKE_EXE_LINKER_FLAGS="/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
+        cmake --build build --config Release
 
-    - name: Build
-      run: cmake --build build --config Release
+    # --- LINUX BUILD ---
+    - name: Linux - Install SDL2 & Build
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsdl2-dev
+        cmake -B build -S .
+        cmake --build build --config Release
 
+    # --- MAC BUILD ---
+    - name: macOS - Install SDL2 & Build
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install sdl2
+        cmake -B build -S .
+        cmake --build build --config Release
+
+    # --- UPLOAD RESULTS ---
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: kPen-windows
-        path: build/Release/*.exe
+        name: ${{ matrix.artifact }}
+        path: |
+          build/Release/kPen.exe
+          build/kPen
