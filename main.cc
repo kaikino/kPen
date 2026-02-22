@@ -238,9 +238,6 @@ public:
                 state.dragOffsetX = cX - state.area.x;
                 state.dragOffsetY = cY - state.area.y;
                 return;
-            } else {
-                // If we click outside an existing selection, it deactivates (handled in main loop)
-                return;
             }
         }
         AbstractTool::onMouseDown(cX, cY, canvasRenderer, brushSize);
