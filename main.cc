@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 #include <SDL2/SDL.h>
 #include <vector>
 #include <algorithm>
@@ -179,26 +180,26 @@ public:
     AbstractTool(ICoordinateMapper* m) : mapper(m) {}
     virtual ~AbstractTool() {}
 
-    virtual void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) {
+    virtual void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
         isDrawing = true;
         startX = lastX = cX;
         startY = lastY = cY;
     }
 
-    virtual void onMouseMove(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) {
+    virtual void onMouseMove(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
         if (isDrawing) {
             lastX = cX;
             lastY = cY;
         }
     }
 
-    virtual bool onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) {
+    virtual bool onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
         bool changed = isDrawing;
         isDrawing = false;
         return changed;
     }
 
-    virtual void onPreviewRender(SDL_Renderer* winRenderer, int brushSize) = 0;
+    virtual void onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Color color) = 0;
     virtual void onOverlayRender(SDL_Renderer* overlayRenderer) {}
     virtual bool hasOverlayContent() { return false; }
     virtual void deactivate(SDL_Renderer* canvasRenderer) {}
@@ -208,22 +209,22 @@ class BrushTool : public AbstractTool {
 public:
     using AbstractTool::AbstractTool;
 
-    void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
-        AbstractTool::onMouseDown(cX, cY, canvasRenderer, brushSize);
-        SDL_SetRenderDrawColor(canvasRenderer, 0, 0, 0, 255);
+    void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) override {
+        AbstractTool::onMouseDown(cX, cY, canvasRenderer, brushSize, color);
+        SDL_SetRenderDrawColor(canvasRenderer, color.r, color.g, color.b, 255);
         DrawingUtils::drawFillCircle(canvasRenderer, cX, cY, brushSize / 2);
     }
 
-    void onMouseMove(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
+    void onMouseMove(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) override {
         if (isDrawing) {
-            SDL_SetRenderDrawColor(canvasRenderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(canvasRenderer, color.r, color.g, color.b, 255);
             DrawingUtils::drawLine(canvasRenderer, lastX, lastY, cX, cY, brushSize);
             lastX = cX;
             lastY = cY;
         }
     }
 
-    void onPreviewRender(SDL_Renderer* winRenderer, int brushSize) override {}
+    void onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Color color) override {}
 };
 
 // Callback: receives ownership of the shape texture and its canvas-space bounding rect
@@ -236,13 +237,13 @@ public:
     ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb)
         : AbstractTool(m), type(t), onShapeReady(std::move(cb)) {}
 
-    void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
+    void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) override {
         isDrawing = true;
         startX = lastX = cX;
         startY = lastY = cY;
     }
 
-    bool onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
+    bool onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) override {
         if (!isDrawing) return false;
         if (cX == startX && cY == startY) {
             isDrawing = false;
@@ -303,7 +304,7 @@ public:
         int lsx = startX - bounds.x, lsy = startY - bounds.y;
         int lcx = cX     - bounds.x, lcy = cY     - bounds.y;
 
-        SDL_SetRenderDrawColor(canvasRenderer, 0, 0, 0, 255);
+        SDL_SetRenderDrawColor(canvasRenderer, color.r, color.g, color.b, 255);
         if (type == ToolType::LINE)
             DrawingUtils::drawLine(canvasRenderer, lsx, lsy, lcx, lcy, brushSize);
         else if (type == ToolType::RECT) {
@@ -326,7 +327,7 @@ public:
         return false;
     }
 
-    void onPreviewRender(SDL_Renderer* winRenderer, int brushSize) override {
+    void onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Color color) override {
         if (!isDrawing) return;
         int winStartX, winStartY, winCurX, winCurY;
         mapper->getWindowCoords(startX, startY, &winStartX, &winStartY);
@@ -397,7 +398,7 @@ public:
         if (state.selectionTexture) SDL_DestroyTexture(state.selectionTexture);
     }
 
-    void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
+    void onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) override {
         if (state.active) {
             Handle h = getHandle(cX, cY);
             if (h != Handle::NONE) {
@@ -417,10 +418,10 @@ public:
                 return;
             }
         }
-        AbstractTool::onMouseDown(cX, cY, canvasRenderer, brushSize);
+        AbstractTool::onMouseDown(cX, cY, canvasRenderer, brushSize, color);
     }
 
-    void onMouseMove(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
+    void onMouseMove(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) override {
         if (state.resizing != Handle::NONE) {
             Handle h = state.resizing;
             int newX = state.area.x, newY = state.area.y;
@@ -454,7 +455,7 @@ public:
         }
     }
 
-    bool onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize) override {
+    bool onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) override {
         if (state.resizing != Handle::NONE) {
             state.resizing = Handle::NONE;
             return false;
@@ -557,7 +558,7 @@ public:
     }
 
     bool hasOverlayContent() override { return state.active || isDrawing; }
-    void onPreviewRender(SDL_Renderer* winRenderer, int brushSize) override {}
+    void onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Color color) override {}
 };
 
 class kPen : public ICoordinateMapper {
@@ -570,21 +571,62 @@ private:
     std::unique_ptr<AbstractTool> currentTool;
     ToolType currentType = ToolType::BRUSH;
     int brushSize = 2;
+    SDL_Color brushColor = {0, 0, 0, 255};
+
+    // ── Toolbar ──────────────────────────────────────────────────────────────
+    static constexpr int TB_W      = 72;   // toolbar width in window pixels
+    static constexpr int TB_PAD    = 10;   // inner padding
+    static constexpr int ICON_SIZE = 40;   // tool icon button size
+    static constexpr int ICON_GAP  = 6;
+
+    // HSV color state (converted to brushColor on change)
+    float hue = 0.f, sat = 0.f, val = 0.f;  // 0-1 each
+    bool  draggingWheel = false;
+    bool  draggingBrightness = false;
+    bool  draggingSlider = false;
+    int   colorWheelCX = 0, colorWheelCY = 0, colorWheelR = 0;
+    SDL_Rect brightnessRect = {0,0,0,0};
+
+    static SDL_Color hsvToRgb(float h, float s, float v) {
+        h = fmod(h, 1.f) * 6.f;
+        int   i = (int)h;
+        float f = h - i, p = v*(1-s), q = v*(1-s*f), t = v*(1-s*(1-f));
+        float r,g,b;
+        switch(i%6){
+            case 0: r=v;g=t;b=p; break; case 1: r=q;g=v;b=p; break;
+            case 2: r=p;g=v;b=t; break; case 3: r=p;g=q;b=v; break;
+            case 4: r=t;g=p;b=v; break; default:r=v;g=p;b=q; break;
+        }
+        return {(Uint8)(r*255),(Uint8)(g*255),(Uint8)(b*255),255};
+    }
+
+    static void rgbToHsv(SDL_Color c, float& h, float& s, float& v) {
+        float r=c.r/255.f, g=c.g/255.f, b=c.b/255.f;
+        float mx=std::max({r,g,b}), mn=std::min({r,g,b}), d=mx-mn;
+        v = mx; s = mx<1e-6f ? 0 : d/mx;
+        if(d<1e-6f){ h=0; return; }
+        if(mx==r)      h=fmod((g-b)/d,6.f)/6.f;
+        else if(mx==g) h=((b-r)/d+2)/6.f;
+        else           h=((r-g)/d+4)/6.f;
+        if(h<0) h+=1.f;
+    }
     
     std::vector<std::vector<uint32_t>> undoStack;
 
     SDL_Rect getViewport() {
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
+        // Reserve TB_W pixels on the left for the toolbar
+        int availW = winW - TB_W;
         float canvasAspect = (float)CANVAS_WIDTH / CANVAS_HEIGHT;
-        float windowAspect = (float)winW / winH;
+        float windowAspect = (float)availW / winH;
         SDL_Rect v;
         if (windowAspect > canvasAspect) {
             v.h = winH; v.w = (int)(winH * canvasAspect);
-            v.x = (winW - v.w) / 2; v.y = 0;
+            v.x = TB_W + (availW - v.w) / 2; v.y = 0;
         } else {
-            v.w = winW; v.h = (int)(winW / canvasAspect);
-            v.x = 0; v.y = (winH - v.h) / 2;
+            v.w = availW; v.h = (int)(availW / canvasAspect);
+            v.x = TB_W; v.y = (winH - v.h) / 2;
         }
         return v;
     }
@@ -621,6 +663,7 @@ public:
         SDL_RenderClear(renderer);
         SDL_SetRenderTarget(renderer, NULL);
         
+        rgbToHsv(brushColor, hue, sat, val);
         setTool(ToolType::BRUSH);
         saveState(undoStack);
     }
@@ -668,6 +711,286 @@ public:
         SDL_SetRenderTarget(renderer, NULL);
     }
 
+    // ── Toolbar layout helpers ───────────────────────────────────────────────
+    // Returns the y-top of the tool buttons section
+    int toolStartY() const { return TB_PAD; }
+    // Returns the top of the color wheel section
+    int wheelTop(int winH) const {
+        int tools = 5; // number of tools
+        return toolStartY() + tools*(ICON_SIZE+ICON_GAP) + 16;
+    }
+
+    // ── Icon drawing ─────────────────────────────────────────────────────────
+    void drawIcon(int cx, int cy, ToolType t, bool active) {
+        SDL_Color fg = active ? SDL_Color{255,255,255,255} : SDL_Color{180,180,180,255};
+        SDL_SetRenderDrawColor(renderer, fg.r, fg.g, fg.b, 255);
+        int s = ICON_SIZE/2 - 6;
+        switch(t) {
+            case ToolType::BRUSH: {
+                // Pencil: diagonal line with a tip
+                for(int i=-s; i<=s; i++) SDL_RenderDrawPoint(renderer, cx+i, cy+i);
+                for(int i=-s; i<=s; i++) SDL_RenderDrawPoint(renderer, cx+i+1, cy+i);
+                SDL_Rect tip = {cx+s-1, cy+s-1, 4, 4};
+                SDL_RenderFillRect(renderer, &tip);
+                break;
+            }
+            case ToolType::LINE: {
+                for(int i=-s; i<=s; i++) SDL_RenderDrawPoint(renderer, cx+i, cy-i);
+                for(int i=-s; i<=s; i++) SDL_RenderDrawPoint(renderer, cx+i+1, cy-i);
+                break;
+            }
+            case ToolType::RECT: {
+                SDL_Rect r={cx-s,cy-s,s*2,s*2};
+                SDL_RenderDrawRect(renderer, &r);
+                SDL_Rect r2={cx-s+1,cy-s+1,s*2-2,s*2-2};
+                SDL_RenderDrawRect(renderer, &r2);
+                break;
+            }
+            case ToolType::CIRCLE: {
+                // Simple circle approximation using points
+                for(int deg=0; deg<360; deg+=4) {
+                    float a=deg*M_PI/180.f;
+                    SDL_RenderDrawPoint(renderer, cx+(int)(s*cos(a)), cy+(int)(s*sin(a)));
+                    SDL_RenderDrawPoint(renderer, cx+(int)((s-1)*cos(a)), cy+(int)((s-1)*sin(a)));
+                }
+                break;
+            }
+            case ToolType::SELECT: {
+                // Dashed rectangle
+                int dashLen=4;
+                for(int i=0;i<s*2;i+=dashLen*2){
+                    SDL_RenderDrawLine(renderer,cx-s+i,cy-s,cx-s+std::min(i+dashLen,s*2),cy-s);
+                    SDL_RenderDrawLine(renderer,cx-s+i,cy+s,cx-s+std::min(i+dashLen,s*2),cy+s);
+                }
+                for(int i=0;i<s*2;i+=dashLen*2){
+                    SDL_RenderDrawLine(renderer,cx-s,cy-s+i,cx-s,cy-s+std::min(i+dashLen,s*2));
+                    SDL_RenderDrawLine(renderer,cx+s,cy-s+i,cx+s,cy-s+std::min(i+dashLen,s*2));
+                }
+                break;
+            }
+        }
+    }
+
+    // ── Full toolbar render ───────────────────────────────────────────────────
+    void drawToolbar() {
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+
+        // Background panel
+        SDL_Rect panel = {0, 0, TB_W, winH};
+        SDL_SetRenderDrawColor(renderer, 30, 30, 35, 255);
+        SDL_RenderFillRect(renderer, &panel);
+        // Right border
+        SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
+        SDL_RenderDrawLine(renderer, TB_W-1, 0, TB_W-1, winH);
+
+        // ── Tool buttons ──
+        const ToolType tools[] = {ToolType::BRUSH, ToolType::LINE, ToolType::RECT, ToolType::CIRCLE, ToolType::SELECT};
+        int cx = TB_W/2;
+        for(int i=0; i<5; i++) {
+            int y = toolStartY() + i*(ICON_SIZE+ICON_GAP);
+            bool active = (currentType == tools[i]);
+            // Button bg
+            SDL_Rect btn = {TB_PAD/2, y, TB_W-TB_PAD, ICON_SIZE};
+            if(active) {
+                SDL_SetRenderDrawColor(renderer, 70, 130, 220, 255);
+                SDL_RenderFillRect(renderer, &btn);
+            } else {
+                SDL_SetRenderDrawColor(renderer, 45, 45, 52, 255);
+                SDL_RenderFillRect(renderer, &btn);
+            }
+            SDL_SetRenderDrawColor(renderer, 80, 80, 90, 255);
+            SDL_RenderDrawRect(renderer, &btn);
+            drawIcon(cx, y + ICON_SIZE/2, tools[i], active);
+        }
+
+        // ── Thickness slider ──
+        int sliderY = toolStartY() + 5*(ICON_SIZE+ICON_GAP) + 8;
+        // Label (drawn as small dots to indicate "thickness")
+        SDL_SetRenderDrawColor(renderer, 140, 140, 150, 255);
+        SDL_RenderDrawLine(renderer, TB_PAD, sliderY+2, TB_W-TB_PAD, sliderY+2);
+        SDL_RenderDrawLine(renderer, TB_PAD, sliderY+3, TB_W-TB_PAD, sliderY+3);
+        sliderY += 10;
+
+        int sliderH = 120;
+        int trackX  = TB_W/2;
+        // Track
+        SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
+        SDL_RenderDrawLine(renderer, trackX, sliderY, trackX, sliderY+sliderH);
+        SDL_RenderDrawLine(renderer, trackX+1, sliderY, trackX+1, sliderY+sliderH);
+        // Thumb position: brushSize 1-20 mapped to sliderH
+        int thumbY = sliderY + sliderH - (int)((brushSize-1)/19.f * sliderH);
+        SDL_Rect thumb = {trackX-8, thumbY-5, 18, 10};
+        SDL_SetRenderDrawColor(renderer, 200, 200, 210, 255);
+        SDL_RenderFillRect(renderer, &thumb);
+        SDL_SetRenderDrawColor(renderer, 120, 120, 130, 255);
+        SDL_RenderDrawRect(renderer, &thumb);
+        // Preview dot showing current size
+        int dotR = std::max(1, brushSize/2);
+        SDL_SetRenderDrawColor(renderer, brushColor.r, brushColor.g, brushColor.b, 255);
+        for(int dy=-dotR; dy<=dotR; dy++)
+            for(int dx=-dotR; dx<=dotR; dx++)
+                if(dx*dx+dy*dy<=dotR*dotR)
+                    SDL_RenderDrawPoint(renderer, trackX+20+dotR+dx, thumbY+dy);
+
+        // ── Color wheel ──
+        int wTop = sliderY + sliderH + 14;
+        int availH = winH - wTop - TB_PAD;
+        int wheelDiam = std::min(TB_W - TB_PAD*2, availH - 20);
+        if(wheelDiam < 10) return;
+        int wcx = TB_W/2, wcy = wTop + wheelDiam/2;
+        int wr  = wheelDiam/2;
+        colorWheelCX = wcx; colorWheelCY = wcy; colorWheelR = wr;
+
+        // Draw wheel pixel by pixel
+        for(int py=wcy-wr; py<=wcy+wr; py++) {
+            for(int px=wcx-wr; px<=wcx+wr; px++) {
+                float dx=px-wcx, dy=py-wcy;
+                float dist=sqrt(dx*dx+dy*dy);
+                if(dist>wr) continue;
+                float h=fmod(atan2(dy,dx)/(2*M_PI)+1.f,1.f);
+                float s=dist/wr;
+                SDL_Color c=hsvToRgb(h,s,val);
+                SDL_SetRenderDrawColor(renderer,c.r,c.g,c.b,255);
+                SDL_RenderDrawPoint(renderer,px,py);
+            }
+        }
+        // Wheel border
+        for(int deg=0;deg<360;deg++){
+            float a=deg*M_PI/180.f;
+            SDL_SetRenderDrawColor(renderer,80,80,90,255);
+            SDL_RenderDrawPoint(renderer,wcx+(int)(wr*cos(a)),wcy+(int)(wr*sin(a)));
+        }
+        // Hue/sat cursor on wheel
+        float cursorAngle = hue * 2.f * M_PI;
+        int cursorX = wcx + (int)(sat * wr * cos(cursorAngle));
+        int cursorY = wcy + (int)(sat * wr * sin(cursorAngle));
+        SDL_Rect cur = {cursorX-4, cursorY-4, 8, 8};
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        SDL_RenderDrawRect(renderer, &cur);
+        SDL_Rect cur2 = {cursorX-3, cursorY-3, 6, 6};
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderDrawRect(renderer, &cur2);
+
+        // ── Brightness bar ──
+        int bTop = wTop + wheelDiam + 6;
+        int bH   = 12;
+        int bX   = TB_PAD, bW = TB_W - TB_PAD*2;
+        brightnessRect = {bX, bTop, bW, bH};
+        for(int px=bX; px<bX+bW; px++) {
+            float t = (float)(px-bX)/bW;
+            SDL_Color c = hsvToRgb(hue, sat, t);
+            SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 255);
+            SDL_RenderDrawLine(renderer, px, bTop, px, bTop+bH);
+        }
+        SDL_SetRenderDrawColor(renderer, 80,80,90,255);
+        SDL_RenderDrawRect(renderer, &brightnessRect);
+        // Brightness cursor
+        int bCurX = bX + (int)(val * bW);
+        SDL_SetRenderDrawColor(renderer, 255,255,255,255);
+        SDL_RenderDrawLine(renderer, bCurX, bTop-2, bCurX, bTop+bH+2);
+        SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+        SDL_RenderDrawLine(renderer, bCurX+1, bTop-2, bCurX+1, bTop+bH+2);
+
+        // ── Current color swatch ──
+        int swY = bTop + bH + 6;
+        SDL_Rect sw = {TB_PAD, swY, TB_W-TB_PAD*2, 16};
+        SDL_SetRenderDrawColor(renderer, brushColor.r, brushColor.g, brushColor.b, 255);
+        SDL_RenderFillRect(renderer, &sw);
+        SDL_SetRenderDrawColor(renderer, 80,80,90,255);
+        SDL_RenderDrawRect(renderer, &sw);
+    }
+
+    // ── Toolbar interaction ───────────────────────────────────────────────────
+    // Returns true if the point is inside the toolbar
+    bool inToolbar(int x, int y) const { return x < TB_W; }
+
+    int sliderTopY() const {
+        return toolStartY() + 5*(ICON_SIZE+ICON_GAP) + 18;
+    }
+    int sliderH() const { return 120; }
+
+    bool handleToolbarDown(int x, int y) {
+        if(!inToolbar(x,y)) return false;
+
+        // Tool buttons
+        const ToolType tools[] = {ToolType::BRUSH, ToolType::LINE, ToolType::RECT, ToolType::CIRCLE, ToolType::SELECT};
+        for(int i=0;i<5;i++) {
+            int btnY = toolStartY() + i*(ICON_SIZE+ICON_GAP);
+            SDL_Rect btn = {TB_PAD/2, btnY, TB_W-TB_PAD, ICON_SIZE};
+            SDL_Point pt = {x,y};
+            if(SDL_PointInRect(&pt,&btn)) { setTool(tools[i]); return true; }
+        }
+
+        // Thickness slider
+        int sTop = sliderTopY(), sH = sliderH();
+        SDL_Rect sliderArea = {TB_PAD/2, sTop-10, TB_W-TB_PAD, sH+20};
+        SDL_Point pt={x,y};
+        if(SDL_PointInRect(&pt,&sliderArea)) {
+            draggingSlider = true;
+            updateSliderFromMouse(y);
+            return true;
+        }
+
+        // Color wheel
+        if(colorWheelR > 0) {
+            float dx=x-colorWheelCX, dy=y-colorWheelCY;
+            float dist=sqrt(dx*dx+dy*dy);
+            if(dist<=colorWheelR+4) {
+                draggingWheel = true;
+                updateWheelFromMouse(x,y);
+                return true;
+            }
+        }
+
+        // Brightness bar
+        SDL_Point bpt={x,y};
+        SDL_Rect bExpanded={brightnessRect.x-2,brightnessRect.y-4,brightnessRect.w+4,brightnessRect.h+8};
+        if(SDL_PointInRect(&bpt,&bExpanded)) {
+            draggingBrightness = true;
+            updateBrightnessFromMouse(x);
+            return true;
+        }
+
+        return true; // eat all toolbar clicks
+    }
+
+    bool handleToolbarMotion(int x, int y) {
+        if(draggingSlider)      { updateSliderFromMouse(y);       return true; }
+        if(draggingWheel)       { updateWheelFromMouse(x,y);     return true; }
+        if(draggingBrightness)  { updateBrightnessFromMouse(x);  return true; }
+        return inToolbar(x,y);
+    }
+
+    void handleToolbarUp() {
+        draggingSlider = false;
+        draggingWheel = false;
+        draggingBrightness = false;
+    }
+
+    bool isDraggingToolbar() const { return draggingWheel || draggingBrightness || draggingSlider; }
+
+    void updateSliderFromMouse(int y) {
+        int sTop = sliderTopY(), sH = sliderH();
+        int clamped = std::max(sTop, std::min(sTop + sH, y));
+        brushSize = 1 + (int)((1.f - (float)(clamped - sTop) / sH) * 19.f + 0.5f);
+        brushSize = std::max(1, std::min(20, brushSize));
+    }
+
+    void updateWheelFromMouse(int x, int y) {
+        float dx=x-colorWheelCX, dy=y-colorWheelCY;
+        float dist=sqrt(dx*dx+dy*dy);
+        hue = fmod(atan2(dy,dx)/(2*M_PI)+1.f,1.f);
+        sat = std::min(1.f, dist/colorWheelR);
+        brushColor = hsvToRgb(hue, sat, val);
+    }
+
+    void updateBrightnessFromMouse(int x) {
+        float t = (float)(x - brightnessRect.x) / brightnessRect.w;
+        val = std::max(0.f, std::min(1.f, t));
+        brushColor = hsvToRgb(hue, sat, val);
+    }
+
     void run() {
         bool running = true;
         bool needsRedraw = true;
@@ -695,6 +1018,7 @@ public:
 
                 int cX, cY;
                 if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                    if (handleToolbarDown(e.button.x, e.button.y)) { needsRedraw = true; continue; }
                     getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
                     
                     if (currentType == ToolType::SELECT) {
@@ -708,14 +1032,15 @@ public:
                     }
                     
                     SDL_SetRenderTarget(renderer, canvas);
-                    currentTool->onMouseDown(cX, cY, renderer, brushSize);
+                    currentTool->onMouseDown(cX, cY, renderer, brushSize, brushColor);
                     SDL_SetRenderTarget(renderer, NULL);
                     needsRedraw = true; overlayDirty = true;
                 }
                 if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+                    handleToolbarUp();
                     getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
                     SDL_SetRenderTarget(renderer, canvas);
-                    if (currentTool->onMouseUp(cX, cY, renderer, brushSize)) {
+                    if (currentTool->onMouseUp(cX, cY, renderer, brushSize, brushColor)) {
                         SDL_SetRenderTarget(renderer, NULL);
                         saveState(undoStack);
                     }
@@ -723,9 +1048,10 @@ public:
                     needsRedraw = true; overlayDirty = true;
                 }
                 if (e.type == SDL_MOUSEMOTION) {
+                    if (handleToolbarMotion(e.motion.x, e.motion.y)) { needsRedraw = true; continue; }
                     getCanvasCoords(e.motion.x, e.motion.y, &cX, &cY);
                     SDL_SetRenderTarget(renderer, canvas);
-                    currentTool->onMouseMove(cX, cY, renderer, brushSize);
+                    currentTool->onMouseMove(cX, cY, renderer, brushSize, brushColor);
                     SDL_SetRenderTarget(renderer, NULL);
                     needsRedraw = true; overlayDirty = true;
                 }
@@ -765,8 +1091,11 @@ public:
                 SDL_RenderCopy(renderer, overlay, NULL, &v);
             
             // 3. UI Helpers (shape previews)
-            currentTool->onPreviewRender(renderer, brushSize);
-            
+            currentTool->onPreviewRender(renderer, brushSize, brushColor);
+
+            // 4. Toolbar
+            drawToolbar();
+
             SDL_RenderPresent(renderer);
         }
     }
