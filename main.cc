@@ -24,6 +24,110 @@ private:
     std::vector<std::vector<uint32_t>> undoStack;
     std::vector<std::vector<uint32_t>> redoStack;
 
+    // RENDERER
+
+    // Calculates the destination rectangle for the canvas to maintain aspect ratio
+    SDL_Rect getViewport() {
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+        float canvasAspect = (float)CANVAS_WIDTH / CANVAS_HEIGHT;
+        float windowAspect = (float)winW / winH;
+        
+        SDL_Rect viewport;
+        if (windowAspect > canvasAspect) {
+            viewport.h = winH;
+            viewport.w = (int)(winH * canvasAspect);
+            viewport.x = (winW - viewport.w) / 2;
+            viewport.y = 0;
+        } else {
+            viewport.w = winW;
+            viewport.h = (int)(winW / canvasAspect);
+            viewport.x = 0;
+            viewport.y = (winH - viewport.h) / 2;
+        }
+        return viewport;
+    }
+
+    // Converts window/mouse coordinates to internal canvas integer coordinates
+    void getCanvasCoords(int winX, int winY, int* canvasX, int* canvasY) {
+        SDL_Rect view = getViewport();
+        *canvasX = (int)std::floor((winX - view.x) * ((float)CANVAS_WIDTH / view.w));
+        *canvasY = (int)std::floor((winY - view.y) * ((float)CANVAS_HEIGHT / view.h));
+    }
+
+    // Converts internal canvas coordinates to window coordinates for previews
+    void getWindowCoords(int canX, int canY, int* winX, int* winY) {
+        SDL_Rect view = getViewport();
+        *winX = view.x + (int)std::round(canX * ((float)view.w / CANVAS_WIDTH));
+        *winY = view.y + (int)std::round(canY * ((float)view.h / CANVAS_HEIGHT));
+    }
+
+    // Scales a size (like brush size) from canvas-space to window-space
+    int getWindowSize(int canSize) {
+        SDL_Rect view = getViewport();
+        return (int)std::round(canSize * ((float)view.w / CANVAS_WIDTH));
+    }
+
+    // DRAWER
+
+    void drawFillCircle(int centerX, int centerY, int radius) {
+        if (radius <= 0) {
+            SDL_RenderDrawPoint(renderer, centerX, centerY);
+            return;
+        }
+        for (int w = -radius; w <= radius; w++) {
+            for (int h = -radius; h <= radius; h++) {
+                if ((w * w + h * h) <= (radius * radius)) {
+                    SDL_RenderDrawPoint(renderer, centerX + w, centerY + h);
+                }
+            }
+        }
+    }
+
+    void drawLine(int x1, int y1, int x2, int y2, int size) {
+        if (size <= 1) {
+            SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
+            return;
+        }
+        int radius = size / 2;
+        int dx = std::abs(x2 - x1);
+        int dy = std::abs(y2 - y1);
+        int sx = (x1 < x2) ? 1 : -1;
+        int sy = (y1 < y2) ? 1 : -1;
+        int err = dx - dy;
+
+        while (true) {
+            drawFillCircle(x1, y1, radius);
+            if (x1 == x2 && y1 == y2) break;
+            int e2 = 2 * err;
+            if (e2 > -dy) { err -= dy; x1 += sx; }
+            if (e2 < dx) { err += dx; y1 += sy; }
+        }
+    }
+
+    void drawRect(const SDL_Rect* rect, int size) {
+        drawLine(rect->x, rect->y, rect->x + rect->w, rect->y, size); 
+        drawLine(rect->x + rect->w, rect->y, rect->x + rect->w, rect->y + rect->h, size); 
+        drawLine(rect->x + rect->w, rect->y + rect->h, rect->x, rect->y + rect->h, size); 
+        drawLine(rect->x, rect->y + rect->h, rect->x, rect->y, size); 
+    }
+
+    void drawCircle(int x0, int y0, int x1, int y1, int size) {
+        int r = (int)sqrt(pow(x1 - x0, 2) + pow(y1 - y0, 2));
+        int radius = size / 2;
+        float circumference = 2 * M_PI * r;
+        int steps = (int)std::max(circumference, 1.0f);
+
+        for (int i = 0; i < steps; i++) {
+            float angle = 2.0f * M_PI * i / steps;
+            int x = x0 + (int)(r * cos(angle));
+            int y = y0 + (int)(r * sin(angle));
+            drawFillCircle(x, y, radius);
+        }
+    }
+
+    // STATE
+
     void saveState(std::vector<std::vector<uint32_t>>& stack) {
         std::vector<uint32_t> pixels(CANVAS_WIDTH * CANVAS_HEIGHT);
         SDL_SetRenderTarget(renderer, canvas);
@@ -49,82 +153,6 @@ private:
             applyState(redoStack.back());
             undoStack.push_back(redoStack.back());
             redoStack.pop_back();
-        }
-    }
-
-    void getCanvasCoords(int winX, int winY, int* canvasX, int* canvasY) {
-        int w, h;
-        SDL_GetWindowSize(window, &w, &h);
-        *canvasX = (int)(winX * ((float)CANVAS_WIDTH / w));
-        *canvasY = (int)(winY * ((float)CANVAS_HEIGHT / h));
-    }
-
-    void drawFillCircle(int centerX, int centerY, int radius) {
-        if (radius < 1) {
-            SDL_RenderDrawPoint(renderer, centerX, centerY);
-            return;
-        }
-        for (int w = 0; w < radius * 2; w++) {
-            for (int h = 0; h < radius * 2; h++) {
-                int dx = radius - w;
-                int dy = radius - h;
-                if ((dx * dx + dy * dy) <= (radius * radius)) {
-                    SDL_RenderDrawPoint(renderer, centerX + dx, centerY + dy);
-                }
-            }
-        }
-    }
-
-    // Standard line drawing with brush stamping for solid strokes
-    void drawLine(int x1, int y1, int x2, int y2, int size) {
-        if (size <= 1) {
-            SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
-            return;
-        }
-
-        int radius = size / 2;
-        float dx = (float)(x2 - x1);
-        float dy = (float)(y2 - y1);
-        float distance = sqrt(dx * dx + dy * dy);
-        
-        if (distance == 0) {
-            drawFillCircle(x1, y1, radius);
-            return;
-        }
-
-        float steps = distance; 
-        float xStep = dx / steps;
-        float yStep = dy / steps;
-
-        float currX = (float)x1;
-        float currY = (float)y1;
-
-        for (int i = 0; i <= (int)steps; ++i) {
-            drawFillCircle((int)currX, (int)currY, radius);
-            currX += xStep;
-            currY += yStep;
-        }
-    }
-
-    void drawRect(const SDL_Rect* rect, int size) {
-        drawLine(rect->x, rect->y, rect->x + rect->w, rect->y, size); 
-        drawLine(rect->x + rect->w, rect->y, rect->x + rect->w, rect->y + rect->h, size); 
-        drawLine(rect->x + rect->w, rect->y + rect->h, rect->x, rect->y + rect->h, size); 
-        drawLine(rect->x, rect->y + rect->h, rect->x, rect->y, size); 
-    }
-
-    void drawCircle(int x0, int y0, int x1, int y1, int size) {
-        int r = (int)sqrt(pow(x1 - x0, 2) + pow(y1 - y0, 2));
-        int radius = size / 2;
-        
-        float circumference = 2 * M_PI * r;
-        int steps = (int)std::max(circumference, 1.0f);
-
-        for (int i = 0; i < steps; i++) {
-            float angle = 2.0f * M_PI * i / steps;
-            int x = x0 + (int)(r * cos(angle));
-            int y = y0 + (int)(r * sin(angle));
-            drawFillCircle(x, y, radius);
         }
     }
 
@@ -170,8 +198,10 @@ public:
                 }
                 if (event.type == SDL_MOUSEBUTTONDOWN) {
                     if (event.button.button == SDL_BUTTON_LEFT) {
+                        int cX, cY;
+                        getCanvasCoords(event.button.x, event.button.y, &cX, &cY);
                         isDrawing = true;
-                        getCanvasCoords(event.button.x, event.button.y, &startX, &startY);
+                        startX = cX; startY = cY;
                         lastX = startX; lastY = startY;
                         redoStack.clear();
                     }
@@ -181,14 +211,17 @@ public:
                         isDrawing = false;
                         int endX, endY;
                         getCanvasCoords(event.button.x, event.button.y, &endX, &endY);
+                        
                         SDL_SetRenderTarget(renderer, canvas);
                         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                        
                         if (currentTool == Tool::LINE) drawLine(startX, startY, endX, endY, brushSize);
                         else if (currentTool == Tool::RECT) {
                             SDL_Rect r = { std::min(startX, endX), std::min(startY, endY), std::abs(endX - startX), std::abs(endY - startY) };
                             drawRect(&r, brushSize);
                         }
                         else if (currentTool == Tool::CIRCLE) drawCircle(startX, startY, endX, endY, brushSize);
+                        
                         SDL_SetRenderTarget(renderer, NULL);
                         saveState(undoStack);
                     }
@@ -205,25 +238,40 @@ public:
                     }
                 }
             }
+
+            // render
             SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255); 
             SDL_RenderClear(renderer);
-            SDL_RenderCopy(renderer, canvas, NULL, NULL);
+            
+            // Scale and draw the main canvas
+            SDL_Rect view = getViewport();
+            SDL_RenderCopy(renderer, canvas, NULL, &view);
+
+            // Scale and draw shape previews in window-space
             if (isDrawing && (currentTool == Tool::LINE || currentTool == Tool::RECT || currentTool == Tool::CIRCLE)) {
                 int winMouseX, winMouseY, curX, curY;
                 SDL_GetMouseState(&winMouseX, &winMouseY);
                 getCanvasCoords(winMouseX, winMouseY, &curX, &curY);
+                
+                int winStartX, winStartY, winCurX, winCurY;
+                getWindowCoords(startX, startY, &winStartX, &winStartY);
+                getWindowCoords(curX, curY, &winCurX, &winCurY);
+                
+                int scaledBrushSize = getWindowSize(brushSize);
                 SDL_SetRenderDrawColor(renderer, 150, 150, 150, 255); 
-                int w, h;
-                SDL_GetWindowSize(window, &w, &h);
-                int winStartX = (int)(startX * ((float)w / CANVAS_WIDTH));
-                int winStartY = (int)(startY * ((float)h / CANVAS_HEIGHT));
-                if (currentTool == Tool::LINE) drawLine(winStartX, winStartY, winMouseX, winMouseY, brushSize);
-                else if (currentTool == Tool::RECT) {
-                    SDL_Rect r = { std::min(winStartX, winMouseX), std::min(winStartY, winMouseY), std::abs(winMouseX - winStartX), std::abs(winMouseY - winStartY) };
-                    drawRect(&r, brushSize);
+                
+                if (currentTool == Tool::LINE) {
+                    drawLine(winStartX, winStartY, winCurX, winCurY, scaledBrushSize);
                 }
-                else if (currentTool == Tool::CIRCLE) drawCircle(winStartX, winStartY, winMouseX, winMouseY, brushSize);
+                else if (currentTool == Tool::RECT) {
+                    SDL_Rect r = { std::min(winStartX, winCurX), std::min(winStartY, winCurY), std::abs(winCurX - winStartX), std::abs(winCurY - winStartY) };
+                    drawRect(&r, scaledBrushSize);
+                }
+                else if (currentTool == Tool::CIRCLE) {
+                    drawCircle(winStartX, winStartY, winCurX, winCurY, scaledBrushSize);
+                }
             }
+
             SDL_RenderPresent(renderer);
         }
     }
