@@ -26,6 +26,9 @@ private:
     SDL_Renderer* renderer;
     SDL_Texture*  canvas;
     SDL_Texture*  overlay;
+    SDL_Texture*  checkerboard = nullptr;  // cached checkerboard texture
+    int           checkerW     = 0;        // size it was built for
+    int           checkerH     = 0;
 
     std::unique_ptr<AbstractTool> currentTool;
     ToolType currentType  = ToolType::BRUSH;
@@ -36,10 +39,48 @@ private:
     std::vector<std::vector<uint32_t>> undoStack;
     std::vector<std::vector<uint32_t>> redoStack;
 
-    SDL_Rect getViewport();
-    void     saveState(std::vector<std::vector<uint32_t>>& stack);
-    void     applyState(std::vector<uint32_t>& pixels);
-    void     undo();
-    void     redo();
-    void     activateShapeSelection(SDL_Texture* tex, SDL_Rect bounds);
+    // ── Zoom / pan ────────────────────────────────────────────────────────────
+    static constexpr float MIN_ZOOM = 0.1f;
+    static constexpr float MAX_ZOOM = 20.f;
+
+    float zoom = 1.f;   // 1.0 = canvas fits the window
+    float panX = 0.f;   // window-pixel offset from the fit-centered position
+    float panY = 0.f;
+
+    // Position-based scroll gesture state (mirrors toolbar scroll approach)
+    bool  viewScrolling      = false;
+    float viewScrollBaseX    = 0.f;   // panX at gesture start
+    float viewScrollBaseY    = 0.f;   // panY at gesture start
+    float viewScrollRawX     = 0.f;   // accumulated raw pan input since gesture start
+    float viewScrollRawY     = 0.f;
+    float viewScrollBaseZoom = 1.f;   // zoom at gesture start (ctrl+scroll / pinch)
+    float viewScrollRawZoom  = 0.f;   // accumulated raw zoom input since gesture start
+
+    // Two-finger pan gesture tracking
+    bool  multiGestureActive = false;
+    float lastGestureCX      = 0.f;
+    float lastGestureCY      = 0.f;
+
+    // Smooth zoom lerp target (only used when not actively scrolling)
+    float zoomTarget = 1.f;
+
+    // Per-gesture pinch state — reset each time fingers lift so accumulation is clean
+    bool  pinchActive   = false;
+    float pinchBaseZoom = 1.f;
+    float pinchRawDist  = 0.f;
+
+    SDL_Rect  getFitViewport();   // canvas fitted to window, centered — no zoom/pan
+    SDL_Rect  getViewport();      // getFitViewport() + zoom + pan applied (integer, for hit-testing)
+    SDL_FRect getViewportF();     // same but float, for smooth sub-pixel rendering
+
+    void zoomAround(float newZoom, int pivotWinX, int pivotWinY);
+    void onCanvasScroll(int winX, int winY, float dx, float dy, bool ctrl);
+    bool tickView();             // call every frame; springs zoom/pan back if out of bounds
+
+    // ── Undo / redo ───────────────────────────────────────────────────────────
+    void saveState(std::vector<std::vector<uint32_t>>& stack);
+    void applyState(std::vector<uint32_t>& pixels);
+    void undo();
+    void redo();
+    void activateShapeSelection(SDL_Texture* tex, SDL_Rect bounds);
 };
