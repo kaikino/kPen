@@ -80,6 +80,7 @@ class SelectTool : public AbstractTool {
     bool isSelectionActive() const;
     bool isHit(int cX, int cY) const;
     bool hasMoved() const { return state.hasMoved; }
+    bool isMutating() const { return state.isMoving || state.resizing != Handle::NONE; }
     void activateWithTexture(SDL_Texture* tex, SDL_Rect area);
     bool hasOverlayContent() override;
 };
@@ -133,5 +134,6 @@ class ResizeTool : public AbstractTool {
 
     bool isHit(int cX, int cY) const;
     bool hasMoved() const { return moved; }
+    bool isMutating() const { return isMoving || resizing != Handle::NONE; }
     SDL_Rect getBounds() const { return currentBounds; }
 };
