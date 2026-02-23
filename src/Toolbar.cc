@@ -157,9 +157,14 @@ void Toolbar::draw() {
     SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
     SDL_RenderDrawLine(renderer, TB_W-1, 0, TB_W-1, winH);
 
+    // Clamp scroll so content doesn't scroll past top or leave gap at bottom
+    // We'll clamp after computing total content height at the end of draw.
+    // For now just apply current scrollY.
+    const int S = scrollY; // alias for brevity
+
     // ── Tool buttons (3 per row) ──
     int cellW = (TB_W - TB_PAD) / 3;
-    int ty = toolStartY();
+    int ty = toolStartY() - S;
     for (int row=0; row<3; row++) {
         for (int col=0; col<3; col++) {
             int idx = toolGrid[row][col];
@@ -301,6 +306,25 @@ void Toolbar::draw() {
             SDL_RenderDrawRect(renderer, &r);
         }
     }
+
+    // ── Clamp scroll and draw subtle scrollbar ──
+    int totalContentH = psy + 9*stride + TB_PAD; // bottom of last preset row
+    maxScrollCache = std::max(0, totalContentH - winH);
+    // Don't clamp here — overscroll is allowed; tickScroll() handles snap-back.
+
+    if (maxScrollCache > 0) {
+        // Thin scrollbar on right edge of toolbar
+        int sbW = 3, sbX = TB_W - sbW - 1;
+        float ratio = (float)winH / totalContentH;
+        int sbH   = std::max(20, (int)(winH * ratio));
+        int sbTop = (int)((float)scrollY / totalContentH * winH);
+        SDL_Rect sbTrack = {sbX, 0, sbW, winH};
+        SDL_SetRenderDrawColor(renderer, 50, 50, 58, 255);
+        SDL_RenderFillRect(renderer, &sbTrack);
+        SDL_Rect sbThumb = {sbX, sbTop, sbW, sbH};
+        SDL_SetRenderDrawColor(renderer, 100, 100, 115, 255);
+        SDL_RenderFillRect(renderer, &sbThumb);
+    }
 }
 
 // ── Mouse update helpers ──────────────────────────────────────────────────────
@@ -334,6 +358,10 @@ void Toolbar::updateBrightnessFromMouse(int x) {
 
 bool Toolbar::onMouseDown(int x, int y) {
     if (!inToolbar(x, y)) return false;
+    userScrolling = false;
+
+    // Adjust y for scroll offset before hit-testing
+    int sy = y + scrollY;
 
     // Tool buttons
     int cellW = (TB_W - TB_PAD) / 3;
@@ -344,7 +372,7 @@ bool Toolbar::onMouseDown(int x, int y) {
             int bx = TB_PAD/2 + col*cellW;
             int by = toolStartY() + row*(ICON_SIZE+ICON_GAP);
             SDL_Rect btn = {bx, by, cellW-2, ICON_SIZE};
-            SDL_Point pt = {x, y};
+            SDL_Point pt = {x, sy};
             if (SDL_PointInRect(&pt, &btn)) {
                 app->setTool(toolTypes[idx]);
                 currentType = toolTypes[idx];
@@ -356,14 +384,14 @@ bool Toolbar::onMouseDown(int x, int y) {
     // Slider
     int sTop = sliderSectionY(), sH = sliderSectionH();
     SDL_Rect sliderArea = {TB_PAD/2, sTop-6, TB_W-TB_PAD, sH+12};
-    SDL_Point pt = {x, y};
+    SDL_Point pt = {x, sy};
     if (SDL_PointInRect(&pt, &sliderArea)) {
         draggingSlider = true;
         updateSliderFromMouse(x);
         return true;
     }
 
-    // Color wheel
+    // Color wheel (uses cached colorWheelCY which already has scroll applied from draw())
     if (colorWheelR > 0) {
         float dx=x-colorWheelCX, dy=y-colorWheelCY;
         if (sqrt(dx*dx+dy*dy) <= colorWheelR+4) {
@@ -373,7 +401,7 @@ bool Toolbar::onMouseDown(int x, int y) {
         }
     }
 
-    // Brightness bar
+    // Brightness bar (brightnessRect already has scroll applied from draw())
     SDL_Rect bExp = {brightnessRect.x-2, brightnessRect.y-4, brightnessRect.w+4, brightnessRect.h+8};
     SDL_Point bpt = {x, y};
     if (SDL_PointInRect(&bpt, &bExp)) {
@@ -382,7 +410,7 @@ bool Toolbar::onMouseDown(int x, int y) {
         return true;
     }
 
-    // Custom swatches
+    // Custom swatches (customGridY already has scroll applied from draw())
     {
         int i = hitCustomSwatch(x, y);
         if (i >= 0) {
@@ -400,7 +428,7 @@ bool Toolbar::onMouseDown(int x, int y) {
         }
     }
 
-    // Preset swatches
+    // Preset swatches (presetGridY already has scroll applied from draw())
     {
         int i = hitPresetSwatch(x, y);
         if (i >= 0 && i < 27) {
@@ -422,6 +450,7 @@ bool Toolbar::onMouseDown(int x, int y) {
 }
 
 bool Toolbar::onMouseMotion(int x, int y) {
+    userScrolling = false;
     if (draggingSlider)     { updateSliderFromMouse(x);    return true; }
     if (draggingWheel)      { updateWheelFromMouse(x, y);  return true; }
     if (draggingBrightness) { updateBrightnessFromMouse(x); return true; }
@@ -452,4 +481,52 @@ void Toolbar::onMouseUp(int x, int y) {
 
 bool Toolbar::isDragging() const {
     return draggingWheel || draggingBrightness || draggingSlider || draggingSwatch;
+}
+
+bool Toolbar::onMouseWheel(int x, int y, float dy) {
+    if (!inToolbar(x, y)) return false;
+
+    if (!userScrolling) {
+        // Gesture start — snapshot current position
+        scrollBaseY    = scrollY;
+        scrollRawOffset = 0.f;
+        userScrolling  = true;
+    }
+
+    scrollRawOffset -= dy * 18.f;
+
+    // Compute where scrollY should be based on raw offset from base
+    float target = scrollBaseY + scrollRawOffset;
+
+    // macOS-style resistance: displayOver = rawOver * k / (rawOver + k)
+    // This approaches asymptote of k pixels no matter how much you scroll
+    const float k = 60.f;
+    if (target < 0) {
+        float rawOver = -target;
+        float displayOver = rawOver * k / (rawOver + k);
+        target = -displayOver;
+    } else if (target > maxScrollCache) {
+        float rawOver = target - maxScrollCache;
+        float displayOver = rawOver * k / (rawOver + k);
+        target = maxScrollCache + displayOver;
+    }
+
+    scrollY = (int)target;
+    return true;
+}
+
+bool Toolbar::tickScroll() {
+    if (userScrolling) return false; // nothing to animate while user is scrolling
+
+    // Snap back to valid range
+    if (scrollY < 0) {
+        scrollY += std::max(1, (int)(-scrollY * 0.18f));
+        if (scrollY >= 0) scrollY = 0;
+        else return true;
+    } else if (scrollY > maxScrollCache) {
+        scrollY += std::min(-1, (int)((maxScrollCache - scrollY) * 0.18f));
+        if (scrollY <= maxScrollCache) scrollY = maxScrollCache;
+        else return true;
+    }
+    return false;
 }

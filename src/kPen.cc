@@ -157,8 +157,6 @@ void kPen::applyState(std::vector<uint32_t>& pixels) {
 }
 
 void kPen::undo() {
-    fprintf(stderr, "Undo requested. Undo stack size: %zu, Redo stack size: %zu\n", undoStack.size(), redoStack.size());
-
     if (currentType == ToolType::SELECT) {
         auto* st = static_cast<SelectTool*>(currentTool.get());
         if (st->isSelectionActive()) {
@@ -241,6 +239,16 @@ void kPen::run() {
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_RESIZED)
                 needsRedraw = true;
 
+            if (e.type == SDL_MOUSEWHEEL) {
+                int mx, my; SDL_GetMouseState(&mx, &my);
+                #if SDL_VERSION_ATLEAST(2, 0, 18)
+                    float dy = e.wheel.preciseY;
+                #else
+                    float dy = (float)e.wheel.y;
+                #endif
+                if (toolbar.onMouseWheel(mx, my, dy)) needsRedraw = true;
+            }
+
             int cX, cY;
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                 if (toolbar.onMouseDown(e.button.x, e.button.y)) { needsRedraw = true; continue; }
@@ -255,7 +263,6 @@ void kPen::run() {
                         st->deactivate(renderer);  // stamps texture onto canvas
                         SDL_SetRenderTarget(renderer, nullptr);
                         if (moved) {
-                            fprintf(stderr, "Saving state after selection move\n");
                             saveState(undoStack);
                         }
                         // Switch back to the previous tool without deactivating again
@@ -288,7 +295,6 @@ void kPen::run() {
                 // For SelectTool, onMouseUp returns true when a new selection region is drawn —
                 // but we do NOT save state yet; we wait to see if the user moves it.
                 if (changed && currentType != ToolType::SELECT) {
-                    fprintf(stderr, "Saving state after mouse up\n");
                     saveState(undoStack);
                 }
                 needsRedraw = true; overlayDirty = true;
@@ -304,8 +310,14 @@ void kPen::run() {
             }
         }
 
-        if (!needsRedraw) { SDL_Delay(4); continue; }
+        if (!needsRedraw) {
+            if (toolbar.tickScroll()) needsRedraw = true;
+            else { SDL_Delay(4); continue; }
+        }
         needsRedraw = false;
+
+        // Animate toolbar scroll (rubber-band, momentum)
+        if (toolbar.tickScroll()) needsRedraw = true;
 
         // 1. Overlay texture
         bool hasOverlay = currentTool->hasOverlayContent();

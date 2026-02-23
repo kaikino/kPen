@@ -54,6 +54,9 @@ class Toolbar {
     void onMouseUp(int x, int y);
 
     bool isDragging() const;
+    bool onMouseWheel(int x, int y, float dy);
+    void stopScrolling() { userScrolling = false; scrollRawOffset = 0.f; scrollBaseY = scrollY; }
+    bool tickScroll();
     bool inToolbar(int x, int y) const { return x < TB_W; }
 
     // HSV <-> RGB helpers (used externally by kPen for init)
@@ -70,6 +73,12 @@ class Toolbar {
     bool draggingSlider     = false;
     bool draggingSwatch     = false;
     int  draggingSwatchIdx  = -1;
+    int  scrollY            = 0;
+    int   maxScrollCache    = 0;
+    bool  userScrolling     = false;
+    // Position-based scroll: track raw accumulated input and scrollY at gesture start
+    float scrollRawOffset   = 0.f;  // accumulated raw wheel ticks (in pixels)
+    int   scrollBaseY       = 0;    // scrollY when gesture started
 
     // Cached during draw for O(1) hit-testing
     int colorWheelCX = 0, colorWheelCY = 0, colorWheelR = 0;
