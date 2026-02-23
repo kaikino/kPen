@@ -15,9 +15,6 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
     int shapeMinX = std::min(startX, cX),  shapeMaxX = std::max(startX, cX);
     int shapeMinY = std::min(startY, cY),  shapeMaxY = std::max(startY, cY);
 
-    // For RECT and CIRCLE, geometry is inset by half so the stroke outer edge
-    // lands exactly at the mouse coords — no extra padding needed.
-    // For LINE, stroke is centered on the path so half padding is still required.
     SDL_Rect bounds;
     if (type == ToolType::LINE) {
         bounds = {
@@ -41,42 +38,13 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
     bounds.h = bottom - bounds.y;
     if (bounds.w <= 0 || bounds.h <= 0) { isDrawing = false; return false; }
 
-    // Create a transparent offscreen texture sized to the bounding rect
-    SDL_Texture* buf = SDL_CreateTexture(canvasRenderer, SDL_PIXELFORMAT_ARGB8888,
-                                            SDL_TEXTUREACCESS_TARGET, bounds.w, bounds.h);
-    SDL_SetTextureBlendMode(buf, SDL_BLENDMODE_BLEND);
-
-    // Render shape into buffer.
-    // IMPORTANT: local offsets must be computed from the post-clamp bounds origin,
-    // since that is what the texture is sized and positioned against.
-    SDL_SetRenderTarget(canvasRenderer, buf);
-    SDL_SetRenderDrawColor(canvasRenderer, 0, 0, 0, 0);
-    SDL_RenderClear(canvasRenderer);
-
-    int lsx = startX - bounds.x, lsy = startY - bounds.y;
-    int lcx = cX     - bounds.x, lcy = cY     - bounds.y;
-
-    SDL_SetRenderDrawColor(canvasRenderer, color.r, color.g, color.b, 255);
-    if (type == ToolType::LINE)
-        DrawingUtils::drawLine(canvasRenderer, lsx, lsy, lcx, lcy, brushSize);
-    else if (type == ToolType::RECT) {
-        SDL_Rect r = { std::min(lsx, lcx) + half, std::min(lsy, lcy) + half,
-                        std::abs(lcx - lsx) - half * 2, std::abs(lcy - lsy) - half * 2 };
-        if (r.w > 0 && r.h > 0) DrawingUtils::drawRect(canvasRenderer, &r, brushSize);
-    }
-    else if (type == ToolType::CIRCLE)
-        DrawingUtils::drawOval(canvasRenderer, std::min(lsx, lcx) + half, std::min(lsy, lcy) + half,
-                                std::max(lsx, lcx) - half, std::max(lsy, lcy) - half, brushSize);
-
-    // Restore render target to canvas (kPen set it to canvas before calling us)
-    SDL_SetRenderTarget(canvasRenderer, nullptr);
-
     isDrawing = false;
 
-    // Hand texture off to kPen which will switch to SelectTool with it pre-loaded
-    if (onShapeReady) onShapeReady(buf, bounds);
+    // Hand shape params to kPen which will create a ResizeTool
+    if (onShapeReady)
+        onShapeReady(type, bounds, startX, startY, cX, cY, brushSize, color);
 
-    // Canvas unchanged — return false so kPen doesn't push an undo state here
+    // Canvas unchanged here — ResizeTool commits on deactivate
     return false;
 }
 

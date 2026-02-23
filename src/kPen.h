@@ -82,5 +82,7 @@ private:
     void applyState(std::vector<uint32_t>& pixels);
     void undo();
     void redo();
-    void activateShapeSelection(SDL_Texture* tex, SDL_Rect bounds);
+    void activateResizeTool(ToolType shapeType, SDL_Rect bounds,
+                            int sx, int sy, int ex, int ey,
+                            int brushSize, SDL_Color color);
 };

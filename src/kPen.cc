@@ -242,21 +242,21 @@ void kPen::setTool(ToolType t) {
     originalType = t;
     currentType  = t;
     toolbar.currentType = t;
+    auto shapeCallback = [this](ToolType st, SDL_Rect b, int sx, int sy, int ex, int ey, int bs, SDL_Color c) {
+        activateResizeTool(st, b, sx, sy, ex, ey, bs, c);
+    };
     switch (t) {
         case ToolType::BRUSH:
             currentTool = std::make_unique<BrushTool>(this);
             break;
         case ToolType::LINE:
-            currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE,
-                [this](SDL_Texture* tex, SDL_Rect r){ activateShapeSelection(tex, r); });
+            currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE, shapeCallback);
             break;
         case ToolType::RECT:
-            currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT,
-                [this](SDL_Texture* tex, SDL_Rect r){ activateShapeSelection(tex, r); });
+            currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT, shapeCallback);
             break;
         case ToolType::CIRCLE:
-            currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE,
-                [this](SDL_Texture* tex, SDL_Rect r){ activateShapeSelection(tex, r); });
+            currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE, shapeCallback);
             break;
         case ToolType::SELECT:
             currentTool = std::make_unique<SelectTool>(this);
@@ -264,16 +264,21 @@ void kPen::setTool(ToolType t) {
         case ToolType::FILL:
             currentTool = std::make_unique<FillTool>(this);
             break;
+        case ToolType::RESIZE:
+            // ResizeTool is only created via activateResizeTool, not via setTool
+            break;
     }
 }
 
-void kPen::activateShapeSelection(SDL_Texture* tex, SDL_Rect bounds) {
+void kPen::activateResizeTool(ToolType shapeType, SDL_Rect bounds,
+                               int sx, int sy, int ex, int ey,
+                               int brushSize, SDL_Color color) {
+    // Save state before the shape appears (so undo clears it entirely)
     saveState(undoStack);
-    currentType = ToolType::SELECT;
-    toolbar.currentType = ToolType::SELECT;
-    currentTool = std::make_unique<SelectTool>(this);
-    auto* st = static_cast<SelectTool*>(currentTool.get());
-    st->activateWithTexture(tex, bounds);
+    currentType         = ToolType::RESIZE;
+    toolbar.currentType = ToolType::RESIZE;
+    currentTool = std::make_unique<ResizeTool>(this, shapeType, bounds,
+                                               sx, sy, ex, ey, brushSize, color);
 }
 
 // ── Undo ──────────────────────────────────────────────────────────────────────
@@ -292,6 +297,8 @@ void kPen::applyState(std::vector<uint32_t>& pixels) {
         auto* st = static_cast<SelectTool*>(currentTool.get());
         if (st->isSelectionActive()) st->activateWithTexture(nullptr, {0,0,0,0});
         setTool(originalType);
+    } else if (currentType == ToolType::RESIZE) {
+        setTool(originalType); // discard without committing
     }
     SDL_UpdateTexture(canvas, nullptr, pixels.data(), CANVAS_WIDTH * 4);
 }
@@ -308,6 +315,15 @@ void kPen::undo() {
             SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), CANVAS_WIDTH * 4);
             return;
         }
+    }
+
+    if (currentType == ToolType::RESIZE) {
+        // Discard the resize tool without committing — go back to pre-shape state
+        setTool(originalType);
+        redoStack.clear();
+        if (undoStack.size() > 1) undoStack.pop_back(); // pop the state saved when shape was drawn
+        SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), CANVAS_WIDTH * 4);
+        return;
     }
 
     if (undoStack.size() > 1) {
@@ -475,16 +491,25 @@ void kPen::run() {
                         st->deactivate(renderer);
                         SDL_SetRenderTarget(renderer, nullptr);
                         if (moved) { saveState(undoStack); }
-                        currentType = originalType;
-                        toolbar.currentType = originalType;
-                        switch (originalType) {
-                            case ToolType::BRUSH:  currentTool = std::make_unique<BrushTool>(this); break;
-                            case ToolType::LINE:   currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE,   [this](SDL_Texture* t, SDL_Rect r){ activateShapeSelection(t, r); }); break;
-                            case ToolType::RECT:   currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT,   [this](SDL_Texture* t, SDL_Rect r){ activateShapeSelection(t, r); }); break;
-                            case ToolType::CIRCLE: currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE, [this](SDL_Texture* t, SDL_Rect r){ activateShapeSelection(t, r); }); break;
-                            case ToolType::SELECT: currentTool = std::make_unique<SelectTool>(this); break;
-                            case ToolType::FILL:   currentTool = std::make_unique<FillTool>(this); break;
-                        }
+                        setTool(originalType);
+                        // Don't fall through to onMouseDown with old tool
+                        needsRedraw = true; overlayDirty = true;
+                        continue;
+                    }
+                }
+
+                // Commit ResizeTool when clicking outside the bounding box
+                if (currentType == ToolType::RESIZE) {
+                    auto* rt = static_cast<ResizeTool*>(currentTool.get());
+                    if (!rt->isHit(cX, cY)) {
+                        bool moved = rt->hasMoved();
+                        SDL_SetRenderTarget(renderer, canvas);
+                        rt->deactivate(renderer);  // stamps shape onto canvas
+                        SDL_SetRenderTarget(renderer, nullptr);
+                        if (moved) { saveState(undoStack); }
+                        setTool(originalType);
+                        needsRedraw = true; overlayDirty = true;
+                        continue;
                     }
                 }
 
@@ -501,7 +526,7 @@ void kPen::run() {
                 SDL_SetRenderTarget(renderer, canvas);
                 bool changed = currentTool->onMouseUp(cX, cY, renderer, toolbar.brushSize, toolbar.brushColor);
                 SDL_SetRenderTarget(renderer, nullptr);
-                if (changed && currentType != ToolType::SELECT) {
+                if (changed && currentType != ToolType::SELECT && currentType != ToolType::RESIZE) {
                     saveState(undoStack);
                 }
                 needsRedraw = true; overlayDirty = true;

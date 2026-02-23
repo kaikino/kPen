@@ -5,7 +5,7 @@
 #include "DrawingUtils.h"
 #include "Constants.h"
 
-enum class ToolType { BRUSH, LINE, RECT, CIRCLE, SELECT, FILL};
+enum class ToolType { BRUSH, LINE, RECT, CIRCLE, SELECT, FILL, RESIZE };
 
 class ICoordinateMapper {
   public:
@@ -42,7 +42,8 @@ class BrushTool : public AbstractTool {
 class ShapeTool : public AbstractTool {
   private:
     ToolType type;
-    using ShapeReadyCallback = std::function<void(SDL_Texture*, SDL_Rect)>;
+    // Callback now receives shape params so kPen can create a ResizeTool
+    using ShapeReadyCallback = std::function<void(ToolType, SDL_Rect, int, int, int, int, int, SDL_Color)>;
     ShapeReadyCallback onShapeReady;
   public:
     ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb);
@@ -87,4 +88,50 @@ class FillTool : public AbstractTool {
   public:
     using AbstractTool::AbstractTool;
     void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+};
+
+class ResizeTool : public AbstractTool {
+  private:
+    enum class Handle { NONE, N, S, E, W, NE, NW, SE, SW };
+    static const int GRAB = 6;
+
+    ToolType   shapeType;
+    SDL_Rect   origBounds;      // bounding box when shape was first drawn
+    SDL_Rect   currentBounds;   // bounding box as user drags handles
+    int        shapeStartX, shapeStartY; // original draw start point (canvas coords)
+    int        shapeEndX,   shapeEndY;   // original draw end point
+    int        shapeBrushSize;
+    SDL_Color  shapeColor;
+
+    Handle resizing  = Handle::NONE;
+    bool   isMoving  = false;
+    bool   moved     = false;
+    int    anchorX   = 0, anchorY = 0;
+    int    dragOffX  = 0, dragOffY = 0;
+
+    Handle getHandle(int cX, int cY) const;
+    void   renderShape(SDL_Renderer* r, const SDL_Rect& bounds,
+                       int brushSz, SDL_Color col,
+                       int clipW = 0, int clipH = 0) const;
+  public:
+    ResizeTool(ICoordinateMapper* m,
+               ToolType           shapeType,
+               SDL_Rect           bounds,
+               int startX, int startY,
+               int endX,   int endY,
+               int brushSize,
+               SDL_Color color);
+    ~ResizeTool();
+
+    void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    bool onMouseUp  (int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onOverlayRender(SDL_Renderer* overlayRenderer) override;
+    void onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Color color) override;
+    void deactivate (SDL_Renderer* canvasRenderer) override;
+    bool hasOverlayContent() override;
+
+    bool isHit(int cX, int cY) const;
+    bool hasMoved() const { return moved; }
+    SDL_Rect getBounds() const { return currentBounds; }
 };
