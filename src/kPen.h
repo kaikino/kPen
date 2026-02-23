@@ -7,7 +7,7 @@
 #include "Toolbar.h"
 
 class kPen : public ICoordinateMapper {
-public:
+  public:
     kPen();
     ~kPen();
 
@@ -21,7 +21,7 @@ public:
     void getWindowCoords(int canX, int canY, int* wX, int* wY) override;
     int  getWindowSize(int canSize) override;
 
-private:
+  private:
     SDL_Window*   window;
     SDL_Renderer* renderer;
     SDL_Texture*  canvas;
@@ -60,6 +60,7 @@ private:
     bool  multiGestureActive = false;
     float lastGestureCX      = 0.f;
     float lastGestureCY      = 0.f;
+    int   activeFingers      = 0;    // live count via FINGERDOWN/FINGERUP
 
     // Smooth zoom lerp target (only used when not actively scrolling)
     float zoomTarget = 1.f;
@@ -78,8 +79,10 @@ private:
     bool tickView();             // call every frame; springs zoom/pan back if out of bounds
 
     // ── Undo / redo ───────────────────────────────────────────────────────────
+    template<typename F> void withCanvas(F f);
     void saveState(std::vector<std::vector<uint32_t>>& stack);
     void applyState(std::vector<uint32_t>& pixels);
+    void stampForRedo(AbstractTool* tool);
     void undo();
     void redo();
     void activateResizeTool(ToolType shapeType, SDL_Rect bounds,
