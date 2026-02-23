@@ -57,6 +57,7 @@ class SelectTool : public AbstractTool {
         bool active = false;
         SDL_Rect area = {0, 0, 0, 0};
         SDL_Texture* selectionTexture = nullptr;
+        bool hasMoved = false;
         bool isMoving = false;
         int dragOffsetX = 0, dragOffsetY = 0;
         Handle resizing = Handle::NONE;
@@ -77,6 +78,7 @@ class SelectTool : public AbstractTool {
     void deactivate(SDL_Renderer* canvasRenderer) override;
     bool isSelectionActive() const;
     bool isHit(int cX, int cY) const;
+    bool hasMoved() const { return state.hasMoved; }
     void activateWithTexture(SDL_Texture* tex, SDL_Rect area);
     bool hasOverlayContent() override;
 };

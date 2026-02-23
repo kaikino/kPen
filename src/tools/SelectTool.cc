@@ -74,6 +74,7 @@ void SelectTool::onMouseMove(int cX, int cY, SDL_Renderer* canvasRenderer, int b
             state.area = { newX, newY, newW, newH };
         }
     } else if (state.isMoving) {
+        state.hasMoved = true;
         state.area.x = cX - state.dragOffsetX;
         state.area.y = cY - state.dragOffsetY;
     } else if (isDrawing) {

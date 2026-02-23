@@ -34,9 +34,12 @@ private:
     Toolbar toolbar;
 
     std::vector<std::vector<uint32_t>> undoStack;
+    std::vector<std::vector<uint32_t>> redoStack;
 
     SDL_Rect getViewport();
     void     saveState(std::vector<std::vector<uint32_t>>& stack);
     void     applyState(std::vector<uint32_t>& pixels);
+    void     undo();
+    void     redo();
     void     activateShapeSelection(SDL_Texture* tex, SDL_Rect bounds);
 };

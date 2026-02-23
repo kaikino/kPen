@@ -82,6 +82,13 @@ int kPen::getWindowSize(int canSize) {
 // ── Tool management ───────────────────────────────────────────────────────────
 
 void kPen::setTool(ToolType t) {
+    if (currentTool) {
+        // Deactivate without saving — caller is responsible for saving state
+        // if the deactivation produces a meaningful canvas change.
+        SDL_SetRenderTarget(renderer, canvas);
+        currentTool->deactivate(renderer);
+        SDL_SetRenderTarget(renderer, nullptr);
+    }
     originalType = t;
     currentType  = t;
     toolbar.currentType = t;
@@ -111,12 +118,16 @@ void kPen::setTool(ToolType t) {
 }
 
 void kPen::activateShapeSelection(SDL_Texture* tex, SDL_Rect bounds) {
+    // Shape was just drawn and committed to canvas by ShapeTool — save that state,
+    // then enter SELECT mode with the floating selection (no extra save here;
+    // the save will happen only if the user moves the selection).
+    saveState(undoStack);
+
     currentType = ToolType::SELECT;
     toolbar.currentType = ToolType::SELECT;
     currentTool = std::make_unique<SelectTool>(this);
     auto* st = static_cast<SelectTool*>(currentTool.get());
     st->activateWithTexture(tex, bounds);
-    saveState(undoStack);
 }
 
 // ── Undo ──────────────────────────────────────────────────────────────────────
@@ -125,12 +136,63 @@ void kPen::saveState(std::vector<std::vector<uint32_t>>& stack) {
     std::vector<uint32_t> pixels(CANVAS_WIDTH * CANVAS_HEIGHT);
     SDL_SetRenderTarget(renderer, canvas);
     SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), CANVAS_WIDTH * 4);
-    stack.push_back(pixels);
     SDL_SetRenderTarget(renderer, nullptr);
+    stack.push_back(std::move(pixels));
+    if (&stack == &undoStack) {
+        redoStack.clear();
+    }
 }
 
 void kPen::applyState(std::vector<uint32_t>& pixels) {
+    // If a selection is active, discard it without stamping onto canvas
+    if (currentType == ToolType::SELECT) {
+        auto* st = static_cast<SelectTool*>(currentTool.get());
+        if (st->isSelectionActive()) {
+            // Destroy the floating texture without rendering it
+            st->activateWithTexture(nullptr, {0,0,0,0});
+        }
+        setTool(originalType);
+    }
     SDL_UpdateTexture(canvas, nullptr, pixels.data(), CANVAS_WIDTH * 4);
+}
+
+void kPen::undo() {
+    fprintf(stderr, "Undo requested. Undo stack size: %zu, Redo stack size: %zu\n", undoStack.size(), redoStack.size());
+
+    if (currentType == ToolType::SELECT) {
+        auto* st = static_cast<SelectTool*>(currentTool.get());
+        if (st->isSelectionActive()) {
+            bool moved = st->hasMoved();
+            // Discard the floating selection without stamping it
+            st->activateWithTexture(nullptr, {0,0,0,0});
+            setTool(originalType);
+            redoStack.clear();
+
+            // In both cases (moved or not), apply the current top of the undo stack:
+            // - not moved: cancels the floating selection, restores the white-hole canvas
+            // - moved: discards the in-progress move, restores the white-hole canvas
+            SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), CANVAS_WIDTH * 4);
+            return;
+        }
+    }
+
+    if (undoStack.size() > 1) {
+        saveState(redoStack);
+        undoStack.pop_back();
+        applyState(undoStack.back());
+    }
+}
+
+void kPen::redo() {
+    if (!redoStack.empty()) {
+        // Push the state we're redoing onto undoStack so undo can return to it.
+        // Do NOT use saveState() — that would clear redoStack before we pop it.
+        // Do NOT push the current canvas — it's already at undoStack.back().
+        // We want undoStack to gain the redo state so the history is contiguous.
+        undoStack.push_back(redoStack.back());
+        applyState(redoStack.back());
+        redoStack.pop_back();
+    }
 }
 
 // ── Run loop ──────────────────────────────────────────────────────────────────
@@ -152,11 +214,12 @@ void kPen::run() {
                     case SDLK_r: setTool(ToolType::RECT);   needsRedraw = true; break;
                     case SDLK_o: setTool(ToolType::CIRCLE); needsRedraw = true; break;
                     case SDLK_s: setTool(ToolType::SELECT); needsRedraw = true; break;
-                    case SDLK_f: setTool(ToolType::FILL); needsRedraw = true; break;
+                    case SDLK_f: setTool(ToolType::FILL);   needsRedraw = true; break;
                     case SDLK_BACKSPACE:
                     case SDLK_DELETE:
                         if (currentType == ToolType::SELECT) {
-                            setTool(originalType);
+                            // Replace the select tool with a fresh one (clears selection without stamping)
+                            currentTool = std::make_unique<SelectTool>(this);
                             needsRedraw = true;
                         }
                         break;
@@ -167,13 +230,10 @@ void kPen::run() {
                         toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
                         needsRedraw = true; break;
                     case SDLK_z:
-                        if (e.key.keysym.mod & KMOD_CTRL) {
-                            if (undoStack.size() > 1) {
-                                undoStack.pop_back();
-                                applyState(undoStack.back());
-                                needsRedraw = true;
-                            }
-                        }
+                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) { undo(); needsRedraw = true; }
+                        break;
+                    case SDLK_y:
+                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) { redo(); needsRedraw = true; }
                         break;
                 }
             }
@@ -186,14 +246,29 @@ void kPen::run() {
                 if (toolbar.onMouseDown(e.button.x, e.button.y)) { needsRedraw = true; continue; }
                 getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
 
+                // If there's an active selection and the user clicks outside it, commit it.
                 if (currentType == ToolType::SELECT) {
                     auto* st = static_cast<SelectTool*>(currentTool.get());
                     if (st->isSelectionActive() && !st->isHit(cX, cY)) {
+                        bool moved = st->hasMoved();
                         SDL_SetRenderTarget(renderer, canvas);
-                        st->deactivate(renderer);
+                        st->deactivate(renderer);  // stamps texture onto canvas
                         SDL_SetRenderTarget(renderer, nullptr);
-                        saveState(undoStack);
-                        setTool(originalType);
+                        if (moved) {
+                            fprintf(stderr, "Saving state after selection move\n");
+                            saveState(undoStack);
+                        }
+                        // Switch back to the previous tool without deactivating again
+                        currentType  = originalType;
+                        toolbar.currentType = originalType;
+                        switch (originalType) {
+                            case ToolType::BRUSH:  currentTool = std::make_unique<BrushTool>(this); break;
+                            case ToolType::LINE:   currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE,   [this](SDL_Texture* t, SDL_Rect r){ activateShapeSelection(t, r); }); break;
+                            case ToolType::RECT:   currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT,   [this](SDL_Texture* t, SDL_Rect r){ activateShapeSelection(t, r); }); break;
+                            case ToolType::CIRCLE: currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE, [this](SDL_Texture* t, SDL_Rect r){ activateShapeSelection(t, r); }); break;
+                            case ToolType::SELECT: currentTool = std::make_unique<SelectTool>(this); break;
+                            case ToolType::FILL:   currentTool = std::make_unique<FillTool>(this); break;
+                        }
                     }
                 }
 
@@ -207,11 +282,15 @@ void kPen::run() {
                 toolbar.onMouseUp(e.button.x, e.button.y);
                 getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
                 SDL_SetRenderTarget(renderer, canvas);
-                if (currentTool->onMouseUp(cX, cY, renderer, toolbar.brushSize, toolbar.brushColor)) {
-                    SDL_SetRenderTarget(renderer, nullptr);
+                bool changed = currentTool->onMouseUp(cX, cY, renderer, toolbar.brushSize, toolbar.brushColor);
+                SDL_SetRenderTarget(renderer, nullptr);
+                // onMouseUp returning true means a non-select tool made a committed canvas change.
+                // For SelectTool, onMouseUp returns true when a new selection region is drawn —
+                // but we do NOT save state yet; we wait to see if the user moves it.
+                if (changed && currentType != ToolType::SELECT) {
+                    fprintf(stderr, "Saving state after mouse up\n");
                     saveState(undoStack);
                 }
-                SDL_SetRenderTarget(renderer, nullptr);
                 needsRedraw = true; overlayDirty = true;
             }
 
