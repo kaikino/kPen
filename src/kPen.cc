@@ -515,8 +515,17 @@ void kPen::run() {
                 }
             }
 
+            // ── Track live finger count ──
+            if (e.type == SDL_FINGERDOWN) activeFingers++;
+            if (e.type == SDL_FINGERUP)   activeFingers = std::max(0, activeFingers - 1);
+
             // ── Pinch-to-zoom + two-finger pan ──
             if (e.type == SDL_MULTIGESTURE) {
+                // 3-finger gesture: suppress pan/zoom entirely so the real mouse
+                // events (which SDL maps to the primary finger) drive drawing normally.
+                if (activeFingers >= 3) {
+                    needsRedraw = true;
+                } else {
                 int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
                 float cx = e.mgesture.x * winW;
                 float cy = e.mgesture.y * winH;
@@ -551,10 +560,11 @@ void kPen::run() {
                 multiGestureActive = true;
 
                 needsRedraw = true;
+                } // end 2-finger branch
             }
 
             // Reset gesture tracking when fingers lift
-            if (e.type == SDL_FINGERUP) {
+            if (e.type == SDL_FINGERUP && activeFingers == 0) {
                 multiGestureActive = false;
                 pinchActive        = false;
                 viewScrolling      = false;
