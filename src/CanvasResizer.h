@@ -34,7 +34,7 @@ class CanvasResizer {
 
   private:
     static const int HS  = 3;
-    static const int HIT = 4;
+    static const int HIT = 10;
 
     ICoordinateMapper* mapper;
     Handle activeHandle  = Handle::NONE;

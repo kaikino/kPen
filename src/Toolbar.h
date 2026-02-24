@@ -71,6 +71,7 @@ class Toolbar {
     bool onResizeKey(SDL_Keycode sym);
     CanvasResizeRequest getResizeRequest();
     void syncCanvasSize(int w, int h);
+    void syncBrushSize();  // update brushSizeBuf to match current brushSize
 
     // Call this when a mouse-down lands outside the toolbar while a resize
     // field is focused — reverts the text fields to the actual canvas size.
@@ -96,6 +97,12 @@ class Toolbar {
     // Position-based scroll: track raw accumulated input and scrollY at gesture start
     float scrollRawOffset   = 0.f;  // accumulated raw wheel ticks (in pixels)
     int   scrollBaseY       = 0;    // scrollY when gesture started
+
+    // Brush size text input
+    bool brushSizeFocused   = false;
+    char brushSizeBuf[3]    = {'2', 0, 0};  // up to 2 digits (1–20)
+    int  brushSizeLen       = 1;
+    mutable SDL_Rect brushSizeFieldRect = {0, 0, 0, 0};  // cached in screen space by draw()
 
     // Cached during draw for O(1) hit-testing
     int colorWheelCX = 0, colorWheelCY = 0, colorWheelR = 0;
@@ -126,7 +133,7 @@ class Toolbar {
 
     // Layout helpers
     int toolStartY()     const { return TB_PAD; }
-    int sliderSectionY() const { return toolStartY() + 3*(ICON_SIZE+ICON_GAP) + 2 + 20 + 2; }
+    int sliderSectionY() const { return toolStartY() + 3*(ICON_SIZE+ICON_GAP) + 2 + 20 + 4; }  // row2: after row1(20px) + gap(4px)
     int sliderSectionH() const { return 14; }
     int swatchCellSize()   const { return (TB_W - TB_PAD*2 - 4) / 3; }
     int swatchCellStride() const { return swatchCellSize() + 2; }

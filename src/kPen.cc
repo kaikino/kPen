@@ -550,10 +550,12 @@ void kPen::run() {
                         needsRedraw = true;
                         break;
                     case SDLK_UP:
-                        toolbar.brushSize = std::min(20, toolbar.brushSize + 1);
+                        toolbar.brushSize = std::min(99, toolbar.brushSize + 1);
+                        toolbar.syncBrushSize();
                         needsRedraw = true; break;
                     case SDLK_DOWN:
                         toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
+                        toolbar.syncBrushSize();
                         needsRedraw = true; break;
                     case SDLK_z:
                         if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) { undo(); needsRedraw = true; }
@@ -712,6 +714,8 @@ void kPen::run() {
                     int newW, newH, ox = 0, oy = 0;
                     if (canvasResizer.onMouseUp(e.button.x, e.button.y, canvasW, canvasH, newW, newH, ox, oy))
                         resizeCanvas(newW, newH, toolbar.getResizeScaleMode(), ox, oy);
+                    else
+                        toolbar.syncCanvasSize(canvasW, canvasH);  // restore if no actual resize
                     showResizePreview = false;
                     needsRedraw = true; continue;
                 }
@@ -728,6 +732,7 @@ void kPen::run() {
                 if (canvasResizer.isDragging()) {
                     canvasResizer.onMouseMove(e.motion.x, e.motion.y, previewW, previewH, previewOriginX, previewOriginY);
                     showResizePreview = true;
+                    toolbar.syncCanvasSize(previewW, previewH);  // live-update size text while dragging
                     needsRedraw = true; continue;
                 }
                 viewScrolling = false;

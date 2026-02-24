@@ -27,7 +27,7 @@ void CanvasResizer::draw(SDL_Renderer* r, int canvasW, int canvasH) const {
     // While dragging we always show them regardless of distance.
     int mx, my;
     SDL_GetMouseState(&mx, &my);
-    static const int SHOW_RADIUS = 25;  // window-pixel proximity threshold
+    static const int SHOW_RADIUS = 10;  // window-pixel proximity threshold
 
     // Hide handles while the user is actively dragging one (the ghost outline is shown instead)
     if (isDragging()) return;
