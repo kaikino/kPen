@@ -2,11 +2,29 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 
 #include "DrawingUtils.h"
+#include "stb/stb_image.h"
+#include "stb/stb_image_write.h"
 
-// Shared Drawing Helpers
+// ── Platform clipboard headers ────────────────────────────────────────────────
+#if defined(__APPLE__)
+  #include <TargetConditionals.h>
+  #if TARGET_OS_MAC
+    #define KPEN_CLIPBOARD_MAC 1
+    // Implementation lives in ClipboardMac.mm
+  #endif
+#elif defined(_WIN32)
+  #define KPEN_CLIPBOARD_WIN 1
+  #define WIN32_LEAN_AND_MEAN
+  #include <windows.h>
+#endif
+
 namespace DrawingUtils {
+
+// ── Drawing primitives ────────────────────────────────────────────────────────
+
     void drawFillCircle(SDL_Renderer* renderer, int centerX, int centerY, int radius) {
         if (radius <= 0) {
             SDL_RenderDrawPoint(renderer, centerX, centerY);
@@ -18,14 +36,10 @@ namespace DrawingUtils {
         }
     }
 
-    // Accumulates horizontal spans across multiple circle stamps, then flushes in one pass.
-    // Dramatically faster than calling drawFillCircle per outline point for thick brushes.
     struct SpanBuffer {
         int canvasW, canvasH;
         std::vector<std::vector<std::pair<int,int>>> spans;
-
         SpanBuffer(int w, int h) : canvasW(w), canvasH(h), spans(h) {}
-
         void addCircle(int cx, int cy, int radius) {
             int r = std::max(0, radius);
             for (int h = -r; h <= r; h++) {
@@ -37,26 +51,19 @@ namespace DrawingUtils {
                 spans[row].push_back({x0, x1});
             }
         }
-
         void flush(SDL_Renderer* renderer) {
-            for (int row = 0; row < canvasH; row++) {
+            for (int row = 0; row < canvasH; row++)
                 for (auto& seg : spans[row])
                     SDL_RenderDrawLine(renderer, seg.first, row, seg.second, row);
-            }
         }
     };
 
     void drawLine(SDL_Renderer* renderer, int x1, int y1, int x2, int y2, int size, int w, int h) {
-        if (size <= 1) {
-            SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
-            return;
-        }
+        if (size <= 1) { SDL_RenderDrawLine(renderer, x1, y1, x2, y2); return; }
         int radius = size / 2;
         SpanBuffer spans(w, h);
-        int dx = std::abs(x2 - x1);
-        int dy = std::abs(y2 - y1);
-        int sx = (x1 < x2) ? 1 : -1;
-        int sy = (y1 < y2) ? 1 : -1;
+        int dx = std::abs(x2 - x1), dy = std::abs(y2 - y1);
+        int sx = (x1 < x2) ? 1 : -1, sy = (y1 < y2) ? 1 : -1;
         int err = dx - dy;
         while (true) {
             spans.addCircle(x1, y1, radius);
@@ -69,90 +76,245 @@ namespace DrawingUtils {
     }
 
     void drawRect(SDL_Renderer* renderer, const SDL_Rect* rect, int size, int w, int h) {
-        drawLine(renderer, rect->x, rect->y, rect->x + rect->w, rect->y, size, w, h); 
-        drawLine(renderer, rect->x + rect->w, rect->y, rect->x + rect->w, rect->y + rect->h, size, w, h); 
-        drawLine(renderer, rect->x + rect->w, rect->y + rect->h, rect->x, rect->y + rect->h, size, w, h); 
-        drawLine(renderer, rect->x, rect->y + rect->h, rect->x, rect->y, size, w, h); 
+        drawLine(renderer, rect->x, rect->y, rect->x + rect->w, rect->y, size, w, h);
+        drawLine(renderer, rect->x + rect->w, rect->y, rect->x + rect->w, rect->y + rect->h, size, w, h);
+        drawLine(renderer, rect->x + rect->w, rect->y + rect->h, rect->x, rect->y + rect->h, size, w, h);
+        drawLine(renderer, rect->x, rect->y + rect->h, rect->x, rect->y, size, w, h);
     }
 
     void drawOval(SDL_Renderer* renderer, int x0, int y0, int x1, int y1, int size, int w, int h) {
-        int left   = std::min(x0, x1);
-        int top    = std::min(y0, y1);
-        int right  = std::max(x0, x1);
-        int bottom = std::max(y0, y1);
-
+        int left = std::min(x0,x1), top = std::min(y0,y1);
+        int right = std::max(x0,x1), bottom = std::max(y0,y1);
         if (left == right || top == bottom) return;
-
-        int cx = (left + right) / 2;
-        int cy = (top + bottom) / 2;
-        int rx = cx - left;
-        int ry = cy - top;
-        int brushRadius = size / 2;
-
-        long rx2 = (long)rx * rx, ry2 = (long)ry * ry;
-
+        int cx = (left+right)/2, cy = (top+bottom)/2;
+        int rx = cx-left, ry = cy-top;
+        int brushRadius = size/2;
+        long rx2 = (long)rx*rx, ry2 = (long)ry*ry;
         auto plot = [&](SpanBuffer& spans, int x, int y) {
-            spans.addCircle(cx + x, cy + y, brushRadius);
-            spans.addCircle(cx - x, cy + y, brushRadius);
-            spans.addCircle(cx + x, cy - y, brushRadius);
-            spans.addCircle(cx - x, cy - y, brushRadius);
+            spans.addCircle(cx+x, cy+y, brushRadius); spans.addCircle(cx-x, cy+y, brushRadius);
+            spans.addCircle(cx+x, cy-y, brushRadius); spans.addCircle(cx-x, cy-y, brushRadius);
         };
-
         SpanBuffer spans(w, h);
-
-        // Midpoint ellipse algorithm — decides pixel placement based on
-        // which candidate is closer to the true ellipse, giving rounder
-        // results at small radii compared to the sqrt-based approach.
-
-        // Region 1: slope magnitude < 1 (step in x)
         int x = 0, y = ry;
-        long d1 = ry2 - rx2 * ry + rx2 / 4;
-        long dx = 2 * ry2 * x, dy = 2 * rx2 * y;
-        while (dx < dy) {
-            plot(spans, x, y);
-            x++;
-            dx += 2 * ry2;
-            if (d1 < 0) {
-                d1 += dx + ry2;
-            } else {
-                y--;
-                dy -= 2 * rx2;
-                d1 += dx - dy + ry2;
-            }
+        long d1 = ry2 - rx2*ry + rx2/4;
+        long ddx = 2*ry2*x, ddy = 2*rx2*y;
+        while (ddx < ddy) {
+            plot(spans, x, y); x++; ddx += 2*ry2;
+            if (d1 < 0) { d1 += ddx + ry2; }
+            else { y--; ddy -= 2*rx2; d1 += ddx - ddy + ry2; }
         }
-
-        // Region 2: slope magnitude >= 1 (step in y)
-        long d2 = ry2 * ((long)(x) * x + x) + rx2 * ((long)(y - 1) * (y - 1)) - rx2 * ry2;
+        long d2 = ry2*((long)x*x+x) + rx2*((long)(y-1)*(y-1)) - rx2*ry2;
         while (y >= 0) {
-            plot(spans, x, y);
-            y--;
-            dy -= 2 * rx2;
-            if (d2 > 0) {
-                d2 += rx2 - dy;
-            } else {
-                x++;
-                dx += 2 * ry2;
-                d2 += dx - dy + rx2;
-            }
+            plot(spans, x, y); y--; ddy -= 2*rx2;
+            if (d2 > 0) { d2 += rx2 - ddy; }
+            else { x++; ddx += 2*ry2; d2 += ddx - ddy + rx2; }
         }
         spans.flush(renderer);
     }
 
-    // Alternating black/white dashes around the full perimeter (marching ants style).
-    // Always visible regardless of what color is underneath.
     void drawMarchingRect(SDL_Renderer* renderer, const SDL_Rect* rect) {
         const int dashLen = 4;
         int x2 = rect->x + rect->w, y2 = rect->y + rect->h;
         int perim = 2 * (rect->w + rect->h);
         for (int p = 0; p < perim; p++) {
             int x, y;
-            if      (p < rect->w)                 { x = rect->x + p;                       y = rect->y; }
-            else if (p < rect->w + rect->h)       { x = x2;                                y = rect->y + (p - rect->w); }
-            else if (p < 2*rect->w + rect->h)     { x = x2 - (p - rect->w - rect->h);     y = y2; }
-            else                                  { x = rect->x;                           y = y2 - (p - 2*rect->w - rect->h); }
+            if      (p < rect->w)             { x = rect->x + p;                   y = rect->y; }
+            else if (p < rect->w + rect->h)   { x = x2;                            y = rect->y + (p - rect->w); }
+            else if (p < 2*rect->w + rect->h) { x = x2-(p-rect->w-rect->h);        y = y2; }
+            else                              { x = rect->x;                        y = y2-(p-2*rect->w-rect->h); }
             bool black = (p / dashLen) % 2 == 0;
-            SDL_SetRenderDrawColor(renderer, black ? 0 : 255, black ? 0 : 255, black ? 0 : 255, 255);
+            SDL_SetRenderDrawColor(renderer, black?0:255, black?0:255, black?0:255, 255);
             SDL_RenderDrawPoint(renderer, x, y);
         }
     }
-}
+
+// ── Pixel format conversion ───────────────────────────────────────────────────
+// SDL ARGB8888 (0xAARRGGBB) <-> stb RGBA8888 (bytes R,G,B,A)
+
+    static std::vector<uint8_t> argbToRGBA(const uint32_t* argb, int w, int h) {
+        std::vector<uint8_t> rgba(w * h * 4);
+        for (int i = 0; i < w * h; i++) {
+            uint32_t px = argb[i];
+            rgba[i*4+0] = (px >> 16) & 0xFF; // R
+            rgba[i*4+1] = (px >>  8) & 0xFF; // G
+            rgba[i*4+2] = (px >>  0) & 0xFF; // B
+            rgba[i*4+3] = (px >> 24) & 0xFF; // A
+        }
+        return rgba;
+    }
+
+    static std::vector<uint32_t> rgbaToARGB(const uint8_t* rgba, int w, int h) {
+        std::vector<uint32_t> argb(w * h);
+        for (int i = 0; i < w * h; i++) {
+            uint8_t r=rgba[i*4+0], g=rgba[i*4+1], b=rgba[i*4+2], a=rgba[i*4+3];
+            argb[i] = ((uint32_t)a<<24)|((uint32_t)r<<16)|((uint32_t)g<<8)|b;
+        }
+        return argb;
+    }
+
+// ── Encode / decode ───────────────────────────────────────────────────────────
+
+    std::vector<uint8_t> encodeJPEG(const uint32_t* argbPixels, int w, int h, int quality) {
+        // JPEG is RGB-only; flatten alpha onto white background
+        std::vector<uint8_t> rgb(w * h * 3);
+        for (int i = 0; i < w * h; i++) {
+            uint32_t px = argbPixels[i];
+            uint8_t  a  = (px >> 24) & 0xFF;
+            uint8_t  r  = (px >> 16) & 0xFF;
+            uint8_t  g  = (px >>  8) & 0xFF;
+            uint8_t  b  = (px >>  0) & 0xFF;
+            // Composite over white
+            rgb[i*3+0] = (uint8_t)(r + (255-r)*(255-a)/255);
+            rgb[i*3+1] = (uint8_t)(g + (255-g)*(255-a)/255);
+            rgb[i*3+2] = (uint8_t)(b + (255-b)*(255-a)/255);
+        }
+        std::vector<uint8_t> out;
+        auto cb = [](void* ctx, void* data, int size) {
+            auto* buf = static_cast<std::vector<uint8_t>*>(ctx);
+            auto* bytes = static_cast<uint8_t*>(data);
+            buf->insert(buf->end(), bytes, bytes + size);
+        };
+        stbi_write_jpg_to_func(cb, &out, w, h, 3, rgb.data(), quality);
+        return out;
+    }
+
+    std::vector<uint8_t> encodePNG(const uint32_t* argbPixels, int w, int h) {
+        auto rgba = argbToRGBA(argbPixels, w, h);
+        std::vector<uint8_t> out;
+        auto cb = [](void* ctx, void* data, int size) {
+            auto* buf = static_cast<std::vector<uint8_t>*>(ctx);
+            auto* bytes = static_cast<uint8_t*>(data);
+            buf->insert(buf->end(), bytes, bytes + size);
+        };
+        stbi_write_png_to_func(cb, &out, w, h, 4, rgba.data(), w * 4);
+        return out;
+    }
+
+    std::vector<uint32_t> decodeImage(const uint8_t* data, int dataLen, int& outW, int& outH) {
+        int channels;
+        uint8_t* raw = stbi_load_from_memory(data, dataLen, &outW, &outH, &channels, 4);
+        if (!raw) return {};
+        auto argb = rgbaToARGB(raw, outW, outH);
+        stbi_image_free(raw);
+        return argb;
+    }
+
+// ── Platform clipboard ────────────────────────────────────────────────────────
+
+#if defined(KPEN_CLIPBOARD_MAC)
+    // Implemented in ClipboardMac.mm (compiled as Objective-C++ so AppKit
+    // types and objc_msgSend link correctly without extra CMake flags).
+    // Declarations are in DrawingUtils.h — definitions provided by that TU.
+
+#elif defined(KPEN_CLIPBOARD_WIN)
+
+    static UINT sCFPng = 0;
+    static UINT getPngFormat() {
+        if (!sCFPng) sCFPng = RegisterClipboardFormatW(L"PNG");
+        return sCFPng;
+    }
+
+    bool setClipboardImage(const uint32_t* argbPixels, int w, int h) {
+        if (!OpenClipboard(nullptr)) return false;
+        EmptyClipboard();
+        bool ok = false;
+
+        // PNG (lossless, preserves alpha)
+        auto png = encodePNG(argbPixels, w, h);
+        if (!png.empty()) {
+            HGLOBAL hPng = GlobalAlloc(GMEM_MOVEABLE, png.size());
+            if (hPng) {
+                memcpy(GlobalLock(hPng), png.data(), png.size());
+                GlobalUnlock(hPng);
+                SetClipboardData(getPngFormat(), hPng);
+                ok = true;
+            }
+        }
+
+        // CF_DIB (broadest compatibility, no alpha)
+        int stride = ((w * 3 + 3) & ~3);
+        size_t dibSize = sizeof(BITMAPINFOHEADER) + (size_t)stride * h;
+        HGLOBAL hDib = GlobalAlloc(GMEM_MOVEABLE, dibSize);
+        if (hDib) {
+            uint8_t* p = (uint8_t*)GlobalLock(hDib);
+            BITMAPINFOHEADER bih = {};
+            bih.biSize=sizeof(bih); bih.biWidth=w; bih.biHeight=h;
+            bih.biPlanes=1; bih.biBitCount=24; bih.biCompression=BI_RGB;
+            memcpy(p, &bih, sizeof(bih));
+            uint8_t* dst = p + sizeof(bih);
+            for (int row = h-1; row >= 0; row--) {  // bottom-up
+                const uint32_t* src = argbPixels + row * w;
+                uint8_t* rowDst = dst + (size_t)(h-1-row) * stride;
+                for (int col = 0; col < w; col++) {
+                    uint32_t px = src[col];
+                    rowDst[col*3+0] = (px)      & 0xFF; // B
+                    rowDst[col*3+1] = (px >> 8)  & 0xFF; // G
+                    rowDst[col*3+2] = (px >> 16) & 0xFF; // R
+                }
+            }
+            GlobalUnlock(hDib);
+            SetClipboardData(CF_DIB, hDib);
+            ok = true;
+        }
+
+        CloseClipboard();
+        return ok;
+    }
+
+    bool getClipboardImage(std::vector<uint32_t>& outPixels, int& outW, int& outH) {
+        if (!OpenClipboard(nullptr)) return false;
+        bool got = false;
+
+        // Prefer PNG (has alpha)
+        UINT cfPng = getPngFormat();
+        if (IsClipboardFormatAvailable(cfPng)) {
+            HGLOBAL h = (HGLOBAL)GetClipboardData(cfPng);
+            if (h) {
+                size_t sz = GlobalSize(h);
+                const uint8_t* p = (const uint8_t*)GlobalLock(h);
+                if (p && sz > 0) { outPixels = decodeImage(p, (int)sz, outW, outH); got = !outPixels.empty(); }
+                GlobalUnlock(h);
+            }
+        }
+
+        // Fall back to CF_DIB
+        if (!got && IsClipboardFormatAvailable(CF_DIB)) {
+            HGLOBAL h = (HGLOBAL)GetClipboardData(CF_DIB);
+            if (h) {
+                const uint8_t* p = (const uint8_t*)GlobalLock(h);
+                if (p) {
+                    const BITMAPINFOHEADER* bih = (const BITMAPINFOHEADER*)p;
+                    int bw = bih->biWidth, bh = std::abs((int)bih->biHeight);
+                    bool bottomUp = bih->biHeight > 0;
+                    int bpp = bih->biBitCount;
+                    if ((bpp==24||bpp==32) && bih->biCompression==BI_RGB) {
+                        int srcStride = ((bw*(bpp/8)+3)&~3);
+                        const uint8_t* pix = p + bih->biSize;
+                        outPixels.resize(bw*bh);
+                        for (int row=0; row<bh; row++) {
+                            int srcRow = bottomUp ? (bh-1-row) : row;
+                            const uint8_t* src = pix + srcRow*srcStride;
+                            uint32_t* dst2 = outPixels.data() + row*bw;
+                            for (int col=0; col<bw; col++) {
+                                uint8_t b=src[col*(bpp/8)], g=src[col*(bpp/8)+1], r=src[col*(bpp/8)+2];
+                                uint8_t a=(bpp==32)?src[col*4+3]:255;
+                                dst2[col]=((uint32_t)a<<24)|((uint32_t)r<<16)|((uint32_t)g<<8)|b;
+                            }
+                        }
+                        outW=bw; outH=bh; got=true;
+                    }
+                }
+                GlobalUnlock(h);
+            }
+        }
+
+        CloseClipboard();
+        return got;
+    }
+
+#else
+    bool setClipboardImage(const uint32_t*, int, int) { return false; }
+    bool getClipboardImage(std::vector<uint32_t>&, int&, int&) { return false; }
+#endif
+
+} // namespace DrawingUtils

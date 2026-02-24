@@ -355,8 +355,8 @@ void kPen::deleteSelection() {
     }
 }
 
-// Copy the pixels from the active SelectTool or ResizeTool into the OS clipboard
-// as raw ARGB8888 pixel data preceded by a small header: width(4) + height(4) + pixels.
+// Copy the pixels from the active SelectTool or ResizeTool to the OS clipboard
+// as a native image (PNG on macOS, DIB+PNG on Windows) so other apps can paste it.
 void kPen::copySelectionToClipboard() {
     SDL_Rect bounds = {0, 0, 0, 0};
     std::vector<uint32_t> pixels;
@@ -376,91 +376,15 @@ void kPen::copySelectionToClipboard() {
 
     if (bounds.w <= 0 || bounds.h <= 0 || pixels.empty()) return;
 
-    // Pack into a byte buffer: 4 bytes width, 4 bytes height, then raw ARGB pixels.
-    int w = bounds.w, h = bounds.h;
-    size_t headerSize = 8;
-    size_t pixelBytes = (size_t)w * h * 4;
-    std::vector<uint8_t> buf(headerSize + pixelBytes);
-    memcpy(buf.data() + 0, &w, 4);
-    memcpy(buf.data() + 4, &h, 4);
-    memcpy(buf.data() + 8, pixels.data(), pixelBytes);
-
-    // SDL_SetClipboardText expects a null-terminated string; we base64-encode to be safe.
-    static const char* b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    const uint8_t* src = buf.data();
-    size_t srcLen = buf.size();
-    size_t outLen = ((srcLen + 2) / 3) * 4 + 1;
-    std::vector<char> b64buf(outLen);
-    size_t i = 0, o = 0;
-    while (i < srcLen) {
-        uint32_t v = (uint32_t)src[i++] << 16;
-        bool b2 = i < srcLen, b3;
-        if (b2) v |= (uint32_t)src[i++] << 8;
-        b3 = i < srcLen;
-        if (b3) v |= (uint32_t)src[i++];
-        b64buf[o++] = b64[(v >> 18) & 63];
-        b64buf[o++] = b64[(v >> 12) & 63];
-        b64buf[o++] = b2 ? b64[(v >> 6) & 63] : '=';
-        b64buf[o++] = b3 ? b64[v & 63] : '=';
-    }
-    b64buf[o] = '\0';
-
-    // Prefix with a magic tag so paste can identify our data
-    std::string clipText = "KPEN_PIXELS:";
-    clipText += b64buf.data();
-    SDL_SetClipboardText(clipText.c_str());
+    DrawingUtils::setClipboardImage(pixels.data(), bounds.w, bounds.h);
 }
 
 void kPen::pasteFromClipboard() {
-    if (!SDL_HasClipboardText()) return;
-    char* raw = SDL_GetClipboardText();
-    if (!raw) return;
-    std::string text(raw);
-    SDL_free(raw);
-
-    const std::string prefix = "KPEN_PIXELS:";
-    if (text.rfind(prefix, 0) != 0) return;
-    std::string b64str = text.substr(prefix.size());
-
-    // Base64 decode
-    static const int8_t dt[256] = {
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
-        52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
-        -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
-        15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
-        -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
-        41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-    };
-    std::vector<uint8_t> decoded;
-    decoded.reserve(b64str.size() * 3 / 4);
-    uint32_t acc = 0; int bits = 0;
-    for (char ch : b64str) {
-        if (ch == '=') break;
-        int8_t v = dt[(uint8_t)ch];
-        if (v < 0) continue;
-        acc = (acc << 6) | v;
-        bits += 6;
-        if (bits >= 8) { bits -= 8; decoded.push_back((acc >> bits) & 0xFF); }
-    }
-
-    if (decoded.size() < 8) return;
-    int w, h;
-    memcpy(&w, decoded.data() + 0, 4);
-    memcpy(&h, decoded.data() + 4, 4);
-    if (w <= 0 || h <= 0 || (size_t)(w * h * 4 + 8) > decoded.size()) return;
-
-    std::vector<uint32_t> pixels((size_t)w * h);
-    memcpy(pixels.data(), decoded.data() + 8, (size_t)w * h * 4);
+    // Read image pixels from the OS clipboard (PNG/TIFF on macOS, PNG/DIB on Windows)
+    std::vector<uint32_t> pixels;
+    int w = 0, h = 0;
+    if (!DrawingUtils::getClipboardImage(pixels, w, h)) return;
+    if (w <= 0 || h <= 0 || pixels.empty()) return;
 
     // Commit any in-progress selection/resize before pasting, saving undo state once
     if (currentType == ToolType::SELECT) {
@@ -481,7 +405,7 @@ void kPen::pasteFromClipboard() {
     }
     currentType = toolbar.currentType = ToolType::SELECT;
 
-    // Centre the pasted content on the mouse cursor position
+    // Place pasted content centred on the mouse cursor, clamped to canvas
     int mouseWinX, mouseWinY, mouseCX, mouseCY;
     SDL_GetMouseState(&mouseWinX, &mouseWinY);
     getCanvasCoords(mouseWinX, mouseWinY, &mouseCX, &mouseCY);
@@ -491,7 +415,7 @@ void kPen::pasteFromClipboard() {
         w, h
     };
 
-    // Create an SDL_Texture from the pixel data and hand it to SelectTool
+    // Upload pixels into a streaming texture and hand it to SelectTool
     SDL_Texture* tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                          SDL_TEXTUREACCESS_STREAMING, w, h);
     if (!tex) return;
@@ -503,8 +427,7 @@ void kPen::pasteFromClipboard() {
         SDL_UnlockTexture(tex);
     }
 
-    auto* st = static_cast<SelectTool*>(currentTool.get());
-    st->activateWithTexture(tex, pasteBounds);
+    static_cast<SelectTool*>(currentTool.get())->activateWithTexture(tex, pasteBounds);
     // tex ownership transferred to SelectTool
 }
 
