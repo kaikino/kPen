@@ -64,12 +64,15 @@ jobs:
       - name: macOS — Sign & Package DMG
         if: matrix.os == 'macos-latest'
         run: |
+          # Ad-hoc sign the app (no Apple Developer account required)
           codesign --deep --force --sign - build/kPen.app
+
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
             VERSION="dev-${GITHUB_SHA::7}"
           fi
+
           mkdir dmg_stage
           cp -r build/kPen.app dmg_stage/
           ln -s /Applications dmg_stage/Applications
@@ -103,19 +106,21 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
 
+      # actions/download-artifact@v4 nests each artifact under its name:
+      #   artifacts/kPen-Mac.dmg/kPen-<version>.dmg
       - name: Compute macOS DMG SHA256
         id: sha
         run: |
-          DMG=$(find artifacts -name '*.dmg' | head -1)
+          DMG=$(find artifacts/kPen-Mac.dmg -name '*.dmg' | head -1)
           echo "SHA256=$(shasum -a 256 "$DMG" | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/**/*.exe
-            artifacts/**/*.dmg
-            artifacts/**/kPen-Linux*/kPen
+            artifacts/kPen-Windows.exe/kPen.exe
+            artifacts/kPen-Mac.dmg/*.dmg
+            artifacts/kPen-Linux/kPen
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
