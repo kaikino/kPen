@@ -70,9 +70,10 @@ class TransformTool : public AbstractTool {
 
   public:
     using AbstractTool::AbstractTool;
-    bool isHit     (int cX, int cY) const;
-    bool hasMoved  () const { return moved; }
-    bool isMutating() const { return isMoving || resizing != Handle::NONE; }
+    bool isHit          (int cX, int cY) const;
+    bool hasMoved       () const { return moved; }
+    bool isMutating     () const { return isMoving || resizing != Handle::NONE; }
+    SDL_Rect getFloatingBounds() const { return currentBounds; }
 };
 
 // ── SelectTool ────────────────────────────────────────────────────────────────
@@ -95,9 +96,8 @@ class SelectTool : public TransformTool {
     bool isDirty()           const    { return dirty || hasMoved(); }
     bool isHit(int cX, int cY) const;
     void activateWithTexture(SDL_Texture* tex, SDL_Rect area);
-    void setBounds(SDL_Rect area)     { currentBounds = area; }
-    SDL_Rect           getFloatingBounds() const { return currentBounds; }
-    std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;  // reads from selectionTexture
+    void setBounds(SDL_Rect area) { currentBounds = area; }
+    std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;
 };
 
 // ── ResizeTool ────────────────────────────────────────────────────────────────
@@ -124,8 +124,7 @@ class ResizeTool : public TransformTool {
     bool hasOverlayContent() override { return true; }
     bool isHit(int cX, int cY) const  { return TransformTool::isHit(cX, cY); }
     SDL_Rect getBounds() const        { return currentBounds; }
-    SDL_Rect getFloatingBounds() const { return currentBounds; }
-    std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;  // renders shape to pixel buffer
+    std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;
 };
 
 // ── Other tools ───────────────────────────────────────────────────────────────

@@ -87,10 +87,8 @@ SDL_FRect kPen::getViewportF() {
 
 void kPen::getCanvasCoords(int winX, int winY, int* cX, int* cY) {
     SDL_Rect v = getViewport();
-    *cX = std::max(0, std::min(CANVAS_WIDTH  - 1,
-          (int)std::floor((winX - v.x) * ((float)CANVAS_WIDTH  / v.w))));
-    *cY = std::max(0, std::min(CANVAS_HEIGHT - 1,
-          (int)std::floor((winY - v.y) * ((float)CANVAS_HEIGHT / v.h))));
+    *cX = (int)std::floor((winX - v.x) * ((float)CANVAS_WIDTH  / v.w));
+    *cY = (int)std::floor((winY - v.y) * ((float)CANVAS_HEIGHT / v.h));
 }
 
 void kPen::getWindowCoords(int canX, int canY, int* wX, int* wY) {
@@ -280,10 +278,6 @@ void kPen::saveState(std::vector<std::vector<uint32_t>>& stack) {
 }
 
 void kPen::applyState(std::vector<uint32_t>& pixels) {
-    if (currentType == ToolType::SELECT) {
-        auto* st = static_cast<SelectTool*>(currentTool.get());
-        if (st->isSelectionActive()) st->activateWithTexture(nullptr, {0,0,0,0});
-    }
     if (currentType == ToolType::SELECT || currentType == ToolType::RESIZE) {
         currentTool.reset(); // prevent setTool from deactivating+saving
         setTool(originalType);
@@ -380,28 +374,26 @@ void kPen::copySelectionToClipboard() {
 }
 
 void kPen::pasteFromClipboard() {
-    // Read image pixels from the OS clipboard (PNG/TIFF on macOS, PNG/DIB on Windows)
     std::vector<uint32_t> pixels;
     int w = 0, h = 0;
     if (!DrawingUtils::getClipboardImage(pixels, w, h)) return;
     if (w <= 0 || h <= 0 || pixels.empty()) return;
 
-    // Commit any in-progress selection/resize before pasting, saving undo state once
+    // Commit any in-progress selection/resize before pasting
     if (currentType == ToolType::SELECT) {
         auto* st = static_cast<SelectTool*>(currentTool.get());
         if (st->isSelectionActive()) {
             withCanvas([&]{ st->deactivate(renderer); });
             if (st->isDirty()) saveState(undoStack);
         }
-        // Reset to a fresh SelectTool directly — don't go through setTool which would save again
         currentTool = std::make_unique<SelectTool>(this);
     } else if (currentType == ToolType::RESIZE) {
         withCanvas([&]{ currentTool->deactivate(renderer); });
         saveState(undoStack);
-        currentTool.reset();
         currentTool = std::make_unique<SelectTool>(this);
     } else {
         setTool(ToolType::SELECT);
+        currentTool = std::make_unique<SelectTool>(this);
     }
     currentType = toolbar.currentType = ToolType::SELECT;
 
@@ -596,11 +588,6 @@ void kPen::run() {
                     }
                 }
 
-                // Only begin drawing if the click landed inside the canvas viewport
-                SDL_Rect v = getViewport();
-                SDL_Point pt = { e.button.x, e.button.y };
-                if (!SDL_PointInRect(&pt, &v)) { needsRedraw = true; continue; }
-
                 withCanvas([&]{ currentTool->onMouseDown(cX, cY, renderer, toolbar.brushSize, toolbar.brushColor); });
                 needsRedraw = true; overlayDirty = true;
             }
@@ -624,10 +611,9 @@ void kPen::run() {
 
                 // Clear redo history the moment the user starts dragging a
                 // selection or resize handle — any future redo would be stale.
-                if (currentType == ToolType::SELECT) {
-                    if (static_cast<SelectTool*>(currentTool.get())->isMutating()) redoStack.clear();
-                } else if (currentType == ToolType::RESIZE) {
-                    if (static_cast<ResizeTool*>(currentTool.get())->isMutating()) redoStack.clear();
+                if (currentType == ToolType::SELECT || currentType == ToolType::RESIZE) {
+                    if (static_cast<TransformTool*>(currentTool.get())->isMutating())
+                        redoStack.clear();
                 }
 
                 needsRedraw = true; overlayDirty = true;

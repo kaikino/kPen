@@ -83,12 +83,6 @@ std::vector<uint32_t> ResizeTool::getFloatingPixels(SDL_Renderer* r) const {
     SDL_RenderClear(r);
 
     // Shift the bounds so the shape renders at (0,0) within the texture
-    SDL_Rect localBounds = { 0, 0, w, h };
-    SDL_Rect shiftedOrig = { origBounds.x - currentBounds.x, origBounds.y - currentBounds.y,
-                              origBounds.w, origBounds.h };
-    // We need to temporarily adjust origBounds for remapPoint — use a local copy
-    // by passing localBounds as both orig and curr (identity mapping) then we can
-    // just render directly with the offset shape coords.
     SDL_SetRenderDrawColor(r, shapeColor.r, shapeColor.g, shapeColor.b, 255);
     int half = std::max(1, shapeBrushSize / 2);
 

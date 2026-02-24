@@ -3,6 +3,7 @@
 #include <vector>
 
 void FillTool::onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
+    if (cX < 0 || cX >= CANVAS_WIDTH || cY < 0 || cY >= CANVAS_HEIGHT) return;
     // Read all canvas pixels into a buffer
     std::vector<uint32_t> pixels(CANVAS_WIDTH * CANVAS_HEIGHT);
     SDL_RenderReadPixels(canvasRenderer, nullptr, SDL_PIXELFORMAT_ARGB8888,

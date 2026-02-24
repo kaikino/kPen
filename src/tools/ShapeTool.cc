@@ -1,5 +1,6 @@
 #include "Tools.h"
 #include "DrawingUtils.h"
+#include <cmath>
 
 ShapeTool::ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb)
     : AbstractTool(m), type(t), onShapeReady(std::move(cb)) {}
@@ -29,15 +30,6 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
             (shapeMaxY - shapeMinY + 1)
         };
     }
-    // Clamp to canvas
-    int right  = std::min(bounds.x + bounds.w, CANVAS_WIDTH);
-    int bottom = std::min(bounds.y + bounds.h, CANVAS_HEIGHT);
-    bounds.x = std::max(0, bounds.x);
-    bounds.y = std::max(0, bounds.y);
-    bounds.w = right  - bounds.x;
-    bounds.h = bottom - bounds.y;
-    if (bounds.w <= 0 || bounds.h <= 0) { isDrawing = false; return false; }
-
     isDrawing = false;
 
     // Hand shape params to kPen which will create a ResizeTool
@@ -56,7 +48,15 @@ void ShapeTool::onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Co
     int mouseX, mouseY;
     SDL_GetMouseState(&mouseX, &mouseY);
     int curX, curY;
-    mapper->getCanvasCoords(mouseX, mouseY, &curX, &curY);
+    // Use unclamped mapping so the preview follows the cursor outside the canvas edge
+    {
+        int wx1, wy1, wx2, wy2;
+        mapper->getWindowCoords(0, 0, &wx1, &wy1);
+        mapper->getWindowCoords(CANVAS_WIDTH, CANVAS_HEIGHT, &wx2, &wy2);
+        int vw = wx2 - wx1, vh = wy2 - wy1;
+        curX = vw > 0 ? (int)std::floor((mouseX - wx1) * ((float)CANVAS_WIDTH  / vw)) : 0;
+        curY = vh > 0 ? (int)std::floor((mouseY - wy1) * ((float)CANVAS_HEIGHT / vh)) : 0;
+    }
     if (curX == startX && curY == startY) return;
 
     mapper->getWindowCoords(curX, curY, &winCurX, &winCurY);

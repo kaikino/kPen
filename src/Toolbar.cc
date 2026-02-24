@@ -446,7 +446,7 @@ bool Toolbar::onMouseDown(int x, int y) {
         }
     }
 
-    return true; // eat all toolbar clicks
+    return false; // click was in toolbar area but didn't hit any control
 }
 
 bool Toolbar::onMouseMotion(int x, int y) {
@@ -455,7 +455,7 @@ bool Toolbar::onMouseMotion(int x, int y) {
     if (draggingWheel)      { updateWheelFromMouse(x, y);  return true; }
     if (draggingBrightness) { updateBrightnessFromMouse(x); return true; }
     if (draggingSwatch)     { return true; }
-    return inToolbar(x, y);
+    return false;
 }
 
 void Toolbar::onMouseUp(int x, int y) {
