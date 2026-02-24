@@ -1,3 +1,7 @@
+#ifdef _WIN32
+  #define NOMINMAX  // prevent Windows.h from defining min/max macros
+#endif
+
 #include <vector>
 #include <cmath>
 #include <algorithm>
