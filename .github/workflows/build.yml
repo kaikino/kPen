@@ -29,10 +29,9 @@ jobs:
       - uses: actions/checkout@v4
 
       # ── Windows ──────────────────────────────────────────────────────────────
-      - name: Windows — Install SDL2
+      - name: Windows — Setup vcpkg
         if: matrix.os == 'windows-latest'
-        run: vcpkg install sdl2:x64-windows-static
-        timeout-minutes: 15
+        uses: lukka/run-vcpkg@v11
 
       - name: Windows — Build
         if: matrix.os == 'windows-latest'

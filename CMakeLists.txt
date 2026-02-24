@@ -45,14 +45,12 @@ if(APPLE)
 else()
     add_executable(kPen ${SRC_FILES})
     
-    # Check if we are on Windows to handle static SDL2 targets
     if(WIN32)
         target_link_libraries(kPen PRIVATE 
             $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
             $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
         )
     else()
-        # Standard Linux behavior
         target_link_libraries(kPen SDL2::SDL2)
     endif()
 endif()
