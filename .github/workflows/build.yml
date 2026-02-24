@@ -1,6 +1,10 @@
-name: Build Multi-Platform
+name: Build & Release Multi-Platform
 
-on: [push, pull_request]
+on:
+  push:
+    branches: ['**']
+    tags: ['v*.*.*']
+  pull_request:
 
 jobs:
   build:
@@ -11,48 +15,120 @@ jobs:
         include:
           - os: windows-latest
             artifact: kPen-Windows.exe
+            artifact_path: build/Release/kPen.exe
+
           - os: ubuntu-latest
             artifact: kPen-Linux
+            artifact_path: build/kPen
+
           - os: macos-latest
-            artifact: kPen-Mac
+            artifact: kPen-Mac.dmg
+            artifact_path: kPen-*.dmg
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    # --- WINDOWS BUILD ---
-    - name: Windows - Install SDL2 & Build
-      if: matrix.os == 'windows-latest'
-      run: |
-        vcpkg install sdl2:x64-windows-static
-        cmake -B build -S . `
-          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
-          -DVCPKG_TARGET_TRIPLET=x64-windows-static `
-          -DCMAKE_CXX_FLAGS="/DSDL_MAIN_HANDLED" `
-          -DCMAKE_EXE_LINKER_FLAGS="/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
-        cmake --build build --config Release
+      # ── Windows ──────────────────────────────────────────────────────────────
+      - name: Windows — Install SDL2
+        if: matrix.os == 'windows-latest'
+        run: vcpkg install sdl2:x64-windows-static
+        timeout-minutes: 15
 
-    # --- LINUX BUILD ---
-    - name: Linux - Install SDL2 & Build
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libsdl2-dev
-        cmake -B build -S .
-        cmake --build build --config Release
+      - name: Windows — Build
+        if: matrix.os == 'windows-latest'
+        run: |
+          cmake -B build -S . `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DCMAKE_CXX_FLAGS="/DSDL_MAIN_HANDLED" `
+            -DCMAKE_EXE_LINKER_FLAGS="/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
+          cmake --build build --config Release
 
-    # --- MAC BUILD ---
-    - name: macOS - Install SDL2 & Build
-      if: matrix.os == 'macos-latest'
-      run: |
-        brew install sdl2
-        cmake -B build -S .
-        cmake --build build --config Release
+      # ── Linux ─────────────────────────────────────────────────────────────────
+      - name: Linux — Install SDL2 & Build
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
 
-    # --- UPLOAD RESULTS ---
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.artifact }}
-        path: |
-          build/Release/kPen.exe
-          build/kPen
+      # ── macOS ─────────────────────────────────────────────────────────────────
+      - name: macOS — Install SDL2 & Build
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install sdl2
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: macOS — Sign & Package DMG
+        if: matrix.os == 'macos-latest'
+        run: |
+          codesign --deep --force --sign - build/kPen.app
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="dev-${GITHUB_SHA::7}"
+          fi
+          mkdir dmg_stage
+          cp -r build/kPen.app dmg_stage/
+          ln -s /Applications dmg_stage/Applications
+          hdiutil create \
+            -volname kPen \
+            -srcfolder dmg_stage \
+            -ov -format UDZO \
+            "kPen-${VERSION}.dmg"
+
+      # ── Upload artifacts (all branches) ──────────────────────────────────────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact_path }}
+
+  # ── Release job — only runs on version tags ───────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Compute macOS DMG SHA256
+        id: sha
+        run: |
+          DMG=$(find artifacts -name '*.dmg' | head -1)
+          echo "SHA256=$(shasum -a 256 "$DMG" | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.dmg
+            artifacts/**/kPen-Linux*/kPen
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger cask update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          repository: kaikino/homebrew-kpen
+          event-type: update-cask
+          client-payload: |
+            {
+              "version": "${{ steps.version.outputs.VERSION }}",
+              "sha256": "${{ steps.sha.outputs.SHA256 }}",
+              "url": "https://github.com/kaikino/kPen/releases/download/${{ github.ref_name }}/kPen-${{ steps.version.outputs.VERSION }}.dmg"
+            }

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>kPen</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>kPen</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>com.kaikino.kpen</string>
+
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleSignature</key>
+    <string>????</string>
+
+    <key>CFBundleExecutable</key>
+    <string>kPen</string>
+
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+
+    <!-- Allows the app to read/write files the user opens -->
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>kPen needs access to save and open drawings.</string>
+
+    <!-- Suppress the automatic menu bar / dock behavior from SDL -->
+    <key>LSUIElement</key>
+    <false/>
+</dict>
+</plist>
