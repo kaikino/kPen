@@ -59,6 +59,23 @@ class Toolbar {
     bool tickScroll();
     bool inToolbar(int x, int y) const { return x < TB_W; }
 
+    // ── Canvas resize panel ───────────────────────────────────────────────────
+    struct CanvasResizeRequest {
+        bool pending = false;
+        int  w = 0, h = 0;
+        bool scale = false;
+    };
+    bool getResizeScaleMode() const { return resizeScaleMode; }
+    bool getResizeLockAspect() const { return resizeLockAspect; }
+    bool onTextInput(const char* text);
+    bool onResizeKey(SDL_Keycode sym);
+    CanvasResizeRequest getResizeRequest();
+    void syncCanvasSize(int w, int h);
+
+    // Call this when a mouse-down lands outside the toolbar while a resize
+    // field is focused — reverts the text fields to the actual canvas size.
+    void notifyClickOutside();
+
     // HSV <-> RGB helpers (used externally by kPen for init)
     static SDL_Color hsvToRgb(float h, float s, float v);
     static void      rgbToHsv(SDL_Color c, float& h, float& s, float& v);
@@ -85,6 +102,27 @@ class Toolbar {
     SDL_Rect brightnessRect = {0, 0, 0, 0};
     mutable int customGridY = 0;
     mutable int presetGridY = 0;
+
+    // ── Resize panel private state ────────────────────────────────────────────
+    // Text fields for width and height; no TTF — we use a baked pixel font.
+    char   resizeWBuf[7] = {'1','2','0','0',0,0,0};  // null-terminated digit string (up to 6 digits, clamped to 16384)
+    char   resizeHBuf[7] = {'8','0','0',0,0,0,0};
+    int    resizeWLen    = 4;
+    int    resizeHLen    = 3;
+    enum class ResizeFocus { NONE, W, H } resizeFocus = ResizeFocus::NONE;
+    bool   resizeScaleMode = false;
+    bool   resizeLockAspect = false;
+    int    resizeLockW = 1200;  // canvas W at time of last syncCanvasSize
+    int    resizeLockH = 800;   // canvas H at time of last syncCanvasSize
+    CanvasResizeRequest pendingResize;
+    mutable int resizePanelY = 0;  // cached top of panel in scrolled coords (set by draw)
+    void drawResizePanel(int panelY);
+    bool hitResizePanel(int x, int sy, bool isDown);  // sy = scroll-adjusted y
+    void drawDigitString(int x, int y, const char* s, int len) const;
+    void applyAspectLock(bool srcIsW);  // enforce aspect ratio if resizeLockAspect is set
+    void clampResizeInput(bool srcIsW); // cap entered value (and linked dim if locked) to 16384
+    void defocusResize(bool commit);    // commit or revert resize fields and clear focus
+    void commitResize();
 
     // Layout helpers
     int toolStartY()     const { return TB_PAD; }

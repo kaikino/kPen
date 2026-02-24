@@ -29,13 +29,16 @@ jobs:
       - uses: actions/checkout@v4
 
       # ── Windows ──────────────────────────────────────────────────────────────
-      - name: Windows — Setup vcpkg
+      - name: Windows — Install SDL2
         if: matrix.os == 'windows-latest'
-        uses: lukka/run-vcpkg@v11
-
+        run: |
+          # Use the pre-installed vcpkg to install SDL2 statically
+          vcpkg install sdl2:x64-windows-static
+          
       - name: Windows — Build
         if: matrix.os == 'windows-latest'
         run: |
+          # We point to the toolchain file and ensure we use the static triplet
           cmake -B build -S . `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `

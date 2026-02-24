@@ -1,12 +1,14 @@
 #define _USE_MATH_DEFINES
 #include "kPen.h"
 #include "DrawingUtils.h"
+#include "CanvasResizer.h"
 #include <cmath>
 #include <algorithm>
+#include <cstdio>
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-kPen::kPen() : toolbar(nullptr, this) {
+kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
     // Must be set BEFORE SDL_Init so the macOS trackpad is treated as a
     // multitouch device and fires SDL_MULTIGESTURE / SDL_FINGERDOWN events.
     // Without these, pinch-to-zoom events are silently swallowed on macOS.
@@ -23,9 +25,9 @@ kPen::kPen() : toolbar(nullptr, this) {
     toolbar = Toolbar(renderer, this);
 
     canvas  = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-                                SDL_TEXTUREACCESS_TARGET, CANVAS_WIDTH, CANVAS_HEIGHT);
+                                SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
     overlay = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-                                SDL_TEXTUREACCESS_TARGET, CANVAS_WIDTH, CANVAS_HEIGHT);
+                                SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
     SDL_SetTextureBlendMode(overlay, SDL_BLENDMODE_BLEND);
 
     SDL_SetRenderTarget(renderer, canvas);
@@ -33,6 +35,7 @@ kPen::kPen() : toolbar(nullptr, this) {
     SDL_RenderClear(renderer);
     SDL_SetRenderTarget(renderer, nullptr);
 
+    toolbar.syncCanvasSize(canvasW, canvasH);
     setTool(ToolType::BRUSH);
     saveState(undoStack);
     zoomTarget = zoom;
@@ -52,15 +55,20 @@ SDL_Rect kPen::getFitViewport() {
     int winW, winH;
     SDL_GetWindowSize(window, &winW, &winH);
     int availW = winW - Toolbar::TB_W;
-    float canvasAspect = (float)CANVAS_WIDTH / CANVAS_HEIGHT;
-    float windowAspect = (float)availW / winH;
+    static const int GAP = 50;           // minimum gap on all non-toolbar edges
+    int fitW = availW - GAP * 2;
+    int fitH = winH    - GAP * 2;
+    if (fitW < 1) fitW = 1;
+    if (fitH < 1) fitH = 1;
+    float canvasAspect = (float)canvasW / canvasH;
+    float windowAspect = (float)fitW / fitH;
     SDL_Rect v;
     if (windowAspect > canvasAspect) {
-        v.h = winH; v.w = (int)(winH * canvasAspect);
-        v.x = Toolbar::TB_W + (availW - v.w) / 2; v.y = 0;
+        v.h = fitH; v.w = (int)(fitH * canvasAspect);
+        v.x = Toolbar::TB_W + GAP + (fitW - v.w) / 2; v.y = GAP;
     } else {
-        v.w = availW; v.h = (int)(availW / canvasAspect);
-        v.x = Toolbar::TB_W; v.y = (winH - v.h) / 2;
+        v.w = fitW; v.h = (int)(fitW / canvasAspect);
+        v.x = Toolbar::TB_W + GAP; v.y = GAP + (fitH - v.h) / 2;
     }
     return v;
 }
@@ -87,19 +95,19 @@ SDL_FRect kPen::getViewportF() {
 
 void kPen::getCanvasCoords(int winX, int winY, int* cX, int* cY) {
     SDL_Rect v = getViewport();
-    *cX = (int)std::floor((winX - v.x) * ((float)CANVAS_WIDTH  / v.w));
-    *cY = (int)std::floor((winY - v.y) * ((float)CANVAS_HEIGHT / v.h));
+    *cX = (int)std::floor((winX - v.x) * ((float)canvasW / v.w));
+    *cY = (int)std::floor((winY - v.y) * ((float)canvasH / v.h));
 }
 
 void kPen::getWindowCoords(int canX, int canY, int* wX, int* wY) {
     SDL_Rect v = getViewport();
-    *wX = v.x + (int)std::floor(canX * ((float)v.w / CANVAS_WIDTH));
-    *wY = v.y + (int)std::floor(canY * ((float)v.h / CANVAS_HEIGHT));
+    *wX = v.x + (int)std::floor(canX * ((float)v.w / canvasW));
+    *wY = v.y + (int)std::floor(canY * ((float)v.h / canvasH));
 }
 
 int kPen::getWindowSize(int canSize) {
     SDL_Rect v = getViewport();
-    return (int)std::round(canSize * ((float)v.w / CANVAS_WIDTH));
+    return (int)std::round(canSize * ((float)v.w / canvasW));
 }
 
 // ── Pan / Zoom ────────────────────────────────────────────────────────────────
@@ -136,12 +144,12 @@ bool kPen::tickView() {
 
     if (viewScrolling) return animating;
 
-    // Compute pan limits
+    // Compute pan limits — allow canvas to drift up to 50px outside the window edge
     SDL_Rect fit = getFitViewport();
     float zW = fit.w * zoom;
     float zH = fit.h * zoom;
-    float maxPanX = std::max(0.f, (zW - fit.w) / 2.f);
-    float maxPanY = std::max(0.f, (zH - fit.h) / 2.f);
+    float maxPanX = std::max(0.f, (zW - fit.w) / 2.f) + PAN_SLACK;
+    float maxPanY = std::max(0.f, (zH - fit.h) / 2.f) + PAN_SLACK;
 
     auto snapAxis = [&](float& pan, float maxPan) {
         float lo = -maxPan, hi = maxPan;
@@ -212,8 +220,8 @@ void kPen::onCanvasScroll(int winX, int winY, float dx, float dy, bool ctrl) {
 
         float zW = fit.w * zoom;
         float zH = fit.h * zoom;
-        float maxPanX = std::max(0.f, (zW - fit.w) / 2.f);
-        float maxPanY = std::max(0.f, (zH - fit.h) / 2.f);
+        float maxPanX = std::max(0.f, (zW - fit.w) / 2.f) + PAN_SLACK;
+        float maxPanY = std::max(0.f, (zH - fit.h) / 2.f) + PAN_SLACK;
 
         // Same hyperbolic rubber-band as toolbar
         const float k = 80.f;
@@ -271,8 +279,8 @@ void kPen::activateResizeTool(ToolType shapeType, SDL_Rect bounds,
 // ── Undo ──────────────────────────────────────────────────────────────────────
 
 void kPen::saveState(std::vector<std::vector<uint32_t>>& stack) {
-    std::vector<uint32_t> pixels(CANVAS_WIDTH * CANVAS_HEIGHT);
-    withCanvas([&]{ SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), CANVAS_WIDTH * 4); });
+    std::vector<uint32_t> pixels(canvasW * canvasH);
+    withCanvas([&]{ SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), canvasW * 4); });
     stack.push_back(std::move(pixels));
     if (&stack == &undoStack) redoStack.clear();
 }
@@ -282,16 +290,16 @@ void kPen::applyState(std::vector<uint32_t>& pixels) {
         currentTool.reset(); // prevent setTool from deactivating+saving
         setTool(originalType);
     }
-    SDL_UpdateTexture(canvas, nullptr, pixels.data(), CANVAS_WIDTH * 4);
+    SDL_UpdateTexture(canvas, nullptr, pixels.data(), canvasW * 4);
 }
 
 // Stamp the active SELECT or RESIZE tool onto a pixel buffer for redo, then restore canvas.
 void kPen::stampForRedo(AbstractTool* tool) {
-    std::vector<uint32_t> redoPixels(CANVAS_WIDTH * CANVAS_HEIGHT);
+    std::vector<uint32_t> redoPixels(canvasW * canvasH);
     withCanvas([&]{
         tool->deactivate(renderer);
-        SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, redoPixels.data(), CANVAS_WIDTH * 4);
-        SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), CANVAS_WIDTH * 4);
+        SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, redoPixels.data(), canvasW * 4);
+        SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), canvasW * 4);
     });
     redoStack.clear();
     redoStack.push_back(std::move(redoPixels));
@@ -304,7 +312,7 @@ void kPen::undo() {
             if (st->isDirty()) stampForRedo(st);
             currentTool.reset();
             setTool(originalType);
-            SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), CANVAS_WIDTH * 4);
+            SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), canvasW * 4);
             return;
         }
     }
@@ -312,7 +320,7 @@ void kPen::undo() {
         // Shape is in-progress — just discard it, restore last committed state.
         currentTool.reset(); // prevent setTool from deactivating+saving
         setTool(originalType);
-        SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), CANVAS_WIDTH * 4);
+        SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), canvasW * 4);
         return;
     }
     if (undoStack.size() > 1) {
@@ -328,6 +336,89 @@ void kPen::redo() {
         applyState(redoStack.back());
         redoStack.pop_back();
     }
+}
+
+// ── Canvas resize ─────────────────────────────────────────────────────────────
+
+void kPen::resizeCanvas(int newW, int newH, bool scaleContent, int originX, int originY) {
+    newW = std::max(1, std::min(16384, newW));
+    newH = std::max(1, std::min(16384, newH));
+    if (newW == canvasW && newH == canvasH) return;
+
+    // Commit any active tool so no in-flight state references old textures.
+    if (currentTool) {
+        withCanvas([&]{ currentTool->deactivate(renderer); });
+        if (currentType == ToolType::SELECT) {
+            if (static_cast<SelectTool*>(currentTool.get())->isDirty())
+                saveState(undoStack);
+        } else if (currentType == ToolType::RESIZE) {
+            saveState(undoStack);
+        }
+        setTool(originalType);
+    }
+
+    // Read current canvas pixels.
+    std::vector<uint32_t> oldPixels(canvasW * canvasH);
+    withCanvas([&]{
+        SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888,
+                             oldPixels.data(), canvasW * 4);
+    });
+
+    // Build new pixel buffer — white background.
+    std::vector<uint32_t> newPixels(newW * newH, 0xFFFFFFFF);
+
+    if (scaleContent) {
+        // Nearest-neighbour scale — origin shift ignored, whole image resampled.
+        for (int y = 0; y < newH; y++) {
+            int srcY = std::min((int)((float)y / newH * canvasH), canvasH - 1);
+            for (int x = 0; x < newW; x++) {
+                int srcX = std::min((int)((float)x / newW * canvasW), canvasW - 1);
+                newPixels[y * newW + x] = oldPixels[srcY * canvasW + srcX];
+            }
+        }
+    } else {
+        // Crop / pad with origin shift.
+        // originX/Y: how much the old top-left corner moved in canvas pixels.
+        // Positive origin means the old content shifts right/down in the new buffer
+        // (i.e. padding is added on the left/top). Negative means content is cropped.
+        int dstOffX = -originX;
+        int dstOffY = -originY;
+        for (int oldY = 0; oldY < canvasH; oldY++) {
+            int newY = oldY + dstOffY;
+            if (newY < 0 || newY >= newH) continue;
+            for (int oldX = 0; oldX < canvasW; oldX++) {
+                int newX = oldX + dstOffX;
+                if (newX < 0 || newX >= newW) continue;
+                newPixels[newY * newW + newX] = oldPixels[oldY * canvasW + oldX];
+            }
+        }
+    }
+
+    SDL_DestroyTexture(canvas);
+    SDL_DestroyTexture(overlay);
+
+    canvasW = newW;
+    canvasH = newH;
+
+    canvas  = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
+    overlay = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
+    SDL_SetTextureBlendMode(overlay, SDL_BLENDMODE_BLEND);
+
+    SDL_UpdateTexture(canvas, nullptr, newPixels.data(), canvasW * 4);
+
+    SDL_SetRenderTarget(renderer, overlay);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+    SDL_RenderClear(renderer);
+    SDL_SetRenderTarget(renderer, nullptr);
+
+    // Old undo/redo buffers are wrong-size — clear and save fresh state.
+    undoStack.clear();
+    redoStack.clear();
+    saveState(undoStack);
+
+    toolbar.syncCanvasSize(canvasW, canvasH);
 }
 
 // ── Clipboard / delete helpers ────────────────────────────────────────────────
@@ -402,8 +493,8 @@ void kPen::pasteFromClipboard() {
     SDL_GetMouseState(&mouseWinX, &mouseWinY);
     getCanvasCoords(mouseWinX, mouseWinY, &mouseCX, &mouseCY);
     SDL_Rect pasteBounds = {
-        std::max(0, std::min(CANVAS_WIDTH  - w, mouseCX - w / 2)),
-        std::max(0, std::min(CANVAS_HEIGHT - h, mouseCY - h / 2)),
+        std::max(0, std::min(canvasW - w, mouseCX - w / 2)),
+        std::max(0, std::min(canvasH - h, mouseCY - h / 2)),
         w, h
     };
 
@@ -437,7 +528,15 @@ void kPen::run() {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) { running = false; break; }
 
+            // ── Text input for toolbar resize fields ──
+            if (e.type == SDL_TEXTINPUT) {
+                if (toolbar.onTextInput(e.text.text)) { needsRedraw = true; continue; }
+            }
+
             if (e.type == SDL_KEYDOWN) {
+                // Let toolbar consume resize field keys first
+                if (toolbar.onResizeKey(e.key.keysym.sym)) { needsRedraw = true; continue; }
+
                 switch (e.key.keysym.sym) {
                     case SDLK_b: setTool(ToolType::BRUSH);  needsRedraw = true; break;
                     case SDLK_l: setTool(ToolType::LINE);   needsRedraw = true; break;
@@ -574,7 +673,12 @@ void kPen::run() {
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT
                 && !multiGestureActive) {
                 viewScrolling = false;
+                // Canvas edge resize handles take priority
+                if (canvasResizer.onMouseDown(e.button.x, e.button.y, canvasW, canvasH)) {
+                    needsRedraw = true; continue;
+                }
                 if (toolbar.onMouseDown(e.button.x, e.button.y)) { needsRedraw = true; continue; }
+                toolbar.notifyClickOutside();  // revert resize fields if focused
                 getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
 
                 if (currentType == ToolType::SELECT) {
@@ -604,6 +708,13 @@ void kPen::run() {
 
             if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT
                 && !multiGestureActive) {
+                if (canvasResizer.isDragging()) {
+                    int newW, newH, ox = 0, oy = 0;
+                    if (canvasResizer.onMouseUp(e.button.x, e.button.y, canvasW, canvasH, newW, newH, ox, oy))
+                        resizeCanvas(newW, newH, toolbar.getResizeScaleMode(), ox, oy);
+                    showResizePreview = false;
+                    needsRedraw = true; continue;
+                }
                 toolbar.onMouseUp(e.button.x, e.button.y);
                 getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
                 bool changed = false;
@@ -614,6 +725,11 @@ void kPen::run() {
             }
 
             if (e.type == SDL_MOUSEMOTION && !multiGestureActive) {
+                if (canvasResizer.isDragging()) {
+                    canvasResizer.onMouseMove(e.motion.x, e.motion.y, previewW, previewH, previewOriginX, previewOriginY);
+                    showResizePreview = true;
+                    needsRedraw = true; continue;
+                }
                 viewScrolling = false;
                 if (toolbar.onMouseMotion(e.motion.x, e.motion.y)) { needsRedraw = true; continue; }
                 getCanvasCoords(e.motion.x, e.motion.y, &cX, &cY);
@@ -627,6 +743,15 @@ void kPen::run() {
                 }
 
                 needsRedraw = true; overlayDirty = true;
+            }
+        }
+
+        // Poll toolbar for a committed canvas resize (Enter key in text field)
+        {
+            auto req = toolbar.getResizeRequest();
+            if (req.pending) {
+                resizeCanvas(req.w, req.h, req.scale);
+                needsRedraw = true;
             }
         }
 
@@ -722,8 +847,8 @@ void kPen::run() {
                 float dstX1 = std::ceil(sx1),  dstY1 = std::ceil(sy1);
 
                 // Map expanded dst back to canvas texel coords
-                float scaleX = CANVAS_WIDTH  / vf.w;
-                float scaleY = CANVAS_HEIGHT / vf.h;
+                float scaleX = canvasW / vf.w;
+                float scaleY = canvasH / vf.h;
                 SDL_FRect srcF = {
                     (dstX0 - cx0) * scaleX,
                     (dstY0 - cy0) * scaleY,
@@ -744,7 +869,30 @@ void kPen::run() {
         // 3. Tool preview
         currentTool->onPreviewRender(renderer, toolbar.brushSize, toolbar.brushColor);
 
-        // 4. Toolbar
+        // 4. Canvas edge resize handles (window-space, outside canvas texture)
+        // Hide while actively drawing/selecting/resizing to avoid distraction
+        if (!currentTool || !currentTool->isActive())
+            canvasResizer.draw(renderer, canvasW, canvasH);
+
+        // 5. Ghost outline while dragging a canvas handle
+        if (showResizePreview && canvasResizer.isDragging() && previewW > 0 && previewH > 0) {
+            // Map previewW/H through the same viewport scale as the canvas.
+            SDL_FRect vf2 = getViewportF();
+            float scX = vf2.w / canvasW;
+            float scY = vf2.h / canvasH;
+            int wx1, wy1;
+            getWindowCoords(0, 0, &wx1, &wy1);
+            wx1 += (int)(previewOriginX * scX);
+            wy1 += (int)(previewOriginY * scY);
+            SDL_Rect ghost = { wx1, wy1, (int)(previewW * scX), (int)(previewH * scY) };
+            SDL_SetRenderDrawColor(renderer, 70, 130, 220, 200);
+            SDL_RenderDrawRect(renderer, &ghost);
+            SDL_Rect ghost2 = { ghost.x + 1, ghost.y + 1, ghost.w - 2, ghost.h - 2 };
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
+            SDL_RenderDrawRect(renderer, &ghost2);
+        }
+
+        // 6. Toolbar
         toolbar.draw();
 
         SDL_RenderPresent(renderer);

@@ -55,7 +55,8 @@ void ResizeTool::renderShape(SDL_Renderer* r, const SDL_Rect& b, int bs, SDL_Col
 }
 
 void ResizeTool::onOverlayRender(SDL_Renderer* r) {
-    renderShape(r, currentBounds, shapeBrushSize, shapeColor, CANVAS_WIDTH, CANVAS_HEIGHT);
+    int cw, ch; mapper->getCanvasSize(&cw, &ch);
+    renderShape(r, currentBounds, shapeBrushSize, shapeColor, cw, ch);
 }
 
 void ResizeTool::onPreviewRender(SDL_Renderer* r, int /*bs*/, SDL_Color /*col*/) {
@@ -63,7 +64,8 @@ void ResizeTool::onPreviewRender(SDL_Renderer* r, int /*bs*/, SDL_Color /*col*/)
 }
 
 void ResizeTool::deactivate(SDL_Renderer* r) {
-    renderShape(r, currentBounds, shapeBrushSize, shapeColor, CANVAS_WIDTH, CANVAS_HEIGHT);
+    int cw, ch; mapper->getCanvasSize(&cw, &ch);
+    renderShape(r, currentBounds, shapeBrushSize, shapeColor, cw, ch);
 }
 
 std::vector<uint32_t> ResizeTool::getFloatingPixels(SDL_Renderer* r) const {

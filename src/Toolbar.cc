@@ -307,8 +307,15 @@ void Toolbar::draw() {
         }
     }
 
+    // ── Canvas resize panel ──
+    int rpTop = psy + 9*stride + 8;
+    drawResizePanel(rpTop);       // rpTop is already in screen space (psy has -S applied)
+    resizePanelY = rpTop;         // store screen-space Y for hit-testing (matches swatch pattern)
+
     // ── Clamp scroll and draw subtle scrollbar ──
-    int totalContentH = psy + 9*stride + TB_PAD; // bottom of last preset row
+    //    Panel height: separator(8) + label(8) + pad(4) + field_h(16) + gap(4) + field_h(16)
+    //                + gap(6) + btn(20) + bottom_pad(8) = 90
+    int totalContentH = (rpTop + S) + 90; // rpTop is screen-space; add S to get content-space bottom
     maxScrollCache = std::max(0, totalContentH - winH);
     // Don't clamp here — overscroll is allowed; tickScroll() handles snap-back.
 
@@ -356,12 +363,59 @@ void Toolbar::updateBrightnessFromMouse(int x) {
 
 // ── Event handling ────────────────────────────────────────────────────────────
 
+// Commit or revert the resize fields and clear focus.
+// commit=true  → if the entered W×H differs from the actual size, queue a resize.
+// commit=false → always revert the text fields back to the actual canvas size.
+void Toolbar::defocusResize(bool commit) {
+    if (resizeFocus == ResizeFocus::NONE) return;
+    resizeFocus = ResizeFocus::NONE;
+    SDL_StopTextInput();
+    if (commit) {
+        int w = 0; for (int i = 0; i < resizeWLen; i++) w = w * 10 + (resizeWBuf[i] - '0');
+        int h = 0; for (int i = 0; i < resizeHLen; i++) h = h * 10 + (resizeHBuf[i] - '0');
+        if (w > 0 && h > 0 && (w != resizeLockW || h != resizeLockH))
+            commitResize();
+        else {
+            // Values are unchanged or invalid — revert display to actual size
+            int n = snprintf(resizeWBuf, sizeof(resizeWBuf), "%d", resizeLockW);
+            resizeWLen = (n > 0 && n < (int)sizeof(resizeWBuf)) ? n : 0;
+            n = snprintf(resizeHBuf, sizeof(resizeHBuf), "%d", resizeLockH);
+            resizeHLen = (n > 0 && n < (int)sizeof(resizeHBuf)) ? n : 0;
+        }
+    } else {
+        // Explicit cancel — always revert
+        int n = snprintf(resizeWBuf, sizeof(resizeWBuf), "%d", resizeLockW);
+        resizeWLen = (n > 0 && n < (int)sizeof(resizeWBuf)) ? n : 0;
+        n = snprintf(resizeHBuf, sizeof(resizeHBuf), "%d", resizeLockH);
+        resizeHLen = (n > 0 && n < (int)sizeof(resizeHBuf)) ? n : 0;
+    }
+}
+
+void Toolbar::notifyClickOutside() {
+    defocusResize(false);  // clicking outside the toolbar always cancels/reverts
+}
+
 bool Toolbar::onMouseDown(int x, int y) {
     if (!inToolbar(x, y)) return false;
     userScrolling = false;
 
     // Adjust y for scroll offset before hit-testing
     int sy = y + scrollY;
+
+    // If a resize field is focused and the user clicks somewhere other than a resize
+    // field, commit the entered dimensions (if changed) before processing the click.
+    if (resizeFocus != ResizeFocus::NONE) {
+        int panelY = resizePanelY;    // screen space
+        int py     = panelY + 12;
+        int fieldX = TB_PAD + 10;
+        int fieldW = TB_W - TB_PAD * 2 - 10;
+        SDL_Rect wField = { fieldX, py,           fieldW, 16 };
+        SDL_Rect hField = { fieldX, py + 16 + 4, fieldW, 16 };
+        SDL_Point pt = { x, y };     // raw screen-space y
+        bool clickingField = SDL_PointInRect(&pt, &wField) || SDL_PointInRect(&pt, &hField);
+        if (!clickingField)
+            defocusResize(true);
+    }
 
     // Tool buttons
     int cellW = (TB_W - TB_PAD) / 3;
@@ -446,6 +500,9 @@ bool Toolbar::onMouseDown(int x, int y) {
         }
     }
 
+    // ── Resize panel ──
+    if (hitResizePanel(x, y, true)) return true;
+
     return false; // click was in toolbar area but didn't hit any control
 }
 
@@ -529,4 +586,368 @@ bool Toolbar::tickScroll() {
         else return true;
     }
     return false;
+}
+
+// ── Canvas resize panel ───────────────────────────────────────────────────────
+//
+// Baked 3×5 pixel font for digits 0–9, 'x', 'W', 'H'.
+// Each glyph is 5 rows of 3 bits (LSB = leftmost pixel).
+// ─────────────────────────────────────────────────────────────────────────────
+
+static const uint8_t DIGIT_FONT[13][5] = {
+    // 0        1        2        3        4
+    {0b111, 0b101, 0b101, 0b101, 0b111},  // 0
+    {0b010, 0b110, 0b010, 0b010, 0b111},  // 1
+    {0b111, 0b001, 0b111, 0b100, 0b111},  // 2
+    {0b111, 0b001, 0b111, 0b001, 0b111},  // 3
+    {0b101, 0b101, 0b111, 0b001, 0b001},  // 4
+    {0b111, 0b100, 0b111, 0b001, 0b111},  // 5
+    {0b111, 0b100, 0b111, 0b101, 0b111},  // 6
+    {0b111, 0b001, 0b011, 0b010, 0b010},  // 7
+    {0b111, 0b101, 0b111, 0b101, 0b111},  // 8
+    {0b111, 0b101, 0b111, 0b001, 0b111},  // 9
+    // 'x' sentinel (index 10)
+    {0b101, 0b101, 0b010, 0b101, 0b101},  // x
+    // 'W' (index 11): two V shapes sharing the middle column
+    {0b101, 0b101, 0b101, 0b111, 0b101},  // W
+    // 'H' (index 12): two verticals joined by a crossbar
+    {0b101, 0b101, 0b111, 0b101, 0b101},  // H
+};
+
+// Draw one character at pixel position (x,y). scale=1 → 3×5 px, scale=2 → 6×10 px etc.
+static void drawGlyph(SDL_Renderer* r, int x, int y, int glyphIdx, int scale = 1) {
+    const uint8_t* rows = DIGIT_FONT[glyphIdx];
+    for (int row = 0; row < 5; row++) {
+        for (int col = 0; col < 3; col++) {
+            if (rows[row] & (1 << (2 - col))) {
+                SDL_Rect px = { x + col * scale, y + row * scale, scale, scale };
+                SDL_RenderFillRect(r, &px);
+            }
+        }
+    }
+}
+
+void Toolbar::drawDigitString(int x, int y, const char* s, int len) const {
+    int cx = x;
+    for (int i = 0; i < len; i++) {
+        int gi = (s[i] >= '0' && s[i] <= '9') ? (s[i] - '0') : 10;
+        drawGlyph(renderer, cx, y, gi, 2);
+        cx += 8;  // 3*2 + 2 px kerning
+    }
+}
+
+// Panel metrics (all in content/screen space — caller already applies -S)
+static const int RP_FIELD_H  = 16;
+static const int RP_BTN_H    = 20;
+static const int RP_LABEL_H  = 8;
+
+void Toolbar::drawResizePanel(int panelY) {
+    // ── Separator ──
+    SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
+    SDL_RenderDrawLine(renderer, TB_PAD, panelY + 4, TB_W - TB_PAD, panelY + 4);
+
+    int y = panelY + 12;  // top of first field
+
+    // ── "W" label + field ──
+    int fieldX = TB_PAD;
+    int fieldW = TB_W - TB_PAD * 2;
+    int labelX = fieldX + 2;
+
+    // Label "W"
+    SDL_SetRenderDrawColor(renderer, 140, 140, 155, 255);
+    drawGlyph(renderer, labelX, y + (RP_FIELD_H - 10) / 2, 11, 2);  // index 11 = 'W'
+
+    // Field background
+    SDL_Rect wField = { fieldX + 10, y, fieldW - 10, RP_FIELD_H };
+    bool wFocused = (resizeFocus == ResizeFocus::W);
+    SDL_SetRenderDrawColor(renderer, wFocused ? 45 : 38, wFocused ? 45 : 38, wFocused ? 55 : 45, 255);
+    SDL_RenderFillRect(renderer, &wField);
+    SDL_SetRenderDrawColor(renderer, wFocused ? 70 : 55, wFocused ? 130 : 55, wFocused ? 220 : 62, 255);
+    SDL_RenderDrawRect(renderer, &wField);
+
+    // Digit text
+    SDL_SetRenderDrawColor(renderer, 220, 220, 230, 255);
+    drawDigitString(wField.x + 3, wField.y + (RP_FIELD_H - 10) / 2, resizeWBuf, resizeWLen);
+
+    // Cursor line if focused
+    if (wFocused) {
+        int cx2 = wField.x + 3 + resizeWLen * 8;
+        SDL_SetRenderDrawColor(renderer, 200, 200, 220, 255);
+        SDL_RenderDrawLine(renderer, cx2, wField.y + 2, cx2, wField.y + RP_FIELD_H - 3);
+    }
+
+    y += RP_FIELD_H + 4;
+
+    // ── "H" label + field ──
+    // Label "H"
+    SDL_SetRenderDrawColor(renderer, 140, 140, 155, 255);
+    drawGlyph(renderer, labelX, y + (RP_FIELD_H - 10) / 2, 12, 2);  // index 12 = 'H'
+
+    SDL_Rect hField = { fieldX + 10, y, fieldW - 10, RP_FIELD_H };
+    bool hFocused = (resizeFocus == ResizeFocus::H);
+    SDL_SetRenderDrawColor(renderer, hFocused ? 45 : 38, hFocused ? 45 : 38, hFocused ? 55 : 45, 255);
+    SDL_RenderFillRect(renderer, &hField);
+    SDL_SetRenderDrawColor(renderer, hFocused ? 70 : 55, hFocused ? 130 : 55, hFocused ? 220 : 62, 255);
+    SDL_RenderDrawRect(renderer, &hField);
+
+    SDL_SetRenderDrawColor(renderer, 220, 220, 230, 255);
+    drawDigitString(hField.x + 3, hField.y + (RP_FIELD_H - 10) / 2, resizeHBuf, resizeHLen);
+
+    if (hFocused) {
+        int cx2 = hField.x + 3 + resizeHLen * 8;
+        SDL_SetRenderDrawColor(renderer, 200, 200, 220, 255);
+        SDL_RenderDrawLine(renderer, cx2, hField.y + 2, cx2, hField.y + RP_FIELD_H - 3);
+    }
+
+    y += RP_FIELD_H + 6;
+
+    // ── Two side-by-side buttons: [Lock Aspect] [Scale] ──
+    int halfW = (fieldW - 2) / 2;
+
+    // ── Lock Aspect button (left) ──
+    SDL_Rect lockBtn = { fieldX, y, halfW, RP_BTN_H };
+    bool la = resizeLockAspect;
+    SDL_SetRenderDrawColor(renderer, la ? 70 : 45, la ? 130 : 45, la ? 220 : 52, 255);
+    SDL_RenderFillRect(renderer, &lockBtn);
+    SDL_SetRenderDrawColor(renderer, 80, 80, 90, 255);
+    SDL_RenderDrawRect(renderer, &lockBtn);
+
+    // Lock icon (same as old scale icon)
+    SDL_SetRenderDrawColor(renderer, la ? 255 : 160, la ? 255 : 160, la ? 255 : 170, 255);
+    {
+        int iconW = 8, iconH = 11;
+        int ix = lockBtn.x + (lockBtn.w - iconW) / 2;
+        int iy = lockBtn.y + (lockBtn.h - iconH) / 2;
+        SDL_Rect lockBody = { ix, iy + 5, iconW, 6 };
+        SDL_RenderFillRect(renderer, &lockBody);
+        if (la) {
+            // LOCKED: closed U-shape shackle
+            SDL_RenderDrawLine(renderer, ix + 1, iy + 5, ix + 1, iy + 2);
+            SDL_RenderDrawLine(renderer, ix + 1, iy + 2, ix + 6, iy + 2);
+            SDL_RenderDrawLine(renderer, ix + 6, iy + 2, ix + 6, iy + 5);
+        } else {
+            // UNLOCKED: open shackle
+            SDL_RenderDrawLine(renderer, ix + 1, iy + 3, ix + 1, iy + 0);
+            SDL_RenderDrawLine(renderer, ix + 1, iy + 0, ix + 6, iy + 0);
+        }
+    }
+
+    // ── Scale button (right) ──
+    SDL_Rect scaleBtn = { fieldX + halfW + 2, y, halfW, RP_BTN_H };
+    bool sc = resizeScaleMode;
+    SDL_SetRenderDrawColor(renderer, sc ? 70 : 45, sc ? 130 : 45, sc ? 220 : 52, 255);
+    SDL_RenderFillRect(renderer, &scaleBtn);
+    SDL_SetRenderDrawColor(renderer, 80, 80, 90, 255);
+    SDL_RenderDrawRect(renderer, &scaleBtn);
+
+    // Scale icon: two diagonal arrows crossing in an X (↖↘ and ↗↙)
+    SDL_SetRenderDrawColor(renderer, sc ? 255 : 160, sc ? 255 : 160, sc ? 255 : 170, 255);
+    {
+        int cx2 = scaleBtn.x + scaleBtn.w / 2;
+        int cy2 = scaleBtn.y + scaleBtn.h / 2;
+        int ar = 4; // arrow arm radius
+
+        // NW→SE arrow
+        SDL_RenderDrawLine(renderer, cx2 - ar, cy2 - ar, cx2 + ar, cy2 + ar);
+        // NW arrowhead
+        SDL_RenderDrawLine(renderer, cx2 - ar, cy2 - ar, cx2 - ar + 2, cy2 - ar);
+        SDL_RenderDrawLine(renderer, cx2 - ar, cy2 - ar, cx2 - ar, cy2 - ar + 2);
+        // SE arrowhead
+        SDL_RenderDrawLine(renderer, cx2 + ar, cy2 + ar, cx2 + ar - 2, cy2 + ar);
+        SDL_RenderDrawLine(renderer, cx2 + ar, cy2 + ar, cx2 + ar, cy2 + ar - 2);
+
+        // NE→SW arrow
+        SDL_RenderDrawLine(renderer, cx2 + ar, cy2 - ar, cx2 - ar, cy2 + ar);
+        // NE arrowhead
+        SDL_RenderDrawLine(renderer, cx2 + ar, cy2 - ar, cx2 + ar - 2, cy2 - ar);
+        SDL_RenderDrawLine(renderer, cx2 + ar, cy2 - ar, cx2 + ar, cy2 - ar + 2);
+        // SW arrowhead
+        SDL_RenderDrawLine(renderer, cx2 - ar, cy2 + ar, cx2 - ar + 2, cy2 + ar);
+        SDL_RenderDrawLine(renderer, cx2 - ar, cy2 + ar, cx2 - ar, cy2 + ar - 2);
+    }
+}
+
+// hitResizePanel: returns true if (x, y) hit any resize panel control.
+// y is raw screen-space (NOT scroll-adjusted), matching how swatch hit-tests work —
+// resizePanelY is cached in screen space by draw().
+bool Toolbar::hitResizePanel(int x, int y, bool isDown) {
+    // resizePanelY is in screen space. y is also screen space.
+    // Mirror the exact layout arithmetic from drawResizePanel.
+    int panelY = resizePanelY;
+    int ry     = panelY + 12;   // top of W field
+
+    int fieldX = TB_PAD;
+    int fieldW = TB_W - TB_PAD * 2;
+    int halfW2 = (fieldW - 2) / 2;
+
+    // W field: { fieldX+10, ry, fieldW-10, RP_FIELD_H }
+    SDL_Rect wField = { fieldX + 10, ry, fieldW - 10, RP_FIELD_H };
+
+    // H field: ry advances by RP_FIELD_H + 4
+    int hY = ry + RP_FIELD_H + 4;
+    SDL_Rect hField = { fieldX + 10, hY, fieldW - 10, RP_FIELD_H };
+
+    // Buttons: y advances by another RP_FIELD_H + 6
+    int btnY = hY + RP_FIELD_H + 6;
+    SDL_Rect lockBtn  = { fieldX,              btnY, halfW2, RP_BTN_H };
+    SDL_Rect scaleBtn = { fieldX + halfW2 + 2, btnY, halfW2, RP_BTN_H };
+
+    SDL_Point pt = { x, y };
+
+    if (SDL_PointInRect(&pt, &wField)) {
+        if (isDown) {
+            resizeFocus = ResizeFocus::W;
+            SDL_StartTextInput();
+        }
+        return true;
+    }
+    if (SDL_PointInRect(&pt, &hField)) {
+        if (isDown) {
+            resizeFocus = ResizeFocus::H;
+            SDL_StartTextInput();
+        }
+        return true;
+    }
+    if (SDL_PointInRect(&pt, &lockBtn)) {
+        if (isDown) resizeLockAspect = !resizeLockAspect;
+        return true;
+    }
+    if (SDL_PointInRect(&pt, &scaleBtn)) {
+        if (isDown) resizeScaleMode = !resizeScaleMode;
+        return true;
+    }
+    // All named controls handled above. Return false so onMouseDown's defocusResize
+    // (already called before hitResizePanel) took care of unfocusing the text fields.
+    return false;
+}
+
+// Apply aspect-ratio lock: after the "source" field changes, update the linked one.
+// srcIsW = true means W was just edited, so we update H to match.
+void Toolbar::applyAspectLock(bool srcIsW) {
+    if (!resizeLockAspect) return;
+    // Parse both current values
+    int w = 0; for (int i = 0; i < resizeWLen; i++) w = w * 10 + (resizeWBuf[i] - '0');
+    int h = 0; for (int i = 0; i < resizeHLen; i++) h = h * 10 + (resizeHBuf[i] - '0');
+    if (resizeLockW <= 0 || resizeLockH <= 0) return;
+    if (srcIsW && w > 0) {
+        int newH = std::max(1, (int)std::round((float)w * resizeLockH / resizeLockW));
+        int n = snprintf(resizeHBuf, sizeof(resizeHBuf), "%d", newH);
+        resizeHLen = (n > 0 && n < (int)sizeof(resizeHBuf)) ? n : 0;
+    } else if (!srcIsW && h > 0) {
+        int newW = std::max(1, (int)std::round((float)h * resizeLockW / resizeLockH));
+        int n = snprintf(resizeWBuf, sizeof(resizeWBuf), "%d", newW);
+        resizeWLen = (n > 0 && n < (int)sizeof(resizeWBuf)) ? n : 0;
+    }
+}
+
+// Clamp the just-edited dimension to 16384, and if aspect lock is on, also
+// ensure the linked dimension stays within 16384 (back-calculating the source cap).
+static const int CANVAS_MAX = 16384;
+
+void Toolbar::clampResizeInput(bool srcIsW) {
+    auto parseBuf = [](const char* buf, int len) {
+        int v = 0; for (int i = 0; i < len; i++) v = v * 10 + (buf[i] - '0'); return v;
+    };
+    auto writeBuf = [](char* buf, int& len, int v) {
+        int n = snprintf(buf, 7, "%d", v);
+        len = (n > 0 && n < 7) ? n : 0;
+    };
+
+    int w = parseBuf(resizeWBuf, resizeWLen);
+    int h = parseBuf(resizeHBuf, resizeHLen);
+
+    if (srcIsW) {
+        // Clamp W itself first
+        if (w > CANVAS_MAX) { w = CANVAS_MAX; writeBuf(resizeWBuf, resizeWLen, w); }
+        // If locked, check the resulting H — only back-calculate W if H is the binding constraint
+        // (i.e. H would exceed max even after W has been clamped to CANVAS_MAX)
+        if (resizeLockAspect && resizeLockW > 0) {
+            int linkedH = (int)std::round((float)w * resizeLockH / resizeLockW);
+            if (linkedH > CANVAS_MAX) {
+                // H is the bottleneck — back-calculate the largest W that keeps H in bounds
+                int cappedW = std::max(1, (int)std::floor((float)CANVAS_MAX * resizeLockW / resizeLockH));
+                // Only apply if this is actually more restrictive than the direct cap
+                if (cappedW < w) { w = cappedW; writeBuf(resizeWBuf, resizeWLen, w); }
+            }
+        }
+    } else {
+        // Clamp H itself first
+        if (h > CANVAS_MAX) { h = CANVAS_MAX; writeBuf(resizeHBuf, resizeHLen, h); }
+        // If locked, check the resulting W — only back-calculate H if W is the binding constraint
+        if (resizeLockAspect && resizeLockH > 0) {
+            int linkedW = (int)std::round((float)h * resizeLockW / resizeLockH);
+            if (linkedW > CANVAS_MAX) {
+                int cappedH = std::max(1, (int)std::floor((float)CANVAS_MAX * resizeLockH / resizeLockW));
+                if (cappedH < h) { h = cappedH; writeBuf(resizeHBuf, resizeHLen, h); }
+            }
+        }
+    }
+}
+
+bool Toolbar::onTextInput(const char* text) {
+    if (resizeFocus == ResizeFocus::NONE) return false;
+    char*  buf = (resizeFocus == ResizeFocus::W) ? resizeWBuf : resizeHBuf;
+    int&   len = (resizeFocus == ResizeFocus::W) ? resizeWLen : resizeHLen;
+    for (const char* c = text; *c; c++) {
+        if (*c >= '0' && *c <= '9' && len < 6) {
+            buf[len++] = *c;
+            buf[len]   = 0;
+        }
+    }
+    clampResizeInput(resizeFocus == ResizeFocus::W);
+    applyAspectLock(resizeFocus == ResizeFocus::W);
+    return true;
+}
+
+bool Toolbar::onResizeKey(SDL_Keycode sym) {
+    if (resizeFocus == ResizeFocus::NONE) return false;
+    char*  buf = (resizeFocus == ResizeFocus::W) ? resizeWBuf : resizeHBuf;
+    int&   len = (resizeFocus == ResizeFocus::W) ? resizeWLen : resizeHLen;
+
+    if (sym == SDLK_BACKSPACE) {
+        if (len > 0) { buf[--len] = 0; }
+        clampResizeInput(resizeFocus == ResizeFocus::W);
+        applyAspectLock(resizeFocus == ResizeFocus::W);
+        return true;
+    }
+    if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
+        commitResize();
+        resizeFocus = ResizeFocus::NONE;
+        SDL_StopTextInput();
+        return true;
+    }
+    if (sym == SDLK_TAB) {
+        resizeFocus = (resizeFocus == ResizeFocus::W) ? ResizeFocus::H : ResizeFocus::W;
+        return true;
+    }
+    if (sym == SDLK_ESCAPE) {
+        defocusResize(false);  // revert and unfocus
+        return true;
+    }
+    return false;
+}
+
+Toolbar::CanvasResizeRequest Toolbar::getResizeRequest() {
+    CanvasResizeRequest req = pendingResize;
+    pendingResize.pending = false;
+    return req;
+}
+
+void Toolbar::syncCanvasSize(int w, int h) {
+    resizeLockW = w;
+    resizeLockH = h;
+    // Write w into resizeWBuf
+    int n = snprintf(resizeWBuf, sizeof(resizeWBuf), "%d", w);
+    resizeWLen = (n > 0 && n < (int)sizeof(resizeWBuf)) ? n : 0;
+    n = snprintf(resizeHBuf, sizeof(resizeHBuf), "%d", h);
+    resizeHLen = (n > 0 && n < (int)sizeof(resizeHBuf)) ? n : 0;
+}
+
+void Toolbar::commitResize() {
+    int w = 0, h = 0;
+    for (int i = 0; i < resizeWLen; i++) w = w * 10 + (resizeWBuf[i] - '0');
+    for (int i = 0; i < resizeHLen; i++) h = h * 10 + (resizeHBuf[i] - '0');
+    if (w > 0 && h > 0) {
+        pendingResize = { true, w, h, resizeScaleMode };
+    }
 }

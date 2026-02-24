@@ -5,6 +5,7 @@
 #include "Constants.h"
 #include "Tools.h"
 #include "Toolbar.h"
+#include "CanvasResizer.h"
 
 class kPen : public ICoordinateMapper {
   public:
@@ -20,6 +21,12 @@ class kPen : public ICoordinateMapper {
     void getCanvasCoords(int winX, int winY, int* cX, int* cY) override;
     void getWindowCoords(int canX, int canY, int* wX, int* wY) override;
     int  getWindowSize(int canSize) override;
+    void getCanvasSize(int* w, int* h) override { *w = canvasW; *h = canvasH; }
+
+    // Resize the canvas; scaleContent=true stretches pixels, false crops/pads with white.
+    // originX/Y: how many canvas pixels the top-left corner shifted
+    // (negative = canvas grew upward/leftward, padding added there).
+    void resizeCanvas(int newW, int newH, bool scaleContent, int originX = 0, int originY = 0);
 
   private:
     SDL_Window*   window;
@@ -27,18 +34,29 @@ class kPen : public ICoordinateMapper {
     SDL_Texture*  canvas;
     SDL_Texture*  overlay;
 
+    // Runtime canvas dimensions — start at compile-time defaults, change via resizeCanvas().
+    int canvasW = CANVAS_WIDTH;
+    int canvasH = CANVAS_HEIGHT;
+
     std::unique_ptr<AbstractTool> currentTool;
     ToolType currentType  = ToolType::BRUSH;
     ToolType originalType = ToolType::BRUSH;
 
-    Toolbar toolbar;
+    Toolbar       toolbar;
+    CanvasResizer canvasResizer;
+
+    // Drag-handle resize preview (ghost outline while dragging)
+    int  previewW = 0, previewH = 0;
+    int  previewOriginX = 0, previewOriginY = 0;
+    bool showResizePreview = false;
 
     std::vector<std::vector<uint32_t>> undoStack;
     std::vector<std::vector<uint32_t>> redoStack;
 
     // ── Zoom / pan ────────────────────────────────────────────────────────────
-    static constexpr float MIN_ZOOM = 0.1f;
-    static constexpr float MAX_ZOOM = 20.f;
+    static constexpr float MIN_ZOOM  = 0.1f;
+    static constexpr float MAX_ZOOM  = 20.f;
+    static constexpr float PAN_SLACK = 50.f;  // px the canvas edge may drift outside the window
 
     float zoom = 1.f;   // 1.0 = canvas fits the window
     float panX = 0.f;   // window-pixel offset from the fit-centered position

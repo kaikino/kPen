@@ -13,16 +13,18 @@ class ICoordinateMapper {
     virtual void getCanvasCoords(int winX, int winY, int* canX, int* canY) = 0;
     virtual void getWindowCoords(int canX, int canY, int* winX, int* winY) = 0;
     virtual int  getWindowSize(int canSize) = 0;
+    virtual void getCanvasSize(int* w, int* h) = 0;  // runtime canvas dimensions
 
     // Clamp (cx,cy) to the canvas edge along the ray from (sx,sy).
-    static void clampToCanvasEdge(int sx, int sy, int& cx, int& cy) {
-        if (cx >= 0 && cx < CANVAS_WIDTH && cy >= 0 && cy < CANVAS_HEIGHT) return;
+    void clampToCanvasEdge(int sx, int sy, int& cx, int& cy) {
+        int cw, ch; getCanvasSize(&cw, &ch);
+        if (cx >= 0 && cx < cw && cy >= 0 && cy < ch) return;
         float dx = (float)(cx - sx), dy = (float)(cy - sy);
         float t = 1.f;
-        if (dx != 0.f) { float v = (dx > 0 ? CANVAS_WIDTH  - 1 - sx : -sx) / dx; if (v > 0.f && v < t) t = v; }
-        if (dy != 0.f) { float v = (dy > 0 ? CANVAS_HEIGHT - 1 - sy : -sy) / dy; if (v > 0.f && v < t) t = v; }
-        cx = std::max(0, std::min(CANVAS_WIDTH  - 1, sx + (int)(dx * t)));
-        cy = std::max(0, std::min(CANVAS_HEIGHT - 1, sy + (int)(dy * t)));
+        if (dx != 0.f) { float v = (dx > 0 ? cw - 1 - sx : -sx) / dx; if (v > 0.f && v < t) t = v; }
+        if (dy != 0.f) { float v = (dy > 0 ? ch - 1 - sy : -sy) / dy; if (v > 0.f && v < t) t = v; }
+        cx = std::max(0, std::min(cw - 1, sx + (int)(dx * t)));
+        cy = std::max(0, std::min(ch - 1, sy + (int)(dy * t)));
     }
 };
 

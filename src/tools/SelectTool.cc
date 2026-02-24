@@ -24,10 +24,11 @@ bool SelectTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_C
                       std::max(1, std::abs(cX - startX)), std::max(1, std::abs(cY - startY)) };
 
     // Intersection with canvas for the actual pixel read/erase
+    int canvasW, canvasH; mapper->getCanvasSize(&canvasW, &canvasH);
     int rx = std::max(0, currentBounds.x);
     int ry = std::max(0, currentBounds.y);
-    int rx2 = std::min(CANVAS_WIDTH,  currentBounds.x + currentBounds.w);
-    int ry2 = std::min(CANVAS_HEIGHT, currentBounds.y + currentBounds.h);
+    int rx2 = std::min(canvasW, currentBounds.x + currentBounds.w);
+    int ry2 = std::min(canvasH, currentBounds.y + currentBounds.h);
     int rw = rx2 - rx, rh = ry2 - ry;
     if (rw <= 0 || rh <= 0) { isDrawing = false; return false; }
 
@@ -69,10 +70,11 @@ void SelectTool::onPreviewRender(SDL_Renderer* r, int /*brushSize*/, SDL_Color /
         {
             int wx1, wy1, wx2, wy2;
             mapper->getWindowCoords(0, 0, &wx1, &wy1);
-            mapper->getWindowCoords(CANVAS_WIDTH, CANVAS_HEIGHT, &wx2, &wy2);
+            int cw2, ch2; mapper->getCanvasSize(&cw2, &ch2);
+            mapper->getWindowCoords(cw2, ch2, &wx2, &wy2);
             int vw = wx2 - wx1, vh = wy2 - wy1;
-            curX = vw > 0 ? (int)std::floor((mouseX - wx1) * ((float)CANVAS_WIDTH  / vw)) : 0;
-            curY = vh > 0 ? (int)std::floor((mouseY - wy1) * ((float)CANVAS_HEIGHT / vh)) : 0;
+            curX = vw > 0 ? (int)std::floor((mouseX - wx1) * ((float)cw2 / vw)) : 0;
+            curY = vh > 0 ? (int)std::floor((mouseY - wy1) * ((float)ch2 / vh)) : 0;
         }
         int wx1, wy1, wx2, wy2;
         mapper->getWindowCoords(std::min(startX, curX), std::min(startY, curY), &wx1, &wy1);

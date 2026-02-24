@@ -3,14 +3,13 @@
 #include <vector>
 
 void FillTool::onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
-    if (cX < 0 || cX >= CANVAS_WIDTH || cY < 0 || cY >= CANVAS_HEIGHT) return;
-    // Read all canvas pixels into a buffer
-    std::vector<uint32_t> pixels(CANVAS_WIDTH * CANVAS_HEIGHT);
+    int canvasW, canvasH; mapper->getCanvasSize(&canvasW, &canvasH);
+    if (cX < 0 || cX >= canvasW || cY < 0 || cY >= canvasH) return;
+    std::vector<uint32_t> pixels(canvasW * canvasH);
     SDL_RenderReadPixels(canvasRenderer, nullptr, SDL_PIXELFORMAT_ARGB8888,
-                         pixels.data(), CANVAS_WIDTH * 4);
+                         pixels.data(), canvasW * 4);
 
-    // Target color = whatever is at the clicked pixel
-    uint32_t target = pixels[cY * CANVAS_WIDTH + cX];
+    uint32_t target = pixels[cY * canvasW + cX];
     uint32_t fill   = ((uint32_t)color.a << 24) | ((uint32_t)color.r << 16)
                     | ((uint32_t)color.g <<  8) |  (uint32_t)color.b;
 
@@ -18,18 +17,17 @@ void FillTool::onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int bru
 
     // BFS flood fill
     std::queue<int> q;
-    q.push(cY * CANVAS_WIDTH + cX);
-    pixels[cY * CANVAS_WIDTH + cX] = fill;
+    q.push(cY * canvasW + cX);
+    pixels[cY * canvasW + cX] = fill;
 
     while (!q.empty()) {
         int idx = q.front(); q.pop();
-        int x = idx % CANVAS_WIDTH;
-        int y = idx / CANVAS_WIDTH;
+        int x = idx % canvasW;
+        int y = idx / canvasW;
 
-        // Check 4 neighbors
         auto tryPush = [&](int nx, int ny) {
-            if (nx < 0 || nx >= CANVAS_WIDTH || ny < 0 || ny >= CANVAS_HEIGHT) return;
-            int ni = ny * CANVAS_WIDTH + nx;
+            if (nx < 0 || nx >= canvasW || ny < 0 || ny >= canvasH) return;
+            int ni = ny * canvasW + nx;
             if (pixels[ni] == target) {
                 pixels[ni] = fill;
                 q.push(ni);
@@ -43,5 +41,5 @@ void FillTool::onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int bru
 
     // Write the modified pixels back to the canvas texture
     SDL_UpdateTexture(SDL_GetRenderTarget(canvasRenderer), nullptr,
-                      pixels.data(), CANVAS_WIDTH * 4);
+                      pixels.data(), canvasW * 4);
 }

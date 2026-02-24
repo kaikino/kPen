@@ -52,10 +52,11 @@ void ShapeTool::onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Co
     {
         int wx1, wy1, wx2, wy2;
         mapper->getWindowCoords(0, 0, &wx1, &wy1);
-        mapper->getWindowCoords(CANVAS_WIDTH, CANVAS_HEIGHT, &wx2, &wy2);
+        int cw3, ch3; mapper->getCanvasSize(&cw3, &ch3);
+        mapper->getWindowCoords(cw3, ch3, &wx2, &wy2);
         int vw = wx2 - wx1, vh = wy2 - wy1;
-        curX = vw > 0 ? (int)std::floor((mouseX - wx1) * ((float)CANVAS_WIDTH  / vw)) : 0;
-        curY = vh > 0 ? (int)std::floor((mouseY - wy1) * ((float)CANVAS_HEIGHT / vh)) : 0;
+        curX = vw > 0 ? (int)std::floor((mouseX - wx1) * ((float)cw3 / vw)) : 0;
+        curY = vh > 0 ? (int)std::floor((mouseY - wy1) * ((float)ch3 / vh)) : 0;
     }
     if (curX == startX && curY == startY) return;
 
