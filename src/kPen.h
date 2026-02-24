@@ -26,9 +26,6 @@ class kPen : public ICoordinateMapper {
     SDL_Renderer* renderer;
     SDL_Texture*  canvas;
     SDL_Texture*  overlay;
-    SDL_Texture*  checkerboard = nullptr;  // cached checkerboard texture
-    int           checkerW     = 0;        // size it was built for
-    int           checkerH     = 0;
 
     std::unique_ptr<AbstractTool> currentTool;
     ToolType currentType  = ToolType::BRUSH;
@@ -88,4 +85,9 @@ class kPen : public ICoordinateMapper {
     void activateResizeTool(ToolType shapeType, SDL_Rect bounds,
                             int sx, int sy, int ex, int ey,
                             int brushSize, SDL_Color color);
+
+    // Clipboard / selection helpers
+    void copySelectionToClipboard();
+    void pasteFromClipboard();
+    void deleteSelection();   // delete without stamping back; saves undo state
 };

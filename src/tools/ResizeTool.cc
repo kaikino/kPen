@@ -65,3 +65,59 @@ void ResizeTool::onPreviewRender(SDL_Renderer* r, int /*bs*/, SDL_Color /*col*/)
 void ResizeTool::deactivate(SDL_Renderer* r) {
     renderShape(r, currentBounds, shapeBrushSize, shapeColor, CANVAS_WIDTH, CANVAS_HEIGHT);
 }
+
+std::vector<uint32_t> ResizeTool::getFloatingPixels(SDL_Renderer* r) const {
+    int w = currentBounds.w, h = currentBounds.h;
+    if (w <= 0 || h <= 0) return {};
+
+    // Render the shape into a temporary texture at its current bounds,
+    // offset so the shape's top-left maps to (0,0) in the texture.
+    SDL_Texture* tmp = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888,
+                                         SDL_TEXTUREACCESS_TARGET, w, h);
+    if (!tmp) return {};
+    SDL_SetTextureBlendMode(tmp, SDL_BLENDMODE_BLEND);
+
+    SDL_Texture* prev = SDL_GetRenderTarget(r);
+    SDL_SetRenderTarget(r, tmp);
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+    SDL_RenderClear(r);
+
+    // Shift the bounds so the shape renders at (0,0) within the texture
+    SDL_Rect localBounds = { 0, 0, w, h };
+    SDL_Rect shiftedOrig = { origBounds.x - currentBounds.x, origBounds.y - currentBounds.y,
+                              origBounds.w, origBounds.h };
+    // We need to temporarily adjust origBounds for remapPoint — use a local copy
+    // by passing localBounds as both orig and curr (identity mapping) then we can
+    // just render directly with the offset shape coords.
+    SDL_SetRenderDrawColor(r, shapeColor.r, shapeColor.g, shapeColor.b, 255);
+    int half = std::max(1, shapeBrushSize / 2);
+
+    if (shapeType == ToolType::LINE) {
+        // Remap endpoints from origBounds space into localBounds space
+        auto remap = [&](int ox, int oy, int& rx, int& ry) {
+            float tx = origBounds.w > 0 ? (float)(ox - origBounds.x) / origBounds.w : 0.f;
+            float ty = origBounds.h > 0 ? (float)(oy - origBounds.y) / origBounds.h : 0.f;
+            rx = (int)(tx * w);
+            ry = (int)(ty * h);
+        };
+        int rx0, ry0, rx1, ry1;
+        remap(shapeStartX, shapeStartY, rx0, ry0);
+        remap(shapeEndX,   shapeEndY,   rx1, ry1);
+        if (flipX) { rx0 = w - rx0; rx1 = w - rx1; }
+        if (flipY) { ry0 = h - ry0; ry1 = h - ry1; }
+        DrawingUtils::drawLine(r, rx0, ry0, rx1, ry1, shapeBrushSize, w, h);
+    } else if (shapeType == ToolType::RECT) {
+        SDL_Rect rect = { half, half, w - half * 2, h - half * 2 };
+        if (rect.w > 0 && rect.h > 0)
+            DrawingUtils::drawRect(r, &rect, shapeBrushSize, w, h);
+    } else if (shapeType == ToolType::CIRCLE) {
+        DrawingUtils::drawOval(r, half, half, w - half, h - half, shapeBrushSize, w, h);
+    }
+
+    std::vector<uint32_t> pixels(w * h);
+    SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), w * 4);
+
+    SDL_SetRenderTarget(r, prev);
+    SDL_DestroyTexture(tmp);
+    return pixels;
+}

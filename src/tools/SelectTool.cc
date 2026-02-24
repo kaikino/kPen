@@ -83,7 +83,30 @@ void SelectTool::activateWithTexture(SDL_Texture* tex, SDL_Rect area) {
     selectionTexture = tex;
     currentBounds = area;
     active = true;
+    dirty  = true;   // pasted content always modifies the canvas on commit
     isMoving = false;
     resizing = Handle::NONE;
     isDrawing = false;
+}
+
+std::vector<uint32_t> SelectTool::getFloatingPixels(SDL_Renderer* r) const {
+    if (!selectionTexture || currentBounds.w <= 0 || currentBounds.h <= 0)
+        return {};
+    int w = currentBounds.w, h = currentBounds.h;
+    std::vector<uint32_t> pixels(w * h, 0);
+
+    // selectionTexture is SDL_TEXTUREACCESS_TARGET so LockTexture won't work.
+    // Read via a temporary streaming texture rendered into a target texture.
+    SDL_Texture* tmp = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888,
+                                          SDL_TEXTUREACCESS_TARGET, w, h);
+    if (!tmp) return pixels;
+    SDL_Texture* prev = SDL_GetRenderTarget(r);
+    SDL_SetRenderTarget(r, tmp);
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+    SDL_RenderClear(r);
+    SDL_RenderCopy(r, selectionTexture, nullptr, nullptr);
+    SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), w * 4);
+    SDL_SetRenderTarget(r, prev);
+    SDL_DestroyTexture(tmp);
+    return pixels;
 }

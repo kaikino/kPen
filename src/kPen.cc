@@ -39,7 +39,6 @@ kPen::kPen() : toolbar(nullptr, this) {
 }
 
 kPen::~kPen() {
-    if (checkerboard) SDL_DestroyTexture(checkerboard);
     SDL_DestroyTexture(canvas);
     SDL_DestroyTexture(overlay);
     SDL_DestroyRenderer(renderer);
@@ -68,7 +67,11 @@ SDL_Rect kPen::getFitViewport() {
 
 SDL_Rect kPen::getViewport() {
     SDL_FRect f = getViewportF();
-    return { (int)f.x, (int)f.y, (int)f.w, (int)f.h };
+    int x = (int)std::floor(f.x);
+    int y = (int)std::floor(f.y);
+    int x2 = (int)std::ceil(f.x + f.w);
+    int y2 = (int)std::ceil(f.y + f.h);
+    return { x, y, x2 - x, y2 - y };
 }
 
 SDL_FRect kPen::getViewportF() {
@@ -240,7 +243,7 @@ void kPen::setTool(ToolType t) {
         if (currentType == ToolType::RESIZE) {
             saveState(undoStack);
         } else if (currentType == ToolType::SELECT) {
-            if (static_cast<SelectTool*>(currentTool.get())->hasMoved())
+            if (static_cast<SelectTool*>(currentTool.get())->isDirty())
                 saveState(undoStack);
         }
     }
@@ -304,7 +307,7 @@ void kPen::undo() {
     if (currentType == ToolType::SELECT) {
         auto* st = static_cast<SelectTool*>(currentTool.get());
         if (st->isSelectionActive()) {
-            if (st->hasMoved()) stampForRedo(st);
+            if (st->isDirty()) stampForRedo(st);
             currentTool.reset();
             setTool(originalType);
             SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), CANVAS_WIDTH * 4);
@@ -333,6 +336,178 @@ void kPen::redo() {
     }
 }
 
+// ── Clipboard / delete helpers ────────────────────────────────────────────────
+
+// Delete the active SelectTool or ResizeTool content without stamping it back,
+// saving an undo state so the deletion can be undone.
+void kPen::deleteSelection() {
+    if (currentType == ToolType::SELECT) {
+        auto* st = static_cast<SelectTool*>(currentTool.get());
+        if (!st->isSelectionActive()) return;
+        // The canvas already has a white hole; save that state, then drop the floating pixels.
+        saveState(undoStack);
+        currentTool = std::make_unique<SelectTool>(this);
+    } else if (currentType == ToolType::RESIZE) {
+        // Shape was never stamped onto the canvas — just discard it.
+        // No undo state needed: the canvas is unchanged from the last undoStack entry.
+        currentTool.reset(); // skip deactivate so shape isn't drawn
+        setTool(originalType);
+    }
+}
+
+// Copy the pixels from the active SelectTool or ResizeTool into the OS clipboard
+// as raw ARGB8888 pixel data preceded by a small header: width(4) + height(4) + pixels.
+void kPen::copySelectionToClipboard() {
+    SDL_Rect bounds = {0, 0, 0, 0};
+    std::vector<uint32_t> pixels;
+
+    if (currentType == ToolType::SELECT) {
+        auto* st = static_cast<SelectTool*>(currentTool.get());
+        if (!st->isSelectionActive()) return;
+        bounds = st->getFloatingBounds();
+        pixels = st->getFloatingPixels(renderer);
+    } else if (currentType == ToolType::RESIZE) {
+        auto* rt = static_cast<ResizeTool*>(currentTool.get());
+        bounds = rt->getFloatingBounds();
+        pixels = rt->getFloatingPixels(renderer);
+    } else {
+        return;
+    }
+
+    if (bounds.w <= 0 || bounds.h <= 0 || pixels.empty()) return;
+
+    // Pack into a byte buffer: 4 bytes width, 4 bytes height, then raw ARGB pixels.
+    int w = bounds.w, h = bounds.h;
+    size_t headerSize = 8;
+    size_t pixelBytes = (size_t)w * h * 4;
+    std::vector<uint8_t> buf(headerSize + pixelBytes);
+    memcpy(buf.data() + 0, &w, 4);
+    memcpy(buf.data() + 4, &h, 4);
+    memcpy(buf.data() + 8, pixels.data(), pixelBytes);
+
+    // SDL_SetClipboardText expects a null-terminated string; we base64-encode to be safe.
+    static const char* b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const uint8_t* src = buf.data();
+    size_t srcLen = buf.size();
+    size_t outLen = ((srcLen + 2) / 3) * 4 + 1;
+    std::vector<char> b64buf(outLen);
+    size_t i = 0, o = 0;
+    while (i < srcLen) {
+        uint32_t v = (uint32_t)src[i++] << 16;
+        bool b2 = i < srcLen, b3;
+        if (b2) v |= (uint32_t)src[i++] << 8;
+        b3 = i < srcLen;
+        if (b3) v |= (uint32_t)src[i++];
+        b64buf[o++] = b64[(v >> 18) & 63];
+        b64buf[o++] = b64[(v >> 12) & 63];
+        b64buf[o++] = b2 ? b64[(v >> 6) & 63] : '=';
+        b64buf[o++] = b3 ? b64[v & 63] : '=';
+    }
+    b64buf[o] = '\0';
+
+    // Prefix with a magic tag so paste can identify our data
+    std::string clipText = "KPEN_PIXELS:";
+    clipText += b64buf.data();
+    SDL_SetClipboardText(clipText.c_str());
+}
+
+void kPen::pasteFromClipboard() {
+    if (!SDL_HasClipboardText()) return;
+    char* raw = SDL_GetClipboardText();
+    if (!raw) return;
+    std::string text(raw);
+    SDL_free(raw);
+
+    const std::string prefix = "KPEN_PIXELS:";
+    if (text.rfind(prefix, 0) != 0) return;
+    std::string b64str = text.substr(prefix.size());
+
+    // Base64 decode
+    static const int8_t dt[256] = {
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+        52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
+        -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+        15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+        -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+        41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    };
+    std::vector<uint8_t> decoded;
+    decoded.reserve(b64str.size() * 3 / 4);
+    uint32_t acc = 0; int bits = 0;
+    for (char ch : b64str) {
+        if (ch == '=') break;
+        int8_t v = dt[(uint8_t)ch];
+        if (v < 0) continue;
+        acc = (acc << 6) | v;
+        bits += 6;
+        if (bits >= 8) { bits -= 8; decoded.push_back((acc >> bits) & 0xFF); }
+    }
+
+    if (decoded.size() < 8) return;
+    int w, h;
+    memcpy(&w, decoded.data() + 0, 4);
+    memcpy(&h, decoded.data() + 4, 4);
+    if (w <= 0 || h <= 0 || (size_t)(w * h * 4 + 8) > decoded.size()) return;
+
+    std::vector<uint32_t> pixels((size_t)w * h);
+    memcpy(pixels.data(), decoded.data() + 8, (size_t)w * h * 4);
+
+    // Commit any in-progress selection/resize before pasting, saving undo state once
+    if (currentType == ToolType::SELECT) {
+        auto* st = static_cast<SelectTool*>(currentTool.get());
+        if (st->isSelectionActive()) {
+            withCanvas([&]{ st->deactivate(renderer); });
+            if (st->isDirty()) saveState(undoStack);
+        }
+        // Reset to a fresh SelectTool directly — don't go through setTool which would save again
+        currentTool = std::make_unique<SelectTool>(this);
+    } else if (currentType == ToolType::RESIZE) {
+        withCanvas([&]{ currentTool->deactivate(renderer); });
+        saveState(undoStack);
+        currentTool.reset();
+        currentTool = std::make_unique<SelectTool>(this);
+    } else {
+        setTool(ToolType::SELECT);
+    }
+    currentType = toolbar.currentType = ToolType::SELECT;
+
+    // Centre the pasted content on the mouse cursor position
+    int mouseWinX, mouseWinY, mouseCX, mouseCY;
+    SDL_GetMouseState(&mouseWinX, &mouseWinY);
+    getCanvasCoords(mouseWinX, mouseWinY, &mouseCX, &mouseCY);
+    SDL_Rect pasteBounds = {
+        std::max(0, std::min(CANVAS_WIDTH  - w, mouseCX - w / 2)),
+        std::max(0, std::min(CANVAS_HEIGHT - h, mouseCY - h / 2)),
+        w, h
+    };
+
+    // Create an SDL_Texture from the pixel data and hand it to SelectTool
+    SDL_Texture* tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                         SDL_TEXTUREACCESS_STREAMING, w, h);
+    if (!tex) return;
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    void* texPixels; int pitch;
+    if (SDL_LockTexture(tex, nullptr, &texPixels, &pitch) == 0) {
+        for (int row = 0; row < h; ++row)
+            memcpy((uint8_t*)texPixels + row * pitch, pixels.data() + row * w, w * 4);
+        SDL_UnlockTexture(tex);
+    }
+
+    auto* st = static_cast<SelectTool*>(currentTool.get());
+    st->activateWithTexture(tex, pasteBounds);
+    // tex ownership transferred to SelectTool
+}
+
 // ── Run loop ──────────────────────────────────────────────────────────────────
 
 void kPen::run() {
@@ -357,10 +532,8 @@ void kPen::run() {
                     case SDLK_f: setTool(ToolType::FILL);   needsRedraw = true; break;
                     case SDLK_BACKSPACE:
                     case SDLK_DELETE:
-                        if (currentType == ToolType::SELECT) {
-                            currentTool = std::make_unique<SelectTool>(this);
-                            needsRedraw = true;
-                        }
+                        deleteSelection();
+                        needsRedraw = true;
                         break;
                     case SDLK_UP:
                         toolbar.brushSize = std::min(20, toolbar.brushSize + 1);
@@ -373,6 +546,20 @@ void kPen::run() {
                         break;
                     case SDLK_y:
                         if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) { redo(); needsRedraw = true; }
+                        break;
+                    case SDLK_c:
+                    case SDLK_x:
+                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
+                            copySelectionToClipboard();
+                            if (e.key.keysym.sym == SDLK_x) deleteSelection();
+                            needsRedraw = true;
+                        }
+                        break;
+                    case SDLK_v:
+                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
+                            pasteFromClipboard();
+                            needsRedraw = true; overlayDirty = true;
+                        }
                         break;
                     case SDLK_0:
                         if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
@@ -468,9 +655,9 @@ void kPen::run() {
                 if (currentType == ToolType::SELECT) {
                     auto* st = static_cast<SelectTool*>(currentTool.get());
                     if (st->isSelectionActive() && !st->isHit(cX, cY)) {
-                        bool moved = st->hasMoved();
+                        bool dirty = st->isDirty();
                         withCanvas([&]{ st->deactivate(renderer); });
-                        if (moved) { saveState(undoStack); }
+                        if (dirty) { saveState(undoStack); }
                         // Fall through — onMouseDown below starts a new rubber-band selection
                     }
                 }
@@ -550,47 +737,46 @@ void kPen::run() {
         SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
         SDL_RenderClear(renderer);
         SDL_FRect vf = getViewportF();
-        SDL_Rect  vi = getViewport(); // integer version for checkerboard bounds
 
-        // Checkerboard behind canvas — clipped to visible screen area
+        // Checkerboard behind canvas — drawn directly each frame so it always
+        // aligns precisely with the float viewport edge (no 1-px cache drift).
         {
             int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
-            int sx0 = std::max(vi.x, Toolbar::TB_W);
-            int sy0 = std::max(vi.y, 0);
-            int sx1 = std::min(vi.x + vi.w, winW);
-            int sy1 = std::min(vi.y + vi.h, winH);
-            int sw  = sx1 - sx0, sh = sy1 - sy0;
+            const int cs = 12;
+            // Integer pixel bounds that fully cover the float canvas rect
+            int sx0 = std::max((int)std::floor(vf.x), Toolbar::TB_W);
+            int sy0 = std::max((int)std::floor(vf.y), 0);
+            int sx1 = std::min((int)std::ceil(vf.x + vf.w), winW);
+            int sy1 = std::min((int)std::ceil(vf.y + vf.h), winH);
 
-            if (sw > 0 && sh > 0) {
-                if (sw != checkerW || sh != checkerH) {
-                    if (checkerboard) SDL_DestroyTexture(checkerboard);
-                    checkerboard = SDL_CreateTexture(renderer,
-                        SDL_PIXELFORMAT_RGB888, SDL_TEXTUREACCESS_TARGET, sw, sh);
-                    SDL_SetRenderTarget(renderer, checkerboard);
-                    // Offset pattern so it aligns with canvas origin regardless of pan
-                    int offX = ((sx0 - vi.x) % (12*2) + 12*2) % (12*2);
-                    int offY = ((sy0 - vi.y) % (12*2) + 12*2) % (12*2);
-                    const int cs = 12;
-                    for (int ty = -offY; ty < sh; ty += cs) {
-                        for (int tx = -offX; tx < sw; tx += cs) {
-                            bool light = (((tx+offX)/cs) + ((ty+offY)/cs)) % 2 == 0;
-                            SDL_SetRenderDrawColor(renderer,
-                                light?200:160, light?200:160, light?200:160, 255);
-                            SDL_Rect cell = {
-                                std::max(0,tx), std::max(0,ty),
-                                std::min(cs, sw - std::max(0,tx)),
-                                std::min(cs, sh - std::max(0,ty))
-                            };
-                            if (cell.w > 0 && cell.h > 0)
-                                SDL_RenderFillRect(renderer, &cell);
-                        }
+            if (sx1 > sx0 && sy1 > sy0) {
+                // Tile origin anchored to the canvas float origin so pattern
+                // shifts smoothly with pan instead of snapping by whole pixels.
+                int originX = (int)std::floor(vf.x);
+                int originY = (int)std::floor(vf.y);
+                // First tile column/row that covers sx0, sy0
+                int startTX = originX + ((sx0 - originX) / cs) * cs;
+                int startTY = originY + ((sy0 - originY) / cs) * cs;
+                if (startTX > sx0) startTX -= cs;
+                if (startTY > sy0) startTY -= cs;
+
+                for (int ty = startTY; ty < sy1; ty += cs) {
+                    for (int tx = startTX; tx < sx1; tx += cs) {
+                        int col = (tx - originX) / cs;
+                        int row = (ty - originY) / cs;
+                        // Handle negative tile indices correctly
+                        bool light = (((col % 2) + (row % 2) + 4) % 2) == 0;
+                        SDL_SetRenderDrawColor(renderer,
+                            light ? 200 : 160, light ? 200 : 160, light ? 200 : 160, 255);
+                        SDL_Rect cell = {
+                            std::max(tx, sx0), std::max(ty, sy0),
+                            std::min(tx + cs, sx1) - std::max(tx, sx0),
+                            std::min(ty + cs, sy1) - std::max(ty, sy0)
+                        };
+                        if (cell.w > 0 && cell.h > 0)
+                            SDL_RenderFillRect(renderer, &cell);
                     }
-                    SDL_SetRenderTarget(renderer, nullptr);
-                    checkerW = sw;
-                    checkerH = sh;
                 }
-                SDL_Rect dst = { sx0, sy0, sw, sh };
-                SDL_RenderCopy(renderer, checkerboard, nullptr, &dst);
             }
         }
 
@@ -611,20 +797,25 @@ void kPen::run() {
             float sy1 = std::min(cy1, (float)winH);
 
             if (sx1 > sx0 && sy1 > sy0) {
-                // Map clipped screen rect back to canvas texel coords
+                // Snap dst outward (floor start, ceil end) so the canvas always
+                // covers full pixels and never leaves a 1-px gap at the edges.
+                float dstX0 = std::floor(sx0), dstY0 = std::floor(sy0);
+                float dstX1 = std::ceil(sx1),  dstY1 = std::ceil(sy1);
+
+                // Map expanded dst back to canvas texel coords
                 float scaleX = CANVAS_WIDTH  / vf.w;
                 float scaleY = CANVAS_HEIGHT / vf.h;
                 SDL_FRect srcF = {
-                    (sx0 - cx0) * scaleX,
-                    (sy0 - cy0) * scaleY,
-                    (sx1 - sx0) * scaleX,
-                    (sy1 - sy0) * scaleY
+                    (dstX0 - cx0) * scaleX,
+                    (dstY0 - cy0) * scaleY,
+                    (dstX1 - dstX0) * scaleX,
+                    (dstY1 - dstY0) * scaleY
                 };
                 SDL_Rect src = {
                     (int)srcF.x, (int)srcF.y,
                     (int)std::ceil(srcF.w), (int)std::ceil(srcF.h)
                 };
-                SDL_FRect dst = { sx0, sy0, sx1 - sx0, sy1 - sy0 };
+                SDL_FRect dst = { dstX0, dstY0, dstX1 - dstX0, dstY1 - dstY0 };
 
                 SDL_RenderCopyF(renderer, canvas, &src, &dst);
                 if (hasOverlay) SDL_RenderCopyF(renderer, overlay, &src, &dst);

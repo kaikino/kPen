@@ -80,6 +80,7 @@ class TransformTool : public AbstractTool {
 class SelectTool : public TransformTool {
     SDL_Texture* selectionTexture = nullptr;
     bool         active           = false;
+    bool         dirty            = false;  // true if canvas will change on commit (paste or moved)
   public:
     using TransformTool::TransformTool;
     ~SelectTool();
@@ -91,8 +92,12 @@ class SelectTool : public TransformTool {
     void deactivate (SDL_Renderer* r) override;
     bool hasOverlayContent() override { return active; }
     bool isSelectionActive() const    { return active; }
+    bool isDirty()           const    { return dirty || hasMoved(); }
     bool isHit(int cX, int cY) const;
     void activateWithTexture(SDL_Texture* tex, SDL_Rect area);
+    void setBounds(SDL_Rect area)     { currentBounds = area; }
+    SDL_Rect           getFloatingBounds() const { return currentBounds; }
+    std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;  // reads from selectionTexture
 };
 
 // ── ResizeTool ────────────────────────────────────────────────────────────────
@@ -119,6 +124,8 @@ class ResizeTool : public TransformTool {
     bool hasOverlayContent() override { return true; }
     bool isHit(int cX, int cY) const  { return TransformTool::isHit(cX, cY); }
     SDL_Rect getBounds() const        { return currentBounds; }
+    SDL_Rect getFloatingBounds() const { return currentBounds; }
+    std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;  // renders shape to pixel buffer
 };
 
 // ── Other tools ───────────────────────────────────────────────────────────────
