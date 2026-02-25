@@ -94,20 +94,20 @@ SDL_FRect kPen::getViewportF() {
 // ── ICoordinateMapper ─────────────────────────────────────────────────────────
 
 void kPen::getCanvasCoords(int winX, int winY, int* cX, int* cY) {
-    SDL_Rect v = getViewport();
+    SDL_FRect v = getViewportF();
     *cX = (int)std::floor((winX - v.x) * ((float)canvasW / v.w));
     *cY = (int)std::floor((winY - v.y) * ((float)canvasH / v.h));
 }
 
 void kPen::getWindowCoords(int canX, int canY, int* wX, int* wY) {
-    SDL_Rect v = getViewport();
-    *wX = v.x + (int)std::floor(canX * ((float)v.w / canvasW));
-    *wY = v.y + (int)std::floor(canY * ((float)v.h / canvasH));
+    SDL_FRect v = getViewportF();
+    *wX = (int)std::round(v.x + canX * (v.w / canvasW));
+    *wY = (int)std::round(v.y + canY * (v.h / canvasH));
 }
 
 int kPen::getWindowSize(int canSize) {
-    SDL_Rect v = getViewport();
-    return (int)std::round(canSize * ((float)v.w / canvasW));
+    SDL_FRect v = getViewportF();
+    return (int)std::round(canSize * (v.w / canvasW));
 }
 
 // ── Pan / Zoom ────────────────────────────────────────────────────────────────
@@ -828,47 +828,14 @@ void kPen::run() {
                 }
             }
         }
-
-        // Only copy the portion of the canvas actually visible on screen.
-        // At high zoom vf extends far off-screen; clipping to the window bounds
-        // and computing the corresponding canvas source rect avoids GPU work on
-        // invisible pixels and eliminates zoom-lag entirely.
+        // Render the canvas at the exact float viewport position.
         {
             int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
-
-            // Screen-space bounds of the canvas (may be outside window at high zoom)
-            float cx0 = vf.x, cy0 = vf.y, cx1 = vf.x + vf.w, cy1 = vf.y + vf.h;
-
-            // Clip to window
-            float sx0 = std::max(cx0, (float)Toolbar::TB_W);
-            float sy0 = std::max(cy0, 0.f);
-            float sx1 = std::min(cx1, (float)winW);
-            float sy1 = std::min(cy1, (float)winH);
-
-            if (sx1 > sx0 && sy1 > sy0) {
-                // Snap dst outward (floor start, ceil end) so the canvas always
-                // covers full pixels and never leaves a 1-px gap at the edges.
-                float dstX0 = std::floor(sx0), dstY0 = std::floor(sy0);
-                float dstX1 = std::ceil(sx1),  dstY1 = std::ceil(sy1);
-
-                // Map expanded dst back to canvas texel coords
-                float scaleX = canvasW / vf.w;
-                float scaleY = canvasH / vf.h;
-                SDL_FRect srcF = {
-                    (dstX0 - cx0) * scaleX,
-                    (dstY0 - cy0) * scaleY,
-                    (dstX1 - dstX0) * scaleX,
-                    (dstY1 - dstY0) * scaleY
-                };
-                SDL_Rect src = {
-                    (int)srcF.x, (int)srcF.y,
-                    (int)std::ceil(srcF.w), (int)std::ceil(srcF.h)
-                };
-                SDL_FRect dst = { dstX0, dstY0, dstX1 - dstX0, dstY1 - dstY0 };
-
-                SDL_RenderCopyF(renderer, canvas, &src, &dst);
-                if (hasOverlay) SDL_RenderCopyF(renderer, overlay, &src, &dst);
-            }
+            SDL_Rect clip = { Toolbar::TB_W, 0, winW - Toolbar::TB_W, winH };
+            SDL_RenderSetClipRect(renderer, &clip);
+            SDL_RenderCopyF(renderer, canvas, nullptr, &vf);
+            if (hasOverlay) SDL_RenderCopyF(renderer, overlay, nullptr, &vf);
+            SDL_RenderSetClipRect(renderer, nullptr);
         }
 
         // 3. Tool preview

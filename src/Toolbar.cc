@@ -221,7 +221,7 @@ void Toolbar::draw() {
     int previewCY = brushRowY + BS_ROW1_H / 2;
     int maxR = BS_ROW1_H / 2 - 1;
     int dotR = std::max(1, (int)((std::min(brushSize, 25) / 25.f) * maxR + 0.5f));
-    SDL_SetRenderDrawColor(renderer, brushColor.r, brushColor.g, brushColor.b, 255);
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
     for (int py = -dotR; py <= dotR; py++)
         for (int px = -dotR; px <= dotR; px++)
             if (px*px + py*py <= dotR*dotR)
