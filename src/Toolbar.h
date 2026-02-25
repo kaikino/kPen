@@ -3,7 +3,6 @@
 #include <SDL2/SDL.h>
 #include <cmath>
 #include <algorithm>
-#include "Constants.h"
 #include "Tools.h"
 
 // Forward declaration — Toolbar needs to call setTool() on kPen

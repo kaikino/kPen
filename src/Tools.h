@@ -4,7 +4,6 @@
 #include <functional>
 #include <vector>
 #include "DrawingUtils.h"
-#include "Constants.h"
 
 enum class ToolType { BRUSH, LINE, RECT, CIRCLE, SELECT, FILL, RESIZE };
 

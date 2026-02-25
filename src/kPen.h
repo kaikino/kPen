@@ -2,7 +2,6 @@
 #include <SDL2/SDL.h>
 #include <vector>
 #include <memory>
-#include "Constants.h"
 #include "Tools.h"
 #include "Toolbar.h"
 #include "CanvasResizer.h"
@@ -35,8 +34,8 @@ class kPen : public ICoordinateMapper {
     SDL_Texture*  overlay;
 
     // Runtime canvas dimensions — start at compile-time defaults, change via resizeCanvas().
-    int canvasW = CANVAS_WIDTH;
-    int canvasH = CANVAS_HEIGHT;
+    int canvasW = 1200;
+    int canvasH = 800;
 
     std::unique_ptr<AbstractTool> currentTool;
     ToolType currentType  = ToolType::BRUSH;
@@ -50,8 +49,12 @@ class kPen : public ICoordinateMapper {
     int  previewOriginX = 0, previewOriginY = 0;
     bool showResizePreview = false;
 
-    std::vector<std::vector<uint32_t>> undoStack;
-    std::vector<std::vector<uint32_t>> redoStack;
+    struct CanvasState {
+        int w = 0, h = 0;
+        std::vector<uint32_t> pixels;
+    };
+    std::vector<CanvasState> undoStack;
+    std::vector<CanvasState> redoStack;
 
     // ── Zoom / pan ────────────────────────────────────────────────────────────
     static constexpr float MIN_ZOOM  = 0.1f;
@@ -95,8 +98,8 @@ class kPen : public ICoordinateMapper {
 
     // ── Undo / redo ───────────────────────────────────────────────────────────
     template<typename F> void withCanvas(F f);
-    void saveState(std::vector<std::vector<uint32_t>>& stack);
-    void applyState(std::vector<uint32_t>& pixels);
+    void saveState(std::vector<CanvasState>& stack);
+    void applyState(CanvasState& s);
     void stampForRedo(AbstractTool* tool);
     void undo();
     void redo();

@@ -278,31 +278,50 @@ void kPen::activateResizeTool(ToolType shapeType, SDL_Rect bounds,
 
 // ── Undo ──────────────────────────────────────────────────────────────────────
 
-void kPen::saveState(std::vector<std::vector<uint32_t>>& stack) {
-    std::vector<uint32_t> pixels(canvasW * canvasH);
-    withCanvas([&]{ SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), canvasW * 4); });
-    stack.push_back(std::move(pixels));
+void kPen::saveState(std::vector<CanvasState>& stack) {
+    CanvasState s;
+    s.w = canvasW; s.h = canvasH;
+    s.pixels.resize(canvasW * canvasH);
+    withCanvas([&]{ SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, s.pixels.data(), canvasW * 4); });
+    stack.push_back(std::move(s));
     if (&stack == &undoStack) redoStack.clear();
 }
 
-void kPen::applyState(std::vector<uint32_t>& pixels) {
+void kPen::applyState(CanvasState& s) {
     if (currentType == ToolType::SELECT || currentType == ToolType::RESIZE) {
         currentTool.reset(); // prevent setTool from deactivating+saving
         setTool(originalType);
     }
-    SDL_UpdateTexture(canvas, nullptr, pixels.data(), canvasW * 4);
+    if (s.w != canvasW || s.h != canvasH) {
+        SDL_DestroyTexture(canvas);
+        SDL_DestroyTexture(overlay);
+        canvasW = s.w; canvasH = s.h;
+        canvas  = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                    SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
+        overlay = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                    SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
+        SDL_SetTextureBlendMode(overlay, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderTarget(renderer, overlay);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+        SDL_RenderClear(renderer);
+        SDL_SetRenderTarget(renderer, nullptr);
+        toolbar.syncCanvasSize(canvasW, canvasH);
+    }
+    SDL_UpdateTexture(canvas, nullptr, s.pixels.data(), canvasW * 4);
 }
 
 // Stamp the active SELECT or RESIZE tool onto a pixel buffer for redo, then restore canvas.
 void kPen::stampForRedo(AbstractTool* tool) {
-    std::vector<uint32_t> redoPixels(canvasW * canvasH);
+    CanvasState s;
+    s.w = canvasW; s.h = canvasH;
+    s.pixels.resize(canvasW * canvasH);
     withCanvas([&]{
         tool->deactivate(renderer);
-        SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, redoPixels.data(), canvasW * 4);
-        SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), canvasW * 4);
+        SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, s.pixels.data(), canvasW * 4);
+        SDL_UpdateTexture(canvas, nullptr, undoStack.back().pixels.data(), canvasW * 4);
     });
     redoStack.clear();
-    redoStack.push_back(std::move(redoPixels));
+    redoStack.push_back(std::move(s));
 }
 
 void kPen::undo() {
@@ -312,7 +331,7 @@ void kPen::undo() {
             if (st->isDirty()) stampForRedo(st);
             currentTool.reset();
             setTool(originalType);
-            SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), canvasW * 4);
+            applyState(undoStack.back());
             return;
         }
     }
@@ -320,7 +339,7 @@ void kPen::undo() {
         // Shape is in-progress — just discard it, restore last committed state.
         currentTool.reset(); // prevent setTool from deactivating+saving
         setTool(originalType);
-        SDL_UpdateTexture(canvas, nullptr, undoStack.back().data(), canvasW * 4);
+        applyState(undoStack.back());
         return;
     }
     if (undoStack.size() > 1) {
@@ -332,8 +351,8 @@ void kPen::undo() {
 
 void kPen::redo() {
     if (!redoStack.empty()) {
-        undoStack.push_back(redoStack.back());
         applyState(redoStack.back());
+        undoStack.push_back(std::move(redoStack.back()));
         redoStack.pop_back();
     }
 }
@@ -345,24 +364,24 @@ void kPen::resizeCanvas(int newW, int newH, bool scaleContent, int originX, int 
     newH = std::max(1, std::min(16384, newH));
     if (newW == canvasW && newH == canvasH) return;
 
-    // Commit any active tool so no in-flight state references old textures.
+    // Commit any active tool so its pixels are stamped onto the canvas before
+    // we snapshot it. We do NOT call saveState — the top-of-stack refresh below
+    // captures any committed tool pixels without adding an extra undo entry.
     if (currentTool) {
         withCanvas([&]{ currentTool->deactivate(renderer); });
-        if (currentType == ToolType::SELECT) {
-            if (static_cast<SelectTool*>(currentTool.get())->isDirty())
-                saveState(undoStack);
-        } else if (currentType == ToolType::RESIZE) {
-            saveState(undoStack);
-        }
         setTool(originalType);
     }
 
-    // Read current canvas pixels.
     std::vector<uint32_t> oldPixels(canvasW * canvasH);
     withCanvas([&]{
         SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888,
                              oldPixels.data(), canvasW * 4);
     });
+    if (!undoStack.empty()) {
+        undoStack.back().w = canvasW;
+        undoStack.back().h = canvasH;
+        undoStack.back().pixels = oldPixels;
+    }
 
     // Build new pixel buffer — white background.
     std::vector<uint32_t> newPixels(newW * newH, 0xFFFFFFFF);
@@ -413,10 +432,11 @@ void kPen::resizeCanvas(int newW, int newH, bool scaleContent, int originX, int 
     SDL_RenderClear(renderer);
     SDL_SetRenderTarget(renderer, nullptr);
 
-    // Old undo/redo buffers are wrong-size — clear and save fresh state.
-    undoStack.clear();
     redoStack.clear();
-    saveState(undoStack);
+    CanvasState newState;
+    newState.w = canvasW; newState.h = canvasH;
+    newState.pixels = std::move(newPixels);
+    undoStack.push_back(std::move(newState));
 
     toolbar.syncCanvasSize(canvasW, canvasH);
 }
@@ -828,7 +848,13 @@ void kPen::run() {
                 }
             }
         }
+
         // Render the canvas at the exact float viewport position.
+        // Use SDL's clip rect to restrict drawing to the visible window area.
+        // The old approach (manually computing a shifted src rect with floor/ceil
+        // expansion) caused a sub-pixel mismatch: the expanded dst origin didn't
+        // match vf, so pixels landed in different positions than getCanvasCoords
+        // expected. Using SDL_RenderSetClipRect keeps the mapping exact.
         {
             int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
             SDL_Rect clip = { Toolbar::TB_W, 0, winW - Toolbar::TB_W, winH };
