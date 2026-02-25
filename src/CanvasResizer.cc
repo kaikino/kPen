@@ -32,20 +32,21 @@ void CanvasResizer::draw(SDL_Renderer* r, int canvasW, int canvasH) const {
     // Hide handles while the user is actively dragging one (the ghost outline is shown instead)
     if (isDragging()) return;
 
-    // Show handles when the mouse is outside the canvas but within SHOW_RADIUS pixels of any edge.
+    // Show handles when the mouse is within SHOW_RADIUS pixels of the canvas border.
+    // Use the 2D distance from the mouse to the nearest point on the canvas rect
+    // (i.e. clamped distance), so being far below the canvas but within its x-width
+    // doesn't incorrectly trigger the handles.
     int wx1 = hp[0].wx, wy1 = hp[0].wy;  // top-left corner (NW handle)
     int wx2 = hp[7].wx, wy2 = hp[7].wy;  // bottom-right corner (SE handle)
 
-    bool insideCanvas = (mx >= wx1 && mx <= wx2 && my >= wy1 && my <= wy2);
-    if (insideCanvas) return;
-
-    // Distance from mouse to each edge
-    int distLeft   = std::abs(mx - wx1);
-    int distRight  = std::abs(mx - wx2);
-    int distTop    = std::abs(my - wy1);
-    int distBottom = std::abs(my - wy2);
-    int minDist = std::min({distLeft, distRight, distTop, distBottom});
-    if (minDist > SHOW_RADIUS) return;
+    // Nearest point on the canvas rect to the mouse
+    int nearX = std::max(wx1, std::min(mx, wx2));
+    int nearY = std::max(wy1, std::min(my, wy2));
+    int dx = mx - nearX, dy = my - nearY;
+    // dx==0 && dy==0 means inside canvas — hide handles
+    if (dx == 0 && dy == 0) return;
+    int distSq = dx * dx + dy * dy;
+    if (distSq > SHOW_RADIUS * SHOW_RADIUS) return;
 
     for (auto& p : hp) {
         SDL_Rect sq = { p.wx - HS, p.wy - HS, HS * 2 + 1, HS * 2 + 1 };
@@ -85,7 +86,8 @@ bool CanvasResizer::onMouseDown(int winX, int winY, int canvasW, int canvasH) {
 
 void CanvasResizer::compute(int winX, int winY,
                              int& newW, int& newH,
-                             int& originX, int& originY) const {
+                             int& originX, int& originY,
+                             bool aspectLock) const {
     float scale = (float)mapper->getWindowSize(1000) / 1000.f;
     if (scale <= 0.f) scale = 1.f;
 
@@ -138,6 +140,40 @@ void CanvasResizer::compute(int winX, int winY,
         default: break;
     }
 
+    // Clamp to minimum size before aspect lock so ratio is preserved at smallest size.
+    newW = std::max(1, newW);
+    newH = std::max(1, newH);
+
+    // Aspect-lock: for corner handles, constrain to the original aspect ratio
+    // by taking the limiting axis and re-deriving the other from it.
+    if (aspectLock && dragBaseH > 0) {
+        float aspect = (float)dragBaseW / dragBaseH;
+        bool isCorner = (activeHandle == Handle::NE || activeHandle == Handle::NW ||
+                         activeHandle == Handle::SE || activeHandle == Handle::SW);
+        if (isCorner && aspect > 0.f) {
+            int wFromH = std::max(1, (int)std::round(newH * aspect));
+            int hFromW = std::max(1, (int)std::round(newW / aspect));
+            if (wFromH <= newW) {
+                // H is limiting — derive W from H
+                int oldW = newW;
+                newW = wFromH;
+                if (activeHandle == Handle::NW || activeHandle == Handle::SW)
+                    originX += oldW - newW;
+            } else {
+                // W is limiting — derive H from W, then re-derive W from that H
+                // so both axes are consistent (avoids round-trip rounding asymmetry)
+                int oldH = newH;
+                newH = hFromW;
+                newW = std::max(1, (int)std::round(newH * aspect));
+                int oldW = (int)std::round(oldH * aspect); // what W was before H clamped
+                if (activeHandle == Handle::NW || activeHandle == Handle::NE)
+                    originY += oldH - newH;
+                if (activeHandle == Handle::NW || activeHandle == Handle::SW)
+                    originX += oldW - newW;
+            }
+        }
+    }
+
     newW = std::max(1, std::min(16384, newW));
     newH = std::max(1, std::min(16384, newH));
     // Clamp origin shift so we don't reference pixels outside the old buffer.
@@ -147,16 +183,18 @@ void CanvasResizer::compute(int winX, int winY,
 
 bool CanvasResizer::onMouseMove(int winX, int winY,
                                  int& previewW, int& previewH,
-                                 int& originX,  int& originY) const {
+                                 int& originX,  int& originY,
+                                 bool aspectLock) const {
     if (activeHandle == Handle::NONE) return false;
-    compute(winX, winY, previewW, previewH, originX, originY);
+    compute(winX, winY, previewW, previewH, originX, originY, aspectLock);
     return true;
 }
 
 bool CanvasResizer::onMouseUp(int winX, int winY, int canvasW, int canvasH,
-                               int& newW, int& newH, int& originX, int& originY) {
+                               int& newW, int& newH, int& originX, int& originY,
+                               bool aspectLock) {
     if (activeHandle == Handle::NONE) return false;
-    compute(winX, winY, newW, newH, originX, originY);
+    compute(winX, winY, newW, newH, originX, originY, aspectLock);
     activeHandle = Handle::NONE;
     return (newW != canvasW || newH != canvasH || originX != 0 || originY != 0);
 }

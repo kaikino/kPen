@@ -48,6 +48,7 @@ class kPen : public ICoordinateMapper {
     int  previewW = 0, previewH = 0;
     int  previewOriginX = 0, previewOriginY = 0;
     bool showResizePreview = false;
+    bool shiftHeld = false;  // true while either shift key is physically down
 
     struct CanvasState {
         int w = 0, h = 0;

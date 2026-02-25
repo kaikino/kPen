@@ -66,6 +66,10 @@ class Toolbar {
     };
     bool getResizeScaleMode() const { return resizeScaleMode; }
     bool getResizeLockAspect() const { return resizeLockAspect; }
+    // Shift-key temporary override: when true, aspect is locked regardless of button state.
+    // Returns to previous state when cleared.
+    void setShiftLockAspect(bool on) { shiftLockAspect = on; }
+    bool getEffectiveLockAspect() const { return resizeLockAspect || shiftLockAspect; }
     bool onTextInput(const char* text);
     bool onResizeKey(SDL_Keycode sym);
     CanvasResizeRequest getResizeRequest();
@@ -118,6 +122,7 @@ class Toolbar {
     enum class ResizeFocus { NONE, W, H } resizeFocus = ResizeFocus::NONE;
     bool   resizeScaleMode = false;
     bool   resizeLockAspect = false;
+    bool   shiftLockAspect = false;  // true while shift is held during canvas drag
     int    resizeLockW = 1200;  // canvas W at time of last syncCanvasSize
     int    resizeLockH = 800;   // canvas H at time of last syncCanvasSize
     CanvasResizeRequest pendingResize;

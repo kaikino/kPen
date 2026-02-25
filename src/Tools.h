@@ -51,7 +51,7 @@ class AbstractTool {
 class TransformTool : public AbstractTool {
   protected:
     enum class Handle { NONE, N, S, E, W, NE, NW, SE, SW };
-    static const int GRAB = 6;
+    static const int GRAB_WIN = 8;  // hit radius in window pixels (zoom-independent)
 
     SDL_Rect currentBounds = {0, 0, 0, 0};
 
@@ -60,13 +60,14 @@ class TransformTool : public AbstractTool {
     bool   moved    = false;
     int    anchorX  = 0, anchorY  = 0;
     int    dragOffX = 0, dragOffY = 0;
+    float  dragAspect = 1.f;  // w/h of currentBounds captured at handleMouseDown
     bool   flipX    = false;   // toggled each time a horizontal handle crosses anchor
     bool   flipY    = false;   // toggled each time a vertical handle crosses anchor
 
     Handle getHandle(int cX, int cY) const;
     void   drawHandles(SDL_Renderer* r) const;
     bool   handleMouseDown(int cX, int cY);
-    bool   handleMouseMove(int cX, int cY);
+    bool   handleMouseMove(int cX, int cY, bool aspectLock = false);
     void   handleMouseUp();
 
   public:

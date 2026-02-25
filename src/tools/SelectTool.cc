@@ -19,9 +19,11 @@ bool SelectTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_C
     if (resizing != Handle::NONE || isMoving) { handleMouseUp(); return false; }
     if (!isDrawing || (cX == startX && cY == startY)) { isDrawing = false; return false; }
 
-    // Logical selection bounds (may extend outside canvas)
+    // Logical selection bounds (may extend outside canvas).
+    // Use abs() without max(1,...) — zero-area selections are rejected below
+    // by the rw<=0||rh<=0 guard, avoiding a spurious 1px inflation.
     currentBounds = { std::min(startX, cX), std::min(startY, cY),
-                      std::max(1, std::abs(cX - startX)), std::max(1, std::abs(cY - startY)) };
+                      std::abs(cX - startX), std::abs(cY - startY) };
 
     // Intersection with canvas for the actual pixel read/erase
     int canvasW, canvasH; mapper->getCanvasSize(&canvasW, &canvasH);

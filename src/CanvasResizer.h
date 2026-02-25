@@ -22,11 +22,13 @@ class CanvasResizer {
     // canvas pixels (negative = canvas grew upward/leftward).
     bool onMouseMove(int winX, int winY,
                      int& previewW, int& previewH,
-                     int& originX,  int& originY) const;
+                     int& originX,  int& originY,
+                     bool aspectLock = false) const;
 
     // Returns true if size changed. Fills new dims and origin shift.
     bool onMouseUp(int winX, int winY, int canvasW, int canvasH,
-                   int& newW, int& newH, int& originX, int& originY);
+                   int& newW, int& newH, int& originX, int& originY,
+                   bool aspectLock = false);
 
     bool isDragging() const { return activeHandle != Handle::NONE; }
 
@@ -47,5 +49,6 @@ class CanvasResizer {
     // Computes new size AND the origin shift caused by top/left handle movement.
     void compute(int winX, int winY,
                  int& newW, int& newH,
-                 int& originX, int& originY) const;
+                 int& originX, int& originY,
+                 bool aspectLock = false) const;
 };

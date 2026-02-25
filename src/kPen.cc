@@ -554,6 +554,15 @@ void kPen::run() {
             }
 
             if (e.type == SDL_KEYDOWN) {
+                // Track shift for aspect-lock override
+                if (e.key.keysym.sym == SDLK_LSHIFT || e.key.keysym.sym == SDLK_RSHIFT) {
+                    shiftHeld = true;
+                    if (canvasResizer.isDragging()) {
+                        toolbar.setShiftLockAspect(true);
+                        needsRedraw = true;
+                    }
+                }
+
                 // Let toolbar consume resize field keys first
                 if (toolbar.onResizeKey(e.key.keysym.sym)) { needsRedraw = true; continue; }
 
@@ -603,6 +612,14 @@ void kPen::run() {
                             needsRedraw = true;
                         }
                         break;
+                }
+            }
+
+            if (e.type == SDL_KEYUP) {
+                if (e.key.keysym.sym == SDLK_LSHIFT || e.key.keysym.sym == SDLK_RSHIFT) {
+                    shiftHeld = false;
+                    toolbar.setShiftLockAspect(false);
+                    if (canvasResizer.isDragging()) needsRedraw = true;
                 }
             }
 
@@ -732,7 +749,9 @@ void kPen::run() {
                 && !multiGestureActive) {
                 if (canvasResizer.isDragging()) {
                     int newW, newH, ox = 0, oy = 0;
-                    if (canvasResizer.onMouseUp(e.button.x, e.button.y, canvasW, canvasH, newW, newH, ox, oy))
+                    bool lock = toolbar.getEffectiveLockAspect();
+                    toolbar.setShiftLockAspect(false);  // clear shift override on release
+                    if (canvasResizer.onMouseUp(e.button.x, e.button.y, canvasW, canvasH, newW, newH, ox, oy, lock))
                         resizeCanvas(newW, newH, toolbar.getResizeScaleMode(), ox, oy);
                     else
                         toolbar.syncCanvasSize(canvasW, canvasH);  // restore if no actual resize
@@ -750,7 +769,8 @@ void kPen::run() {
 
             if (e.type == SDL_MOUSEMOTION && !multiGestureActive) {
                 if (canvasResizer.isDragging()) {
-                    canvasResizer.onMouseMove(e.motion.x, e.motion.y, previewW, previewH, previewOriginX, previewOriginY);
+                    bool lock = toolbar.getEffectiveLockAspect();
+                    canvasResizer.onMouseMove(e.motion.x, e.motion.y, previewW, previewH, previewOriginX, previewOriginY, lock);
                     showResizePreview = true;
                     toolbar.syncCanvasSize(previewW, previewH);  // live-update size text while dragging
                     needsRedraw = true; continue;
@@ -812,11 +832,21 @@ void kPen::run() {
         {
             int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
             const int cs = 12;
-            // Integer pixel bounds that fully cover the float canvas rect
-            int sx0 = std::max((int)std::floor(vf.x), Toolbar::TB_W);
-            int sy0 = std::max((int)std::floor(vf.y), 0);
-            int sx1 = std::min((int)std::ceil(vf.x + vf.w), winW);
-            int sy1 = std::min((int)std::ceil(vf.y + vf.h), winH);
+            // Integer pixel bounds that fully cover the float canvas rect.
+            int sx0 = std::max((int)std::floor(vf.x) - 1, Toolbar::TB_W);
+            int sy0 = std::max((int)std::floor(vf.y) - 1, 0);
+            int sx1 = std::min((int)std::ceil(vf.x + vf.w) + 1, winW);
+            int sy1 = std::min((int)std::ceil(vf.y + vf.h) + 1, winH);
+
+            // Clip checkerboard to the exact float canvas rect so it never
+            // shows outside the canvas boundary.
+            SDL_Rect cbClip = {
+                (int)std::ceil(vf.x),
+                (int)std::ceil(vf.y),
+                (int)std::floor(vf.x + vf.w) - (int)std::ceil(vf.x),
+                (int)std::floor(vf.y + vf.h) - (int)std::ceil(vf.y)
+            };
+            SDL_RenderSetClipRect(renderer, &cbClip);
 
             if (sx1 > sx0 && sy1 > sy0) {
                 // Tile origin anchored to the canvas float origin so pattern
@@ -847,6 +877,7 @@ void kPen::run() {
                     }
                 }
             }
+            SDL_RenderSetClipRect(renderer, nullptr);
         }
 
         // Render the canvas at the exact float viewport position.
@@ -868,8 +899,14 @@ void kPen::run() {
         currentTool->onPreviewRender(renderer, toolbar.brushSize, toolbar.brushColor);
 
         // 4. Canvas edge resize handles (window-space, outside canvas texture)
-        // Hide while actively drawing/selecting/resizing to avoid distraction
-        if (!currentTool || !currentTool->isActive())
+        // Hide while the current tool is actively drawing, or while a select/resize
+        // tool is moving or dragging a handle.
+        bool toolBusy = currentTool && (
+            currentTool->isActive() ||
+            ((currentType == ToolType::SELECT || currentType == ToolType::RESIZE) &&
+             static_cast<TransformTool*>(currentTool.get())->isMutating())
+        );
+        if (!toolBusy)
             canvasResizer.draw(renderer, canvasW, canvasH);
 
         // 5. Ghost outline while dragging a canvas handle

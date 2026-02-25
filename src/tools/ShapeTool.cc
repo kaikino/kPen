@@ -16,18 +16,21 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
     int shapeMinX = std::min(startX, cX),  shapeMaxX = std::max(startX, cX);
     int shapeMinY = std::min(startY, cY),  shapeMaxY = std::max(startY, cY);
 
+    // Bounds span exactly the pixel range the preview drew into.
+    // No +1: abs(max-min) is already the correct exclusive pixel span that
+    // matches what onPreviewRender draws with abs(winCur - winStart).
     SDL_Rect bounds;
     if (type == ToolType::LINE) {
         bounds = {
             shapeMinX - half, shapeMinY - half,
-            (shapeMaxX - shapeMinX + 1) + half * 2,
-            (shapeMaxY - shapeMinY + 1) + half * 2
+            std::max(1, shapeMaxX - shapeMinX) + half * 2,
+            std::max(1, shapeMaxY - shapeMinY) + half * 2
         };
     } else {
         bounds = {
             shapeMinX, shapeMinY,
-            (shapeMaxX - shapeMinX + 1),
-            (shapeMaxY - shapeMinY + 1)
+            std::max(1, shapeMaxX - shapeMinX),
+            std::max(1, shapeMaxY - shapeMinY)
         };
     }
     isDrawing = false;

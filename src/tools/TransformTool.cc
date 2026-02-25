@@ -6,13 +6,25 @@
 // ── Handle hit-testing ────────────────────────────────────────────────────────
 
 TransformTool::Handle TransformTool::getHandle(int cX, int cY) const {
+    // Convert canvas corners to window space so the grab radius is a fixed
+    // number of window pixels, independent of zoom level.
+    // Use SDL_GetMouseState for the cursor position
     const SDL_Rect& a = currentBounds;
-    bool onL = std::abs(cX - a.x) <= GRAB;
-    bool onR = std::abs(cX - (a.x + a.w)) <= GRAB;
-    bool onT = std::abs(cY - a.y) <= GRAB;
-    bool onB = std::abs(cY - (a.y + a.h)) <= GRAB;
-    bool inX = cX >= a.x - GRAB && cX <= a.x + a.w + GRAB;
-    bool inY = cY >= a.y - GRAB && cY <= a.y + a.h + GRAB;
+    int wx1, wy1, wx2, wy2, wmx, wmy;
+    mapper->getWindowCoords(a.x,        a.y,        &wx1, &wy1);
+    mapper->getWindowCoords(a.x + a.w,  a.y + a.h,  &wx2, &wy2);
+    wmx = (wx1 + wx2) / 2;
+    wmy = (wy1 + wy2) / 2;
+    int wX, wY;
+    SDL_GetMouseState(&wX, &wY);
+
+    const int G = GRAB_WIN;
+    bool onL = std::abs(wX - wx1) <= G;
+    bool onR = std::abs(wX - wx2) <= G;
+    bool onT = std::abs(wY - wy1) <= G;
+    bool onB = std::abs(wY - wy2) <= G;
+    bool inX = wX >= wx1 - G && wX <= wx2 + G;
+    bool inY = wY >= wy1 - G && wY <= wy2 + G;
     if (onL && onT) return Handle::NW;
     if (onR && onT) return Handle::NE;
     if (onL && onB) return Handle::SW;
@@ -34,6 +46,8 @@ bool TransformTool::handleMouseDown(int cX, int cY) {
             ? currentBounds.x + currentBounds.w : currentBounds.x;
         anchorY = (h == Handle::N || h == Handle::NW || h == Handle::NE)
             ? currentBounds.y + currentBounds.h : currentBounds.y;
+        dragAspect = currentBounds.h > 0
+            ? (float)currentBounds.w / currentBounds.h : 1.f;
         return true;
     }
     SDL_Point pt = {cX, cY};
@@ -46,7 +60,9 @@ bool TransformTool::handleMouseDown(int cX, int cY) {
     return false;
 }
 
-bool TransformTool::handleMouseMove(int cX, int cY) {
+bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
+    // If not explicitly provided, pick up shift state from SDL
+    if (!aspectLock) aspectLock = (SDL_GetModState() & KMOD_SHIFT) != 0;
     if (resizing != Handle::NONE) {
         moved = true;
         int newX = currentBounds.x, newY = currentBounds.y;
@@ -92,7 +108,35 @@ bool TransformTool::handleMouseMove(int cX, int cY) {
             }
         }
 
-        if (newW > 0 && newH > 0) currentBounds = { newX, newY, newW, newH };
+        // Enforce minimum size of 1 before aspect lock so the ratio is preserved
+        // even at the smallest possible size.
+        if (newW < 1) { newW = 1; if (resizing == Handle::W || resizing == Handle::NW || resizing == Handle::SW) newX = anchorX - 1; }
+        if (newH < 1) { newH = 1; if (resizing == Handle::N || resizing == Handle::NW || resizing == Handle::NE) newY = anchorY - 1; }
+
+        // Aspect-lock: for corner handles, clamp to preserve dragAspect.
+        if (aspectLock && dragAspect > 0.f &&
+            (resizing == Handle::NW || resizing == Handle::NE ||
+             resizing == Handle::SW || resizing == Handle::SE)) {
+            // Decide which axis is limiting, then derive the OTHER axis from it.
+            int wFromH = std::max(1, (int)std::round(newH * dragAspect));
+            int hFromW = std::max(1, (int)std::round(newW / dragAspect));
+            if (wFromH <= newW) {
+                // H is the limiting axis — derive W from H
+                newW = wFromH;
+                if (resizing == Handle::NW || resizing == Handle::SW)
+                    newX = anchorX - newW;
+            } else {
+                // W is the limiting axis — derive H from W, then re-derive W from that H
+                newH = hFromW;
+                newW = std::max(1, (int)std::round(newH * dragAspect));
+                if (resizing == Handle::NW || resizing == Handle::NE)
+                    newY = anchorY - newH;
+                if (resizing == Handle::NW || resizing == Handle::SW)
+                    newX = anchorX - newW;
+            }
+        }
+
+        currentBounds = { newX, newY, newW, newH };
         return true;
     }
     if (isMoving) {
