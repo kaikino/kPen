@@ -255,14 +255,14 @@ void kPen::setTool(ToolType t) {
         }
     }
     originalType = currentType = toolbar.currentType = t;
-    auto cb = [this](ToolType st, SDL_Rect b, SDL_Rect ob, int sx, int sy, int ex, int ey, int bs, SDL_Color c) {
-        activateResizeTool(st, b, ob, sx, sy, ex, ey, bs, c);
+    auto cb = [this](ToolType st, SDL_Rect b, SDL_Rect ob, int sx, int sy, int ex, int ey, int bs, SDL_Color c, bool filled) {
+        activateResizeTool(st, b, ob, sx, sy, ex, ey, bs, c, filled);
     };
     switch (t) {
         case ToolType::BRUSH:  currentTool = std::make_unique<BrushTool>(this); break;
-        case ToolType::LINE:   currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE,   cb); break;
-        case ToolType::RECT:   currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT,   cb); break;
-        case ToolType::CIRCLE: currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE, cb); break;
+        case ToolType::LINE:   currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE,   cb, false); break;
+        case ToolType::RECT:   currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT,   cb, toolbar.fillShape); break;
+        case ToolType::CIRCLE: currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE, cb, toolbar.fillShape); break;
         case ToolType::SELECT: currentTool = std::make_unique<SelectTool>(this); break;
         case ToolType::FILL:   currentTool = std::make_unique<FillTool>(this); break;
         case ToolType::RESIZE: break; // only created via activateResizeTool
@@ -271,10 +271,10 @@ void kPen::setTool(ToolType t) {
 
 void kPen::activateResizeTool(ToolType shapeType, SDL_Rect bounds, SDL_Rect origBounds,
                                int sx, int sy, int ex, int ey,
-                               int brushSize, SDL_Color color) {
+                               int brushSize, SDL_Color color, bool filled) {
     currentType = toolbar.currentType = ToolType::RESIZE;
     currentTool = std::make_unique<ResizeTool>(this, shapeType, bounds, origBounds,
-                                               sx, sy, ex, ey, brushSize, color);
+                                               sx, sy, ex, ey, brushSize, color, filled);
 }
 
 // ── Undo ──────────────────────────────────────────────────────────────────────
@@ -582,8 +582,12 @@ void kPen::run() {
                 switch (e.key.keysym.sym) {
                     case SDLK_b: setTool(ToolType::BRUSH);  needsRedraw = true; break;
                     case SDLK_l: setTool(ToolType::LINE);   needsRedraw = true; break;
-                    case SDLK_r: setTool(ToolType::RECT);   needsRedraw = true; break;
-                    case SDLK_o: setTool(ToolType::CIRCLE); needsRedraw = true; break;
+                    case SDLK_r:
+                        if (originalType == ToolType::RECT)   toolbar.fillShape = !toolbar.fillShape;
+                        setTool(ToolType::RECT);   needsRedraw = true; break;
+                    case SDLK_o:
+                        if (originalType == ToolType::CIRCLE) toolbar.fillShape = !toolbar.fillShape;
+                        setTool(ToolType::CIRCLE); needsRedraw = true; break;
                     case SDLK_s: setTool(ToolType::SELECT); needsRedraw = true; break;
                     case SDLK_f: setTool(ToolType::FILL);   needsRedraw = true; break;
                     case SDLK_BACKSPACE:
@@ -850,8 +854,8 @@ void kPen::run() {
             SDL_Rect cbClip = {
                 (int)std::ceil(vf.x),
                 (int)std::ceil(vf.y),
-                (int)std::ceil(vf.x + vf.w) - (int)std::ceil(vf.x),
-                (int)std::ceil(vf.y + vf.h) - (int)std::ceil(vf.y)
+                (int)std::floor(vf.x + vf.w) - (int)std::ceil(vf.x),
+                (int)std::floor(vf.y + vf.h) - (int)std::ceil(vf.y)
             };
             SDL_RenderSetClipRect(renderer, &cbClip);
 

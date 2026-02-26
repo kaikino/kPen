@@ -106,7 +106,7 @@ class kPen : public ICoordinateMapper {
     void redo();
     void activateResizeTool(ToolType shapeType, SDL_Rect bounds, SDL_Rect origBounds,
                             int sx, int sy, int ex, int ey,
-                            int brushSize, SDL_Color color);
+                            int brushSize, SDL_Color color, bool filled = false);
 
     // Clipboard / selection helpers
     void copySelectionToClipboard();

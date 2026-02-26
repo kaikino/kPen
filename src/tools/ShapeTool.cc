@@ -2,8 +2,8 @@
 #include "DrawingUtils.h"
 #include <cmath>
 
-ShapeTool::ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb)
-    : AbstractTool(m), type(t), onShapeReady(std::move(cb)) {}
+ShapeTool::ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb, bool fill)
+    : AbstractTool(m), type(t), onShapeReady(std::move(cb)), filled(fill) {}
 
 bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
     if (!isDrawing) return false;
@@ -42,18 +42,24 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
         // Rect/circle: skip shapes too small to draw.
         int dw = std::abs(cX - startX);
         int dh = std::abs(cY - startY);
-        if (dw < brushSize || dh < brushSize) { isDrawing = false; return false; }
+        if (!filled && (dw < brushSize || dh < brushSize)) { isDrawing = false; return false; }
         int minX = std::min(startX, cX), minY = std::min(startY, cY);
         if (type == ToolType::CIRCLE) {
-            int cx0 = minX + li, cy0 = minY + li;
-            int cx1 = minX + dw - 1 - ri, cy1 = minY + dh - 1 - ri;
-            if (cx1 < cx0 || cy1 < cy0) { isDrawing = false; return false; }
-            SDL_Rect cb = DrawingUtils::getOvalCenterBounds(cx0, cy0, cx1, cy1);
-            if (cb.w == 0 && cb.h == 0) { isDrawing = false; return false; }
-            bounds = origBounds = {
-                cb.x - li, cb.y - li,
-                cb.w + brushSize, cb.h + brushSize
-            };
+            if (filled) {
+                SDL_Rect cb = DrawingUtils::getOvalCenterBounds(minX, minY, minX + dw - 1, minY + dh - 1);
+                if (cb.w == 0 && cb.h == 0) { isDrawing = false; return false; }
+                bounds = origBounds = { cb.x, cb.y, cb.w + 1, cb.h + 1 };
+            } else {
+                int cx0 = minX + li, cy0 = minY + li;
+                int cx1 = minX + dw - 1 - ri, cy1 = minY + dh - 1 - ri;
+                if (cx1 < cx0 || cy1 < cy0) { isDrawing = false; return false; }
+                SDL_Rect cb = DrawingUtils::getOvalCenterBounds(cx0, cy0, cx1, cy1);
+                if (cb.w == 0 && cb.h == 0) { isDrawing = false; return false; }
+                bounds = origBounds = {
+                    cb.x - li, cb.y - li,
+                    cb.w + brushSize, cb.h + brushSize
+                };
+            }
         } else {
             bounds = origBounds = { minX, minY, dw, dh };
         }
@@ -61,7 +67,7 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
     isDrawing = false;
 
     if (onShapeReady)
-        onShapeReady(type, bounds, origBounds, sx, sy, ex, ey, brushSize, color);
+        onShapeReady(type, bounds, origBounds, sx, sy, ex, ey, brushSize, color, filled);
 
     return false;
 }
@@ -77,7 +83,7 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
 
 static void drawShapeCanvasSpace(SDL_Renderer* r, ToolType type,
                                   int startX, int startY, int endX, int endY,
-                                  int bs, int clipW, int clipH) {
+                                  int bs, int clipW, int clipH, bool filled = false) {
     int li = (bs - 1) / 2;  // left/top inset
     int ri = bs / 2;         // right/bottom inset
     int minX = std::min(startX, endX), minY = std::min(startY, endY);
@@ -96,12 +102,21 @@ static void drawShapeCanvasSpace(SDL_Renderer* r, ToolType type,
         int iEndY   = endY > startY ? endY - 1 : endY < startY ? endY : endY;
         DrawingUtils::drawLine(r, iStartX, iStartY, iEndX, iEndY, bs, clipW, clipH);
     } else if (type == ToolType::RECT) {
-        SDL_Rect rect = { cx0, cy0, cx1 - cx0, cy1 - cy0 };
-        if (rect.w >= 0 && rect.h >= 0)
-            DrawingUtils::drawRect(r, &rect, bs, clipW, clipH);
+        if (filled) {
+            SDL_Rect rect = { minX, minY, maxX - minX + 1, maxY - minY + 1 };
+            if (rect.w > 0 && rect.h > 0) DrawingUtils::drawFilledRect(r, &rect, clipW, clipH);
+        } else {
+            SDL_Rect rect = { cx0, cy0, cx1 - cx0, cy1 - cy0 };
+            if (rect.w >= 0 && rect.h >= 0) DrawingUtils::drawRect(r, &rect, bs, clipW, clipH);
+        }
     } else if (type == ToolType::CIRCLE) {
-        if (cx1 >= cx0 && cy1 >= cy0)
-            DrawingUtils::drawOval(r, cx0, cy0, cx1, cy1, bs, clipW, clipH);
+        if (filled) {
+            if (maxX >= minX && maxY >= minY)
+                DrawingUtils::drawFilledOval(r, minX, minY, maxX, maxY, clipW, clipH);
+        } else {
+            if (cx1 >= cx0 && cy1 >= cy0)
+                DrawingUtils::drawOval(r, cx0, cy0, cx1, cy1, bs, clipW, clipH);
+        }
     }
 }
 
@@ -115,7 +130,7 @@ void ShapeTool::onOverlayRender(SDL_Renderer* r) {
 
     int cw, ch; mapper->getCanvasSize(&cw, &ch);
     SDL_SetRenderDrawColor(r, cachedColor.r, cachedColor.g, cachedColor.b, 255);
-    drawShapeCanvasSpace(r, type, startX, startY, curX, curY, cachedBrushSize, cw, ch);
+    drawShapeCanvasSpace(r, type, startX, startY, curX, curY, cachedBrushSize, cw, ch, filled);
 }
 
 void ShapeTool::onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color) {
@@ -137,13 +152,18 @@ void ShapeTool::onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color)
     int dw = std::abs(curX - startX),  dh = std::abs(curY - startY);
 
     int bx, by, bx2, by2;
-    if (type == ToolType::CIRCLE) {
+    if (type == ToolType::CIRCLE && !filled) {
         int cx0 = minX + li, cy0 = minY + li;
         int cx1 = minX + dw - 1 - ri, cy1 = minY + dh - 1 - ri;
         if (cx1 < cx0 || cy1 < cy0) return;
         SDL_Rect cb = DrawingUtils::getOvalCenterBounds(cx0, cy0, cx1, cy1);
         bx = cb.x - li; by = cb.y - li;
         bx2 = cb.x + cb.w + ri + 1; by2 = cb.y + cb.h + ri + 1;
+    } else if (type == ToolType::CIRCLE && filled) {
+        SDL_Rect cb = DrawingUtils::getOvalCenterBounds(minX, minY, minX + dw - 1, minY + dh - 1);
+        if (cb.w == 0 && cb.h == 0) return;
+        bx = cb.x; by = cb.y;
+        bx2 = cb.x + cb.w + 1; by2 = cb.y + cb.h + 1;
     } else {
         bx = minX; by = minY; bx2 = minX + dw; by2 = minY + dh;
     }

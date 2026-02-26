@@ -33,6 +33,7 @@ class Toolbar {
     SDL_Color   brushColor  = {0, 0, 0, 255};
     int         brushSize   = 2;
     ToolType    currentType = ToolType::BRUSH;
+    bool        fillShape   = false;   // toggled by clicking RECT/CIRCLE while already active
 
     SDL_Color   customColors[NUM_CUSTOM] = {
         {220,220,220,255},{180,180,180,255},{120,120,120,255},

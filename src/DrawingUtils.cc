@@ -169,6 +169,61 @@ namespace DrawingUtils {
         return { minCX, minCY, maxCX - minCX, maxCY - minCY };
     }
 
+    void drawFilledRect(SDL_Renderer* renderer, const SDL_Rect* rect, int w, int h) {
+        SDL_Rect clipped = {
+            std::max(0, rect->x), std::max(0, rect->y),
+            0, 0
+        };
+        int x2 = std::min(w, rect->x + rect->w);
+        int y2 = std::min(h, rect->y + rect->h);
+        clipped.w = x2 - clipped.x;
+        clipped.h = y2 - clipped.y;
+        if (clipped.w > 0 && clipped.h > 0)
+            SDL_RenderFillRect(renderer, &clipped);
+    }
+
+    void drawFilledOval(SDL_Renderer* renderer, int x0, int y0, int x1, int y1, int w, int h) {
+        int left = std::min(x0,x1), top = std::min(y0,y1);
+        int right = std::max(x0,x1), bottom = std::max(y0,y1);
+        if (left == right || top == bottom) return;
+        int cx = (left+right)/2, cy = (top+bottom)/2;
+        int rx = cx-left, ry = cy-top;
+        long rx2 = (long)rx*rx, ry2 = (long)ry*ry;
+        // Collect the leftmost and rightmost x for each row, then fill spans.
+        std::vector<int> rowL(bottom-top+1, right), rowR(bottom-top+1, left);
+        auto plot = [&](int x, int y) {
+            int pxL = std::max(left, std::min(right, cx-x));
+            int pxR = std::max(left, std::min(right, cx+x));
+            for (int py : {cy-y, cy+y}) {
+                int row = py - top;
+                if (row < 0 || row >= (int)rowL.size()) continue;
+                rowL[row] = std::min(rowL[row], pxL);
+                rowR[row] = std::max(rowR[row], pxR);
+            }
+        };
+        int x = 0, y = ry;
+        long d1 = ry2 - rx2*ry + rx2/4, ddx = 2*ry2*x, ddy = 2*rx2*y;
+        while (ddx < ddy) {
+            plot(x, y); x++; ddx += 2*ry2;
+            if (d1 < 0) { d1 += ddx + ry2; }
+            else { y--; ddy -= 2*rx2; d1 += ddx - ddy + ry2; }
+        }
+        long d2 = ry2*((long)x*x+x) + rx2*((long)(y-1)*(y-1)) - rx2*ry2;
+        while (y >= 0) {
+            plot(x, y); y--; ddy -= 2*rx2;
+            if (d2 > 0) { d2 += rx2 - ddy; }
+            else { x++; ddx += 2*ry2; d2 += ddx - ddy + rx2; }
+        }
+        for (int row = 0; row < (int)rowL.size(); row++) {
+            int py = top + row;
+            if (py < 0 || py >= h) continue;
+            int lx = std::max(0, rowL[row]);
+            int rx2c = std::min(w-1, rowR[row]);
+            if (lx <= rx2c)
+                SDL_RenderDrawLine(renderer, lx, py, rx2c, py);
+        }
+    }
+
     void drawMarchingRect(SDL_Renderer* renderer, const SDL_Rect* rect) {
         const int dashLen = 4;
         int x2 = rect->x + rect->w, y2 = rect->y + rect->h;

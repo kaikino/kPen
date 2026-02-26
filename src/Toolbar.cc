@@ -88,13 +88,21 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
         }
         case ToolType::RECT: {
             SDL_Rect r = {cx-s, cy-s, s*2, s*2};
-            SDL_RenderDrawRect(renderer, &r);
+            if (active && fillShape) SDL_RenderFillRect(renderer, &r);
+            else                     SDL_RenderDrawRect(renderer, &r);
             break;
         }
         case ToolType::CIRCLE: {
-            for (int deg=0; deg<360; deg+=5) {
-                float a = deg * M_PI / 180.f;
-                SDL_RenderDrawPoint(renderer, cx+(int)(s*cos(a)), cy+(int)(s*sin(a)));
+            if (active && fillShape) {
+                for (int h = -s; h <= s; h++) {
+                    int half = (int)std::sqrt((float)(s*s - h*h));
+                    SDL_RenderDrawLine(renderer, cx-half, cy+h, cx+half, cy+h);
+                }
+            } else {
+                for (int deg=0; deg<360; deg+=5) {
+                    float a = deg * M_PI / 180.f;
+                    SDL_RenderDrawPoint(renderer, cx+(int)(s*cos(a)), cy+(int)(s*sin(a)));
+                }
             }
             break;
         }
@@ -178,7 +186,8 @@ void Toolbar::draw() {
                 SDL_RenderDrawRect(renderer, &btn);
                 continue;
             }
-            bool active = (currentType == toolTypes[idx]);
+            bool active = (currentType == toolTypes[idx]) ||
+                          (currentType == ToolType::RESIZE && toolTypes[idx] == ToolType::SELECT);
             SDL_SetRenderDrawColor(renderer, active ? 70 : 45, active ? 130 : 45, active ? 220 : 52, 255);
             SDL_RenderFillRect(renderer, &btn);
             SDL_SetRenderDrawColor(renderer, 80, 80, 90, 255);
@@ -483,8 +492,14 @@ bool Toolbar::onMouseDown(int x, int y) {
             SDL_Rect btn = {bx, by, cellW-2, ICON_SIZE};
             SDL_Point pt = {x, sy};
             if (SDL_PointInRect(&pt, &btn)) {
-                app->setTool(toolTypes[idx]);
-                currentType = toolTypes[idx];
+                ToolType t = toolTypes[idx];
+                if (t == currentType &&
+                    (t == ToolType::RECT || t == ToolType::CIRCLE))
+                    fillShape = !fillShape;
+                else if (t != ToolType::RECT && t != ToolType::CIRCLE)
+                    fillShape = false;
+                app->setTool(t);
+                currentType = t;
                 return true;
             }
         }

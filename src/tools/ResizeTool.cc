@@ -3,9 +3,9 @@
 #include <algorithm>
 
 ResizeTool::ResizeTool(ICoordinateMapper* m, ToolType st, SDL_Rect bounds, SDL_Rect ob,
-                       int sx, int sy, int ex, int ey, int bs, SDL_Color col)
+                       int sx, int sy, int ex, int ey, int bs, SDL_Color col, bool filled)
     : TransformTool(m), shapeType(st), origBounds(ob), shapeStartX(sx), shapeStartY(sy)
-    , shapeEndX(ex), shapeEndY(ey), shapeBrushSize(bs), shapeColor(col)
+    , shapeEndX(ex), shapeEndY(ey), shapeBrushSize(bs), shapeColor(col), shapeFilled(filled)
 { currentBounds = bounds; }
 
 ResizeTool::~ResizeTool() {}
@@ -53,12 +53,20 @@ void ResizeTool::renderShape(SDL_Renderer* r, const SDL_Rect& b, int bs, SDL_Col
         int ly1 = ry1 + (ry1 <= ry0 ? li : -ri);
         DrawingUtils::drawLine(r, lx0, ly0, lx1, ly1, bs, clipW, clipH);
     } else if (shapeType == ToolType::RECT) {
-        SDL_Rect rect = { cx0, cy0, cx1 - cx0, cy1 - cy0 };
-        if (rect.w >= 0 && rect.h >= 0)
-            DrawingUtils::drawRect(r, &rect, bs, clipW, clipH);
+        if (shapeFilled) {
+            SDL_Rect rect = { b.x, b.y, b.w, b.h };
+            DrawingUtils::drawFilledRect(r, &rect, clipW, clipH);
+        } else {
+            SDL_Rect rect = { cx0, cy0, cx1 - cx0, cy1 - cy0 };
+            if (rect.w >= 0 && rect.h >= 0) DrawingUtils::drawRect(r, &rect, bs, clipW, clipH);
+        }
     } else if (shapeType == ToolType::CIRCLE) {
-        if (cx1 >= cx0 && cy1 >= cy0)
-            DrawingUtils::drawOval(r, cx0, cy0, cx1, cy1, bs, clipW, clipH);
+        if (shapeFilled) {
+            DrawingUtils::drawFilledOval(r, b.x, b.y, b.x + b.w - 1, b.y + b.h - 1, clipW, clipH);
+        } else {
+            if (cx1 >= cx0 && cy1 >= cy0)
+                DrawingUtils::drawOval(r, cx0, cy0, cx1, cy1, bs, clipW, clipH);
+        }
     }
 }
 

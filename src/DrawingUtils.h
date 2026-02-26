@@ -8,8 +8,10 @@
 namespace DrawingUtils {
     void drawFillCircle(SDL_Renderer* renderer, int centerX, int centerY, int radius);
     void drawLine(SDL_Renderer* renderer, int x1, int y1, int x2, int y2, int size, int w, int h);
-    void drawRect(SDL_Renderer* renderer, const SDL_Rect* rect, int size, int w, int h);
-    void drawOval(SDL_Renderer* renderer, int x0, int y0, int x1, int y1, int size, int w, int h);
+    void drawRect    (SDL_Renderer* renderer, const SDL_Rect* rect, int size, int w, int h);
+    void drawFilledRect(SDL_Renderer* renderer, const SDL_Rect* rect, int w, int h);
+    void drawOval      (SDL_Renderer* renderer, int x0, int y0, int x1, int y1, int size, int w, int h);
+    void drawFilledOval(SDL_Renderer* renderer, int x0, int y0, int x1, int y1, int w, int h);
     // Returns the tight bounding box of brush center pixels that drawOval will plot
     // given the same cx0/cy0/cx1/cy1 arguments. Add ±brushSize/2 to get pixel extent.
     SDL_Rect getOvalCenterBounds(int x0, int y0, int x1, int y1);

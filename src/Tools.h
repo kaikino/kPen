@@ -114,8 +114,9 @@ class ResizeTool : public TransformTool {
     void renderShape(SDL_Renderer* r, const SDL_Rect& bounds,
                      int bs, SDL_Color col, int clipW = 0, int clipH = 0) const;
   public:
+    bool      shapeFilled;
     ResizeTool(ICoordinateMapper* m, ToolType shapeType, SDL_Rect bounds, SDL_Rect origBounds,
-               int sx, int sy, int ex, int ey, int brushSize, SDL_Color color);
+               int sx, int sy, int ex, int ey, int brushSize, SDL_Color color, bool filled = false);
     ~ResizeTool();
     void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
@@ -141,13 +142,14 @@ class BrushTool : public AbstractTool {
 
 class ShapeTool : public AbstractTool {
     ToolType type;
-    using ShapeReadyCallback = std::function<void(ToolType, SDL_Rect, SDL_Rect, int, int, int, int, int, SDL_Color)>;
+    using ShapeReadyCallback = std::function<void(ToolType, SDL_Rect, SDL_Rect, int, int, int, int, int, SDL_Color, bool)>;
     ShapeReadyCallback onShapeReady;
     // Cached each frame so onOverlayRender can draw with the correct brush/color
     int       cachedBrushSize = 1;
     SDL_Color cachedColor     = {0, 0, 0, 255};
   public:
-    ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb);
+    bool filled = false;
+    ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb, bool filled = false);
     bool onMouseUp       (int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onPreviewRender (SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onOverlayRender (SDL_Renderer* r) override;
