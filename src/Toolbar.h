@@ -19,7 +19,7 @@ class Toolbar {
     static constexpr int TRANSPARENT_PRESET_IDX = 0;
     static constexpr SDL_Color PRESETS[27] = {
         {0,0,0,0},        {0,0,0,255},       {255,255,255,255},
-        {128,128,128,255},{180,180,180,255},{220,220,220,255},
+        {64,64,64,255},{128,128,128,255},{220,220,220,255},
         {101,55,0,255},   {160,100,40,255}, {210,170,110,255},
         {139,0,0,255},    {240,40,50,255},  {255,120,100,255},
         {230,100,0,255},  {255,165,60,255}, {255,230,0,255},
@@ -35,6 +35,7 @@ class Toolbar {
     int         brushSize   = 2;
     ToolType    currentType = ToolType::BRUSH;
     bool        fillShape   = false;   // toggled by clicking RECT/CIRCLE while already active
+    bool        squareBrush = false;   // toggled by clicking BRUSH/ERASER while already active
 
     SDL_Color   customColors[NUM_CUSTOM] = {
         {220,220,220,255},{180,180,180,255},{120,120,120,255},

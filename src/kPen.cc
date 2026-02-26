@@ -260,8 +260,8 @@ void kPen::setTool(ToolType t) {
         activateResizeTool(st, b, ob, sx, sy, ex, ey, bs, c, filled);
     };
     switch (t) {
-        case ToolType::BRUSH:  currentTool = std::make_unique<BrushTool>(this); break;
-        case ToolType::ERASER: currentTool = std::make_unique<EraserTool>(this); break;
+        case ToolType::BRUSH:  currentTool = std::make_unique<BrushTool>(this, toolbar.squareBrush); break;
+        case ToolType::ERASER: currentTool = std::make_unique<EraserTool>(this, toolbar.squareBrush); break;
         case ToolType::LINE:   currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE,   cb, false); break;
         case ToolType::RECT:   currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT,   cb, toolbar.fillShape); break;
         case ToolType::CIRCLE: currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE, cb, toolbar.fillShape); break;
@@ -584,7 +584,9 @@ void kPen::run() {
                 if (toolbar.onResizeKey(e.key.keysym.sym)) { needsRedraw = true; continue; }
 
                 switch (e.key.keysym.sym) {
-                    case SDLK_b: setTool(ToolType::BRUSH);  needsRedraw = true; break;
+                    case SDLK_b:
+                        if (originalType == ToolType::BRUSH)  toolbar.squareBrush = !toolbar.squareBrush;
+                        setTool(ToolType::BRUSH);  needsRedraw = true; break;
                     case SDLK_l: setTool(ToolType::LINE);   needsRedraw = true; break;
                     case SDLK_r:
                         if (originalType == ToolType::RECT)   toolbar.fillShape = !toolbar.fillShape;
@@ -593,7 +595,9 @@ void kPen::run() {
                         if (originalType == ToolType::CIRCLE) toolbar.fillShape = !toolbar.fillShape;
                         setTool(ToolType::CIRCLE); needsRedraw = true; break;
                     case SDLK_s: setTool(ToolType::SELECT); needsRedraw = true; break;
-                    case SDLK_e: setTool(ToolType::ERASER); needsRedraw = true; break;
+                    case SDLK_e:
+                        if (originalType == ToolType::ERASER) toolbar.squareBrush = !toolbar.squareBrush;
+                        setTool(ToolType::ERASER); needsRedraw = true; break;
                     case SDLK_f: setTool(ToolType::FILL);   needsRedraw = true; break;
                     case SDLK_BACKSPACE:
                     case SDLK_DELETE:

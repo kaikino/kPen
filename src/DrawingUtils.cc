@@ -95,10 +95,36 @@ namespace DrawingUtils {
     }
 
     void drawRect(SDL_Renderer* renderer, const SDL_Rect* rect, int size, int w, int h) {
-        drawLine(renderer, rect->x, rect->y, rect->x + rect->w, rect->y, size, w, h);
-        drawLine(renderer, rect->x + rect->w, rect->y, rect->x + rect->w, rect->y + rect->h, size, w, h);
-        drawLine(renderer, rect->x + rect->w, rect->y + rect->h, rect->x, rect->y + rect->h, size, w, h);
-        drawLine(renderer, rect->x, rect->y + rect->h, rect->x, rect->y, size, w, h);
+        // Use square brush stamps so corners are sharp right angles, not rounded.
+        // The stroke is centred on the rect edge: li pixels hang inward, ri outward,
+        // matching the inset logic in ShapeTool / ResizeTool.
+        int li = (size - 1) / 2;  // left/top half  (asymmetric for even sizes)
+        int ri = size / 2;         // right/bottom half
+
+        // Each edge is a clipped filled rect, brush-size thick.
+        // Horizontal edges (top/bottom) span the full outer width — they own the corners.
+        // Vertical edges span only the inner height between the two bars so corners
+        // are not double-painted (avoids alpha-blending artefacts on transparent canvas).
+        int x0 = rect->x - li;
+        int y0 = rect->y - li;
+        int x1 = rect->x + rect->w + ri + 1;  // exclusive right  (outer edge + 1)
+        int y1 = rect->y + rect->h + ri + 1;  // exclusive bottom (outer edge + 1)
+        int innerY0 = rect->y + ri + 1;        // top    of inner vertical span
+        int innerY1 = rect->y + rect->h - li;  // bottom of inner vertical span
+
+        auto fillClipped = [&](int fx, int fy, int fw, int fh) {
+            int cx0 = std::max(0, fx),     cy0 = std::max(0, fy);
+            int cx1 = std::min(w, fx + fw), cy1 = std::min(h, fy + fh);
+            if (cx1 > cx0 && cy1 > cy0) {
+                SDL_Rect r = { cx0, cy0, cx1 - cx0, cy1 - cy0 };
+                SDL_RenderFillRect(renderer, &r);
+            }
+        };
+
+        fillClipped(x0, y0,          x1 - x0, size);            // top bar
+        fillClipped(x0, y1 - size,   x1 - x0, size);            // bottom bar
+        fillClipped(x0, innerY0,     size, innerY1 - innerY0);  // left bar
+        fillClipped(x1 - size, innerY0, size, innerY1 - innerY0); // right bar
     }
 
     void drawOval(SDL_Renderer* renderer, int x0, int y0, int x1, int y1, int size, int w, int h) {

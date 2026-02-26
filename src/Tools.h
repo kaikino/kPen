@@ -135,7 +135,8 @@ class ResizeTool : public TransformTool {
 
 class BrushTool : public AbstractTool {
   public:
-    using AbstractTool::AbstractTool;
+    bool squareBrush = false;
+    BrushTool(ICoordinateMapper* m, bool square = false) : AbstractTool(m), squareBrush(square) {}
     void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color) override;
@@ -143,7 +144,8 @@ class BrushTool : public AbstractTool {
 
 class EraserTool : public AbstractTool {
   public:
-    using AbstractTool::AbstractTool;
+    bool squareBrush = false;
+    EraserTool(ICoordinateMapper* m, bool square = false) : AbstractTool(m), squareBrush(square) {}
     void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color) override;

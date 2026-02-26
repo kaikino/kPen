@@ -75,25 +75,50 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
     int s = ICON_SIZE/2 - 3;
     switch (t) {
         case ToolType::BRUSH: {
-            // Solid circle with radius 4 (8x8 footprint)
-            const int r = 4;
-            for (int dy = -r; dy <= r; dy++) {
-                int dx = (int)std::sqrt((float)(r * r - dy * dy) + 0.5f);
-                SDL_RenderDrawLine(renderer, cx - dx, cy + dy, cx + dx, cy + dy);
+            if (active && squareBrush) {
+                // Filled square
+                const int r = 4;
+                SDL_Rect sq = { cx - r, cy - r, r * 2 + 1, r * 2 + 1 };
+                SDL_RenderFillRect(renderer, &sq);
+            } else {
+                // Solid circle with radius 4 (8x8 footprint)
+                const int r = 4;
+                for (int dy = -r; dy <= r; dy++) {
+                    int dx = (int)std::sqrt((float)(r * r - dy * dy) + 0.5f);
+                    SDL_RenderDrawLine(renderer, cx - dx, cy + dy, cx + dx, cy + dy);
+                }
             }
             break;
         }
         case ToolType::ERASER: {
-            // Dashed hollow circle with radius 4
-            const int r = 4;
-            // Using a larger degree step (45 degrees) for longer visible dashes/gaps
-            for (int deg = 0; deg < 360; deg++) {
-                // Draws segments of 45 degrees followed by a 45-degree gap
-                if ((deg / 45) % 2 == 0) {
-                    float a = (22.5 + deg) * (float)M_PI / 180.f;
-                    SDL_RenderDrawPoint(renderer, 
-                        cx + (int)std::round(r * std::cos(a)),
-                        cy + (int)std::round(r * std::sin(a)));
+            if (active && squareBrush) {
+                // Dashed hollow square: 2-px L-shaped dash at each corner.
+                // r=4 → square runs from (cx-4,cy-4) to (cx+4,cy+4), 9×9 px.
+                const int r = 4;
+                const int d = 2;   // dash arm length
+                int x0 = cx - r, y0 = cy - r, x1 = cx + r, y1 = cy + r;
+                // Top-left corner: right along top, down along left
+                SDL_RenderDrawLine(renderer, x0,     y0, x0 + d, y0);
+                SDL_RenderDrawLine(renderer, x0,     y0, x0,     y0 + d);
+                // Top-right corner: left along top, down along right
+                SDL_RenderDrawLine(renderer, x1 - d, y0, x1,     y0);
+                SDL_RenderDrawLine(renderer, x1,     y0, x1,     y0 + d);
+                // Bottom-left corner: right along bottom, up along left
+                SDL_RenderDrawLine(renderer, x0,     y1, x0 + d, y1);
+                SDL_RenderDrawLine(renderer, x0,     y1 - d, x0, y1);
+                // Bottom-right corner: left along bottom, up along right
+                SDL_RenderDrawLine(renderer, x1 - d, y1, x1,     y1);
+                SDL_RenderDrawLine(renderer, x1,     y1 - d, x1,  y1);
+            } else {
+                // Dashed hollow circle with radius 4
+                const int r = 4;
+                for (int deg = 0; deg < 360; deg++) {
+                    if ((deg / 45) % 2 == 0) {
+                        float a = (22.5 + deg) * (float)M_PI / 180.f;
+                        SDL_RenderDrawPoint(renderer,
+                            cx + (int)std::round(r * std::cos(a)),
+                            cy + (int)std::round(r * std::sin(a)));
+                    }
                 }
             }
             break;
@@ -248,10 +273,15 @@ void Toolbar::draw() {
     int maxR = BS_ROW1_H / 2 - 1;
     int dotR = std::max(1, (int)((std::min(brushSize, 25) / 25.f) * maxR + 0.5f));
     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-    for (int py = -dotR; py <= dotR; py++)
-        for (int px = -dotR; px <= dotR; px++)
-            if (px*px + py*py <= dotR*dotR)
-                SDL_RenderDrawPoint(renderer, previewCX+px, previewCY+py);
+    if (squareBrush) {
+        SDL_Rect sq = { previewCX - dotR, previewCY - dotR, dotR * 2 + 1, dotR * 2 + 1 };
+        SDL_RenderFillRect(renderer, &sq);
+    } else {
+        for (int py = -dotR; py <= dotR; py++)
+            for (int px = -dotR; px <= dotR; px++)
+                if (px*px + py*py <= dotR*dotR)
+                    SDL_RenderDrawPoint(renderer, previewCX+px, previewCY+py);
+    }
 
     // Row 2: full-width slider
     int sliderY = brushRowY + BS_ROW1_H + BS_ROW_GAP;
@@ -354,7 +384,9 @@ void Toolbar::draw() {
             SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
             SDL_RenderFillRect(renderer, &r);
             SDL_SetRenderDrawColor(renderer, 200, 30, 30, 255);
+            SDL_RenderDrawLine(renderer, sx, sy+sz-2, sx+sz-2, sy);
             SDL_RenderDrawLine(renderer, sx, sy+sz-1, sx+sz-1, sy);
+            SDL_RenderDrawLine(renderer, sx+1, sy+sz-1, sx+sz-1, sy+1);
         } else {
             SDL_SetRenderDrawColor(renderer, PRESETS[i].r, PRESETS[i].g, PRESETS[i].b, 255);
             SDL_RenderFillRect(renderer, &r);
@@ -521,6 +553,9 @@ bool Toolbar::onMouseDown(int x, int y) {
                 if (t == currentType &&
                     (t == ToolType::RECT || t == ToolType::CIRCLE))
                     fillShape = !fillShape;
+                else if (t == currentType &&
+                    (t == ToolType::BRUSH || t == ToolType::ERASER))
+                    squareBrush = !squareBrush;
                 else if (t != ToolType::RECT && t != ToolType::CIRCLE)
                     fillShape = false;
                 app->setTool(t);
