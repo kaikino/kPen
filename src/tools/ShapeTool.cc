@@ -7,75 +7,126 @@ ShapeTool::ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb)
 
 bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
     if (!isDrawing) return false;
-    if (cX == startX && cY == startY) {
-        isDrawing = false;
-        return false;
-    }
+    if (cX == startX && cY == startY) { isDrawing = false; return false; }
 
-    int half = std::max(1, brushSize / 2);
-    int shapeMinX = std::min(startX, cX),  shapeMaxX = std::max(startX, cX);
-    int shapeMinY = std::min(startY, cY),  shapeMaxY = std::max(startY, cY);
+    int li = (brushSize - 1) / 2;
+    int ri = brushSize / 2;
 
-    // Bounds span exactly the pixel range the preview drew into.
-    // No +1: abs(max-min) is already the correct exclusive pixel span that
-    // matches what onPreviewRender draws with abs(winCur - winStart).
-    SDL_Rect bounds;
+    SDL_Rect bounds, origBounds;
+    int sx = startX, sy = startY, ex = cX, ey = cY;  // coords passed to ResizeTool
     if (type == ToolType::LINE) {
-        bounds = {
-            shapeMinX - half, shapeMinY - half,
-            std::max(1, shapeMaxX - shapeMinX) + half * 2,
-            std::max(1, shapeMaxY - shapeMinY) + half * 2
+        // Convert to inclusive center endpoints (same as drawShapeCanvasSpace).
+        int isx = sx < ex ? sx : sx > ex ? sx - 1 : sx;
+        int isy = sy < ey ? sy : sy > ey ? sy - 1 : sy;
+        int iex = ex > sx ? ex - 1 : ex < sx ? ex : ex;
+        int iey = ey > sy ? ey - 1 : ey < sy ? ey : ey;
+        // origBounds maps isx→tx=0, iex→tx=1 (w = iex-isx, clamped to 1 to
+        // avoid division by zero for single-point lines where isx==iex).
+        // bounds (currentBounds) = brush footprint: expands by li left and ri right,
+        // so w = (iex-isx) + li + ri + 1 = (iex-isx) + brushSize.
+        int spanX = std::abs(iex - isx), spanY = std::abs(iey - isy);
+        origBounds = {
+            std::min(isx, iex),
+            std::min(isy, iey),
+            std::max(1, spanX),
+            std::max(1, spanY)
         };
-    } else {
         bounds = {
-            shapeMinX, shapeMinY,
-            std::max(1, shapeMaxX - shapeMinX),
-            std::max(1, shapeMaxY - shapeMinY)
+            origBounds.x - li,
+            origBounds.y - li,
+            spanX + brushSize,
+            spanY + brushSize
+        };
+        sx = isx; sy = isy; ex = iex; ey = iey;
+    } else {
+        // Rect/circle: stroke is contained within the drag extent.
+        // Skip shapes too small to draw (brush would collapse the interior).
+        int dw = std::abs(cX - startX);
+        int dh = std::abs(cY - startY);
+        if (dw < brushSize || dh < brushSize) { isDrawing = false; return false; }
+        bounds = origBounds = {
+            std::min(startX, cX),
+            std::min(startY, cY),
+            dw,
+            dh
         };
     }
     isDrawing = false;
 
-    // Hand shape params to kPen which will create a ResizeTool
     if (onShapeReady)
-        onShapeReady(type, bounds, startX, startY, cX, cY, brushSize, color);
+        onShapeReady(type, bounds, origBounds, sx, sy, ex, ey, brushSize, color);
 
-    // Canvas unchanged here — ResizeTool commits on deactivate
     return false;
 }
 
-void ShapeTool::onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Color color) {
+// Draw shape in canvas space. Used by both onOverlayRender (live preview) and
+// ResizeTool::renderShape (committed), guaranteeing pixel-identical output.
+//
+// addBrush is asymmetric for even sizes: extends (bs/2-1) left, bs/2 right of stamp.
+// So the correct insets are:
+//   left  inset = (bs-1)/2   [= bs/2-1 for even, bs/2 for odd]
+//   right inset = bs/2       [= bs/2   for both]
+// This makes the outer stroke edge touch minX and maxX exactly.
+
+static void drawShapeCanvasSpace(SDL_Renderer* r, ToolType type,
+                                  int startX, int startY, int endX, int endY,
+                                  int bs, int clipW, int clipH) {
+    int li = (bs - 1) / 2;  // left/top inset
+    int ri = bs / 2;         // right/bottom inset
+    int minX = std::min(startX, endX), minY = std::min(startY, endY);
+    // max(startX,endX) is the exclusive right boundary; -1 gives inclusive last pixel
+    // used by rect/circle and also as the base for line (converted to inclusive below)
+    int maxX = std::max(startX, endX) - 1, maxY = std::max(startY, endY) - 1;
+    int cx0 = minX + li, cy0 = minY + li;
+    int cx1 = maxX - ri, cy1 = maxY - ri;
+
+    if (type == ToolType::LINE) {
+        // Convert exclusive boundaries to inclusive center pixels, then pass
+        // directly to drawLine (no inset — drawLine stamps the brush at each center).
+        int iStartX = startX < endX ? startX : startX > endX ? startX - 1 : startX;
+        int iStartY = startY < endY ? startY : startY > endY ? startY - 1 : startY;
+        int iEndX   = endX > startX ? endX - 1 : endX < startX ? endX : endX;
+        int iEndY   = endY > startY ? endY - 1 : endY < startY ? endY : endY;
+        DrawingUtils::drawLine(r, iStartX, iStartY, iEndX, iEndY, bs, clipW, clipH);
+    } else if (type == ToolType::RECT) {
+        SDL_Rect rect = { cx0, cy0, cx1 - cx0, cy1 - cy0 };
+        if (rect.w >= 0 && rect.h >= 0)
+            DrawingUtils::drawRect(r, &rect, bs, clipW, clipH);
+    } else if (type == ToolType::CIRCLE) {
+        if (cx1 >= cx0 && cy1 >= cy0)
+            DrawingUtils::drawOval(r, cx0, cy0, cx1, cy1, bs, clipW, clipH);
+    }
+}
+
+void ShapeTool::onOverlayRender(SDL_Renderer* r) {
     if (!isDrawing) return;
-    int winStartX, winStartY, winCurX, winCurY;
-    mapper->getWindowCoords(startX, startY, &winStartX, &winStartY);
-    
     int mouseX, mouseY;
     SDL_GetMouseState(&mouseX, &mouseY);
     int curX, curY;
-    // Use unclamped mapping so the preview follows the cursor outside the canvas edge
-    {
-        int wx1, wy1, wx2, wy2;
-        mapper->getWindowCoords(0, 0, &wx1, &wy1);
-        int cw3, ch3; mapper->getCanvasSize(&cw3, &ch3);
-        mapper->getWindowCoords(cw3, ch3, &wx2, &wy2);
-        int vw = wx2 - wx1, vh = wy2 - wy1;
-        curX = vw > 0 ? (int)std::floor((mouseX - wx1) * ((float)cw3 / vw)) : 0;
-        curY = vh > 0 ? (int)std::floor((mouseY - wy1) * ((float)ch3 / vh)) : 0;
-    }
+    mapper->getCanvasCoords(mouseX, mouseY, &curX, &curY);
     if (curX == startX && curY == startY) return;
 
-    mapper->getWindowCoords(curX, curY, &winCurX, &winCurY);
-    int scaledBrush = mapper->getWindowSize(brushSize);
-    SDL_SetRenderDrawColor(winRenderer, color.r, color.g, color.b, 255);
+    int cw, ch; mapper->getCanvasSize(&cw, &ch);
+    SDL_SetRenderDrawColor(r, cachedColor.r, cachedColor.g, cachedColor.b, 255);
+    drawShapeCanvasSpace(r, type, startX, startY, curX, curY, cachedBrushSize, cw, ch);
+}
 
-    int winW, winH;
-    SDL_GetRendererOutputSize(winRenderer, &winW, &winH);
-    int scaledHalf = scaledBrush / 2;
-    if (type == ToolType::LINE) DrawingUtils::drawLine(winRenderer, winStartX, winStartY, winCurX, winCurY, scaledBrush, winW, winH);
-    else if (type == ToolType::RECT) {
-        SDL_Rect r = { std::min(winStartX, winCurX) + scaledHalf, std::min(winStartY, winCurY) + scaledHalf,
-                        std::abs(winCurX - winStartX) - scaledHalf * 2, std::abs(winCurY - winStartY) - scaledHalf * 2 };
-        if (r.w > 0 && r.h > 0) DrawingUtils::drawRect(winRenderer, &r, scaledBrush, winW, winH);
-    }
-    else if (type == ToolType::CIRCLE) DrawingUtils::drawOval(winRenderer, std::min(winStartX, winCurX) + scaledHalf, std::min(winStartY, winCurY) + scaledHalf,
-                                                                std::max(winStartX, winCurX) - scaledHalf, std::max(winStartY, winCurY) - scaledHalf, scaledBrush, winW, winH);
+void ShapeTool::onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color) {
+    cachedBrushSize = brushSize;
+    cachedColor     = color;
+
+    if (!isDrawing) return;
+    int mouseX, mouseY;
+    SDL_GetMouseState(&mouseX, &mouseY);
+    int curX, curY;
+    mapper->getCanvasCoords(mouseX, mouseY, &curX, &curY);
+    if (curX == startX && curY == startY) return;
+
+    if (type == ToolType::LINE) return;  // line shows the stroke itself, no bounding box while drawing
+
+    int wx0, wy0, wx1, wy1;
+    mapper->getWindowCoords(std::min(startX, curX), std::min(startY, curY), &wx0, &wy0);
+    mapper->getWindowCoords(std::max(startX, curX), std::max(startY, curY), &wx1, &wy1);
+    SDL_Rect outline = { wx0, wy0, wx1 - wx0, wy1 - wy0 };
+    DrawingUtils::drawMarchingRect(r, &outline);
 }

@@ -19,11 +19,9 @@ bool SelectTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_C
     if (resizing != Handle::NONE || isMoving) { handleMouseUp(); return false; }
     if (!isDrawing || (cX == startX && cY == startY)) { isDrawing = false; return false; }
 
-    // Logical selection bounds (may extend outside canvas).
-    // Use abs() without max(1,...) — zero-area selections are rejected below
-    // by the rw<=0||rh<=0 guard, avoiding a spurious 1px inflation.
+    // Logical selection bounds (may extend outside canvas)
     currentBounds = { std::min(startX, cX), std::min(startY, cY),
-                      std::abs(cX - startX), std::abs(cY - startY) };
+                      std::max(1, std::abs(cX - startX)), std::max(1, std::abs(cY - startY)) };
 
     // Intersection with canvas for the actual pixel read/erase
     int canvasW, canvasH; mapper->getCanvasSize(&canvasW, &canvasH);
@@ -45,8 +43,10 @@ bool SelectTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_C
     SDL_RenderReadPixels(r, &readRect, SDL_PIXELFORMAT_ARGB8888, pixels.data(), rw * 4);
     SDL_UpdateTexture(selectionTexture, nullptr, pixels.data(), rw * 4);
 
-    SDL_SetRenderDrawColor(r, 255, 255, 255, 255);
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
     SDL_RenderFillRect(r, &readRect);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
 
     // Adjust currentBounds to the canvas-clipped rect so texture and bounds stay in sync
     currentBounds = { rx, ry, rw, rh };

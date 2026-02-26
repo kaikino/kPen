@@ -2,55 +2,63 @@
 #include "DrawingUtils.h"
 #include <algorithm>
 
-ResizeTool::ResizeTool(ICoordinateMapper* m, ToolType st, SDL_Rect bounds,
+ResizeTool::ResizeTool(ICoordinateMapper* m, ToolType st, SDL_Rect bounds, SDL_Rect ob,
                        int sx, int sy, int ex, int ey, int bs, SDL_Color col)
-    : TransformTool(m), shapeType(st), origBounds(bounds), shapeStartX(sx), shapeStartY(sy)
+    : TransformTool(m), shapeType(st), origBounds(ob), shapeStartX(sx), shapeStartY(sy)
     , shapeEndX(ex), shapeEndY(ey), shapeBrushSize(bs), shapeColor(col)
 { currentBounds = bounds; }
 
 ResizeTool::~ResizeTool() {}
 
-void ResizeTool::onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) {
-    handleMouseDown(cX, cY);
-}
+void ResizeTool::onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) { handleMouseDown(cX, cY); }
+void ResizeTool::onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) { handleMouseMove(cX, cY); }
+bool ResizeTool::onMouseUp  (int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) { handleMouseUp(); return false; }
 
-void ResizeTool::onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) {
-    handleMouseMove(cX, cY);
-}
-
-bool ResizeTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) {
-    handleMouseUp();
-    return false; // committed via deactivate()
-}
-
-// ── Shape rendering ───────────────────────────────────────────────────────────
-
-static void remapPoint(int ox, int oy, const SDL_Rect& orig, const SDL_Rect& curr, int& rx, int& ry) {
-    float tx = orig.w > 0 ? (float)(ox - orig.x) / orig.w : 0.f;
-    float ty = orig.h > 0 ? (float)(oy - orig.y) / orig.h : 0.f;
-    rx = curr.x + (int)(tx * curr.w);
-    ry = curr.y + (int)(ty * curr.h);
-}
+// Identical drawing logic to drawShapeCanvasSpace in ShapeTool.cc.
+// origBounds = {min(sx,ex), min(sy,ey), abs(dx), abs(dy)} — no brush expansion.
+// rx0/rx1 remap startX/endX proportionally into b; exact when b==origBounds.
 
 void ResizeTool::renderShape(SDL_Renderer* r, const SDL_Rect& b, int bs, SDL_Color col, int clipW, int clipH) const {
     SDL_SetRenderDrawColor(r, col.r, col.g, col.b, 255);
-    int half = std::max(1, bs / 2);
+    int li = (bs - 1) / 2;  // left/top inset  (asymmetric for even brushes)
+    int ri = bs / 2;         // right/bottom inset
+
+    float tx0 = origBounds.w > 0 ? (float)(shapeStartX - origBounds.x) / origBounds.w : 0.f;
+    float ty0 = origBounds.h > 0 ? (float)(shapeStartY - origBounds.y) / origBounds.h : 0.f;
+    float tx1 = origBounds.w > 0 ? (float)(shapeEndX   - origBounds.x) / origBounds.w : 1.f;
+    float ty1 = origBounds.h > 0 ? (float)(shapeEndY   - origBounds.y) / origBounds.h : 1.f;
+
+    // Map start/end proportionally into b using b.w-1 so both rx0 and rx1 are
+    // inclusive pixel coordinates within [b.x, b.x+b.w-1]. This keeps the flip
+    // mirror axis clean and avoids off-by-one throughout.
+    int rx0 = b.x + (b.w > 1 ? (int)std::round(tx0 * (b.w - 1)) : 0);
+    int ry0 = b.y + (b.h > 1 ? (int)std::round(ty0 * (b.h - 1)) : 0);
+    int rx1 = b.x + (b.w > 1 ? (int)std::round(tx1 * (b.w - 1)) : 0);
+    int ry1 = b.y + (b.h > 1 ? (int)std::round(ty1 * (b.h - 1)) : 0);
+
+    if (flipX) { int m = b.x + b.w - 1; rx0 = m - (rx0 - b.x); rx1 = m - (rx1 - b.x); }
+    if (flipY) { int m = b.y + b.h - 1; ry0 = m - (ry0 - b.y); ry1 = m - (ry1 - b.y); }
+
+    int minX = std::min(rx0, rx1), minY = std::min(ry0, ry1);
+    int maxX = std::max(rx0, rx1), maxY = std::max(ry0, ry1);
+    int cx0 = minX + li, cy0 = minY + li;
+    int cx1 = maxX - ri, cy1 = maxY - ri;
 
     if (shapeType == ToolType::LINE) {
-        int rx0, ry0, rx1, ry1;
-        remapPoint(shapeStartX, shapeStartY, origBounds, b, rx0, ry0);
-        remapPoint(shapeEndX,   shapeEndY,   origBounds, b, rx1, ry1);
-        // Apply flips: mirror each point within the current bounds
-        int bRight  = b.x + b.w;
-        int bBottom = b.y + b.h;
-        if (flipX) { rx0 = bRight - (rx0 - b.x); rx1 = bRight - (rx1 - b.x); }
-        if (flipY) { ry0 = bBottom - (ry0 - b.y); ry1 = bBottom - (ry1 - b.y); }
-        DrawingUtils::drawLine(r, rx0, ry0, rx1, ry1, bs, clipW, clipH);
+        // rx0/rx1 are brush outer edges (left when unflipped, right when flipped).
+        // Recover center pixels then pass directly to drawLine.
+        int lx0 = rx0 + (rx0 <= rx1 ? li : -ri);
+        int ly0 = ry0 + (ry0 <= ry1 ? li : -ri);
+        int lx1 = rx1 + (rx1 <= rx0 ? li : -ri);
+        int ly1 = ry1 + (ry1 <= ry0 ? li : -ri);
+        DrawingUtils::drawLine(r, lx0, ly0, lx1, ly1, bs, clipW, clipH);
     } else if (shapeType == ToolType::RECT) {
-        SDL_Rect rect = { b.x + half, b.y + half, b.w - half * 2, b.h - half * 2 };
-        if (rect.w > 0 && rect.h > 0) DrawingUtils::drawRect(r, &rect, bs, clipW, clipH);
+        SDL_Rect rect = { cx0, cy0, cx1 - cx0, cy1 - cy0 };
+        if (rect.w >= 0 && rect.h >= 0)
+            DrawingUtils::drawRect(r, &rect, bs, clipW, clipH);
     } else if (shapeType == ToolType::CIRCLE) {
-        DrawingUtils::drawOval(r, b.x + half, b.y + half, b.x + b.w - half, b.y + b.h - half, bs, clipW, clipH);
+        if (cx1 >= cx0 && cy1 >= cy0)
+            DrawingUtils::drawOval(r, cx0, cy0, cx1, cy1, bs, clipW, clipH);
     }
 }
 
@@ -59,7 +67,7 @@ void ResizeTool::onOverlayRender(SDL_Renderer* r) {
     renderShape(r, currentBounds, shapeBrushSize, shapeColor, cw, ch);
 }
 
-void ResizeTool::onPreviewRender(SDL_Renderer* r, int /*bs*/, SDL_Color /*col*/) {
+void ResizeTool::onPreviewRender(SDL_Renderer* r, int, SDL_Color) {
     drawHandles(r);
 }
 
@@ -71,48 +79,16 @@ void ResizeTool::deactivate(SDL_Renderer* r) {
 std::vector<uint32_t> ResizeTool::getFloatingPixels(SDL_Renderer* r) const {
     int w = currentBounds.w, h = currentBounds.h;
     if (w <= 0 || h <= 0) return {};
-
-    // Render the shape into a temporary texture at its current bounds,
-    // offset so the shape's top-left maps to (0,0) in the texture.
-    SDL_Texture* tmp = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888,
-                                         SDL_TEXTUREACCESS_TARGET, w, h);
+    SDL_Texture* tmp = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w, h);
     if (!tmp) return {};
     SDL_SetTextureBlendMode(tmp, SDL_BLENDMODE_BLEND);
-
     SDL_Texture* prev = SDL_GetRenderTarget(r);
     SDL_SetRenderTarget(r, tmp);
     SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
     SDL_RenderClear(r);
-
-    // Shift the bounds so the shape renders at (0,0) within the texture
-    SDL_SetRenderDrawColor(r, shapeColor.r, shapeColor.g, shapeColor.b, 255);
-    int half = std::max(1, shapeBrushSize / 2);
-
-    if (shapeType == ToolType::LINE) {
-        // Remap endpoints from origBounds space into localBounds space
-        auto remap = [&](int ox, int oy, int& rx, int& ry) {
-            float tx = origBounds.w > 0 ? (float)(ox - origBounds.x) / origBounds.w : 0.f;
-            float ty = origBounds.h > 0 ? (float)(oy - origBounds.y) / origBounds.h : 0.f;
-            rx = (int)(tx * w);
-            ry = (int)(ty * h);
-        };
-        int rx0, ry0, rx1, ry1;
-        remap(shapeStartX, shapeStartY, rx0, ry0);
-        remap(shapeEndX,   shapeEndY,   rx1, ry1);
-        if (flipX) { rx0 = w - rx0; rx1 = w - rx1; }
-        if (flipY) { ry0 = h - ry0; ry1 = h - ry1; }
-        DrawingUtils::drawLine(r, rx0, ry0, rx1, ry1, shapeBrushSize, w, h);
-    } else if (shapeType == ToolType::RECT) {
-        SDL_Rect rect = { half, half, w - half * 2, h - half * 2 };
-        if (rect.w > 0 && rect.h > 0)
-            DrawingUtils::drawRect(r, &rect, shapeBrushSize, w, h);
-    } else if (shapeType == ToolType::CIRCLE) {
-        DrawingUtils::drawOval(r, half, half, w - half, h - half, shapeBrushSize, w, h);
-    }
-
+    renderShape(r, {0, 0, w, h}, shapeBrushSize, shapeColor, w, h);
     std::vector<uint32_t> pixels(w * h);
     SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), w * 4);
-
     SDL_SetRenderTarget(r, prev);
     SDL_DestroyTexture(tmp);
     return pixels;

@@ -30,8 +30,9 @@ kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
                                 SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
     SDL_SetTextureBlendMode(overlay, SDL_BLENDMODE_BLEND);
 
+    SDL_SetTextureBlendMode(canvas, SDL_BLENDMODE_BLEND);
     SDL_SetRenderTarget(renderer, canvas);
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
     SDL_RenderClear(renderer);
     SDL_SetRenderTarget(renderer, nullptr);
 
@@ -254,8 +255,8 @@ void kPen::setTool(ToolType t) {
         }
     }
     originalType = currentType = toolbar.currentType = t;
-    auto cb = [this](ToolType st, SDL_Rect b, int sx, int sy, int ex, int ey, int bs, SDL_Color c) {
-        activateResizeTool(st, b, sx, sy, ex, ey, bs, c);
+    auto cb = [this](ToolType st, SDL_Rect b, SDL_Rect ob, int sx, int sy, int ex, int ey, int bs, SDL_Color c) {
+        activateResizeTool(st, b, ob, sx, sy, ex, ey, bs, c);
     };
     switch (t) {
         case ToolType::BRUSH:  currentTool = std::make_unique<BrushTool>(this); break;
@@ -268,11 +269,11 @@ void kPen::setTool(ToolType t) {
     }
 }
 
-void kPen::activateResizeTool(ToolType shapeType, SDL_Rect bounds,
+void kPen::activateResizeTool(ToolType shapeType, SDL_Rect bounds, SDL_Rect origBounds,
                                int sx, int sy, int ex, int ey,
                                int brushSize, SDL_Color color) {
     currentType = toolbar.currentType = ToolType::RESIZE;
-    currentTool = std::make_unique<ResizeTool>(this, shapeType, bounds,
+    currentTool = std::make_unique<ResizeTool>(this, shapeType, bounds, origBounds,
                                                sx, sy, ex, ey, brushSize, color);
 }
 
@@ -300,6 +301,7 @@ void kPen::applyState(CanvasState& s) {
                                     SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
         overlay = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                     SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
+        SDL_SetTextureBlendMode(canvas,  SDL_BLENDMODE_BLEND);
         SDL_SetTextureBlendMode(overlay, SDL_BLENDMODE_BLEND);
         SDL_SetRenderTarget(renderer, overlay);
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
@@ -372,19 +374,26 @@ void kPen::resizeCanvas(int newW, int newH, bool scaleContent, int originX, int 
         setTool(originalType);
     }
 
+    // Read the current canvas pixels for building the new buffer.
+    // We do NOT push a pre-resize state — undoStack.back() already IS the current
+    // state (that invariant is maintained everywhere). We only push the post-resize
+    // state below, so one undo step correctly returns to this pre-resize state.
     std::vector<uint32_t> oldPixels(canvasW * canvasH);
     withCanvas([&]{
         SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888,
                              oldPixels.data(), canvasW * 4);
     });
+    // Update the existing top-of-stack entry to capture any tool pixels just committed.
+    // (If a tool was active, deactivate() stamped it; saveState wasn't called, so we
+    // refresh the top entry manually to keep the invariant accurate.)
     if (!undoStack.empty()) {
         undoStack.back().w = canvasW;
         undoStack.back().h = canvasH;
         undoStack.back().pixels = oldPixels;
     }
 
-    // Build new pixel buffer — white background.
-    std::vector<uint32_t> newPixels(newW * newH, 0xFFFFFFFF);
+    // Build new pixel buffer — transparent background.
+    std::vector<uint32_t> newPixels(newW * newH, 0x00000000);
 
     if (scaleContent) {
         // Nearest-neighbour scale — origin shift ignored, whole image resampled.
@@ -423,6 +432,7 @@ void kPen::resizeCanvas(int newW, int newH, bool scaleContent, int originX, int 
                                 SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
     overlay = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                 SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
+    SDL_SetTextureBlendMode(canvas,  SDL_BLENDMODE_BLEND);
     SDL_SetTextureBlendMode(overlay, SDL_BLENDMODE_BLEND);
 
     SDL_UpdateTexture(canvas, nullptr, newPixels.data(), canvasW * 4);
@@ -432,6 +442,9 @@ void kPen::resizeCanvas(int newW, int newH, bool scaleContent, int originX, int 
     SDL_RenderClear(renderer);
     SDL_SetRenderTarget(renderer, nullptr);
 
+    // Push the post-resize state. undoStack.back() (refreshed above) holds the
+    // pre-resize pixels+size, so one undo correctly restores the old canvas.
+    // Do NOT clear undoStack — resize is undoable.
     redoStack.clear();
     CanvasState newState;
     newState.w = canvasW; newState.h = canvasH;
@@ -449,7 +462,7 @@ void kPen::deleteSelection() {
     if (currentType == ToolType::SELECT) {
         auto* st = static_cast<SelectTool*>(currentTool.get());
         if (!st->isSelectionActive()) return;
-        // The canvas already has a white hole; save that state, then drop the floating pixels.
+        // The canvas already has a transparent hole; save that state, then drop the floating pixels.
         saveState(undoStack);
         currentTool = std::make_unique<SelectTool>(this);
     } else if (currentType == ToolType::RESIZE) {
@@ -827,53 +840,46 @@ void kPen::run() {
         SDL_RenderClear(renderer);
         SDL_FRect vf = getViewportF();
 
-        // Checkerboard behind canvas — drawn directly each frame so it always
-        // aligns precisely with the float viewport edge (no 1-px cache drift).
+        // Checkerboard behind canvas. Tiles are sized in canvas pixels (cs=8) so
+        // the pattern scales and pans with the canvas exactly. Each tile maps to
+        // cs*(vf.w/canvasW) window pixels, drawn with float rects so tile edges
+        // align precisely to canvas pixel boundaries at any zoom level.
         {
-            int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
-            const int cs = 12;
-            // Integer pixel bounds that fully cover the float canvas rect.
-            int sx0 = std::max((int)std::floor(vf.x) - 1, Toolbar::TB_W);
-            int sy0 = std::max((int)std::floor(vf.y) - 1, 0);
-            int sx1 = std::min((int)std::ceil(vf.x + vf.w) + 1, winW);
-            int sy1 = std::min((int)std::ceil(vf.y + vf.h) + 1, winH);
-
-            // Clip checkerboard to the exact float canvas rect so it never
-            // shows outside the canvas boundary.
+            // Clip to the canvas rect — ceil origin so checkerboard never bleeds
+            // outside; canvas texture composites on top via BLENDMODE_BLEND.
             SDL_Rect cbClip = {
                 (int)std::ceil(vf.x),
                 (int)std::ceil(vf.y),
-                (int)std::floor(vf.x + vf.w) - (int)std::ceil(vf.x),
-                (int)std::floor(vf.y + vf.h) - (int)std::ceil(vf.y)
+                (int)std::ceil(vf.x + vf.w) - (int)std::ceil(vf.x),
+                (int)std::ceil(vf.y + vf.h) - (int)std::ceil(vf.y)
             };
             SDL_RenderSetClipRect(renderer, &cbClip);
 
-            if (sx1 > sx0 && sy1 > sy0) {
-                // Tile origin anchored to the canvas float origin so pattern
-                // shifts smoothly with pan instead of snapping by whole pixels.
-                int originX = (int)std::floor(vf.x);
-                int originY = (int)std::floor(vf.y);
-                // First tile column/row that covers sx0, sy0
-                int startTX = originX + ((sx0 - originX) / cs) * cs;
-                int startTY = originY + ((sy0 - originY) / cs) * cs;
-                if (startTX > sx0) startTX -= cs;
-                if (startTY > sy0) startTY -= cs;
+            // cs = tile size in canvas pixels
+            const int cs = 8;
+            float tileW = vf.w / canvasW * cs;  // tile size in window pixels (float)
+            float tileH = vf.h / canvasH * cs;
 
-                for (int ty = startTY; ty < sy1; ty += cs) {
-                    for (int tx = startTX; tx < sx1; tx += cs) {
-                        int col = (tx - originX) / cs;
-                        int row = (ty - originY) / cs;
-                        // Handle negative tile indices correctly
-                        bool light = (((col % 2) + (row % 2) + 4) % 2) == 0;
+            if (tileW > 0.f && tileH > 0.f) {
+                // First tile whose top-left is <= vf.x / vf.y
+                int startCol = (int)std::floor((vf.x - vf.x) / tileW); // always 0
+                int startRow = 0;
+                // Number of tiles needed to cover the canvas width/height
+                int numCols = (int)std::ceil((float)canvasW / cs) + 1;
+                int numRows = (int)std::ceil((float)canvasH / cs) + 1;
+
+                for (int row = 0; row < numRows; ++row) {
+                    for (int col = 0; col < numCols; ++col) {
+                        bool light = ((col + row) % 2) == 0;
                         SDL_SetRenderDrawColor(renderer,
-                            light ? 200 : 160, light ? 200 : 160, light ? 200 : 160, 255);
-                        SDL_Rect cell = {
-                            std::max(tx, sx0), std::max(ty, sy0),
-                            std::min(tx + cs, sx1) - std::max(tx, sx0),
-                            std::min(ty + cs, sy1) - std::max(ty, sy0)
+                            light ? 200 : 190, light ? 200 : 190, light ? 200 : 190, 255);
+                        SDL_FRect cell = {
+                            vf.x + col * tileW,
+                            vf.y + row * tileH,
+                            tileW,
+                            tileH
                         };
-                        if (cell.w > 0 && cell.h > 0)
-                            SDL_RenderFillRect(renderer, &cell);
+                        SDL_RenderFillRectF(renderer, &cell);
                     }
                 }
             }

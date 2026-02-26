@@ -55,6 +55,22 @@ namespace DrawingUtils {
                 spans[row].push_back({x0, x1});
             }
         }
+        // Stamp a brush of the given pixel diameter at (cx, cy).
+        // For odd sizes: single circle with radius=(size-1)/2 centered on pixel.
+        // For even sizes: four circles with radius=size/2-1 at the 2x2 sub-pixel
+        // center, so the brush spans exactly 'size' pixels in each axis.
+        void addBrush(int cx, int cy, int size) {
+            if (size <= 1) { addCircle(cx, cy, 0); return; }
+            if (size % 2 == 1) {
+                addCircle(cx, cy, (size - 1) / 2);
+            } else {
+                int r = size / 2 - 1;
+                addCircle(cx,     cy,     r);
+                addCircle(cx + 1, cy,     r);
+                addCircle(cx,     cy + 1, r);
+                addCircle(cx + 1, cy + 1, r);
+            }
+        }
         void flush(SDL_Renderer* renderer) {
             for (int row = 0; row < canvasH; row++)
                 for (auto& seg : spans[row])
@@ -64,13 +80,12 @@ namespace DrawingUtils {
 
     void drawLine(SDL_Renderer* renderer, int x1, int y1, int x2, int y2, int size, int w, int h) {
         if (size <= 1) { SDL_RenderDrawLine(renderer, x1, y1, x2, y2); return; }
-        int radius = size / 2;
         SpanBuffer spans(w, h);
         int dx = std::abs(x2 - x1), dy = std::abs(y2 - y1);
         int sx = (x1 < x2) ? 1 : -1, sy = (y1 < y2) ? 1 : -1;
         int err = dx - dy;
         while (true) {
-            spans.addCircle(x1, y1, radius);
+            spans.addBrush(x1, y1, size);
             if (x1 == x2 && y1 == y2) break;
             int e2 = 2 * err;
             if (e2 > -dy) { err -= dy; x1 += sx; }
@@ -92,11 +107,10 @@ namespace DrawingUtils {
         if (left == right || top == bottom) return;
         int cx = (left+right)/2, cy = (top+bottom)/2;
         int rx = cx-left, ry = cy-top;
-        int brushRadius = size/2;
         long rx2 = (long)rx*rx, ry2 = (long)ry*ry;
         auto plot = [&](SpanBuffer& spans, int x, int y) {
-            spans.addCircle(cx+x, cy+y, brushRadius); spans.addCircle(cx-x, cy+y, brushRadius);
-            spans.addCircle(cx+x, cy-y, brushRadius); spans.addCircle(cx-x, cy-y, brushRadius);
+            spans.addBrush(cx+x, cy+y, size); spans.addBrush(cx-x, cy+y, size);
+            spans.addBrush(cx+x, cy-y, size); spans.addBrush(cx-x, cy-y, size);
         };
         SpanBuffer spans(w, h);
         int x = 0, y = ry;

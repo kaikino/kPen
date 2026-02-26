@@ -104,7 +104,7 @@ class kPen : public ICoordinateMapper {
     void stampForRedo(AbstractTool* tool);
     void undo();
     void redo();
-    void activateResizeTool(ToolType shapeType, SDL_Rect bounds,
+    void activateResizeTool(ToolType shapeType, SDL_Rect bounds, SDL_Rect origBounds,
                             int sx, int sy, int ex, int ey,
                             int brushSize, SDL_Color color);
 

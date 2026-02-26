@@ -10,8 +10,10 @@ static bool onCanvas(ICoordinateMapper* m, int cX, int cY) {
 void BrushTool::onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
     AbstractTool::onMouseDown(cX, cY, canvasRenderer, brushSize, color);
     if (onCanvas(mapper, cX, cY)) {
+        int cw, ch; mapper->getCanvasSize(&cw, &ch);
         SDL_SetRenderDrawColor(canvasRenderer, color.r, color.g, color.b, 255);
-        DrawingUtils::drawFillCircle(canvasRenderer, cX, cY, brushSize / 2);
+        // Use drawLine with identical endpoints so addBrush handles even/odd sizing correctly
+        DrawingUtils::drawLine(canvasRenderer, cX, cY, cX, cY, brushSize, cw, ch);
     }
 }
 
