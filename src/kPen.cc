@@ -674,7 +674,82 @@ void kPen::run() {
             if (e.type == SDL_FINGERDOWN) activeFingers++;
             if (e.type == SDL_FINGERUP)   activeFingers = std::max(0, activeFingers - 1);
 
+            // ── Second-finger tap detection ──
+            // macOS holds MOUSEBUTTONDOWN until the primary finger stops moving,
+            // so we detect the tap via FINGER events and synthesize the click ourselves.
+            if (e.type == SDL_FINGERDOWN) {
+                int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
+                tapFingerId    = e.tfinger.fingerId;
+                tapDownX       = e.tfinger.x * winW;
+                tapDownY       = e.tfinger.y * winH;
+                tapDownTime    = e.tfinger.timestamp;
+                tapPending     = true;
+                tapSawGesture  = false;
+            }
+            if (e.type == SDL_FINGERUP && tapPending && e.tfinger.fingerId == tapFingerId) {
+                tapPending = false;
+                int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
+                float upX = e.tfinger.x * winW;
+                float upY = e.tfinger.y * winH;
+                float dx = upX - tapDownX, dy = upY - tapDownY;
+                Uint32 dt = e.tfinger.timestamp - tapDownTime;
+                // Tap = short duration (<300ms), little movement (<10px), and
+                // cursor was moving (confirms a drag+tap, not a plain press+release)
+                if (dt < 300 && dx*dx + dy*dy < 100.f && tapSawGesture) {
+                    int tx = (int)upX, ty = (int)upY;
+
+                    // Toolbar tap — route through normal toolbar click path.
+                    // Don't set tapConsumed: let the real MOUSEBUTTONDOWN be suppressed
+                    // only for canvas taps; toolbar can safely handle a double-fire
+                    // because onMouseDown is guarded by inToolbar and returns false on miss.
+                    if (toolbar.inToolbar(tx, ty)) {
+                        if (toolbar.onMouseDown(tx, ty)) {
+                            toolbar.onMouseUp(tx, ty);
+                            tapConsumed = true;  // suppress the delayed real MOUSEBUTTONDOWN
+                            needsRedraw = true;
+                        }
+                        // if onMouseDown missed (returned false), leave tapConsumed=false
+                        // so the real MOUSEBUTTONDOWN can still fire normally
+                    } else {
+                        tapConsumed = true;
+                        // Canvas tap — use primary finger (mouse) position for draw coords
+                        int mx, my; SDL_GetMouseState(&mx, &my);
+                        int tapCX, tapCY; getCanvasCoords(mx, my, &tapCX, &tapCY);
+
+                        if (currentType == ToolType::RESIZE) {
+                            auto* rt = static_cast<ResizeTool*>(currentTool.get());
+                            if (!rt->isHit(tapCX, tapCY)) {
+                                withCanvas([&]{ rt->deactivate(renderer); });
+                                saveState(undoStack);
+                                currentTool.reset();
+                                setTool(originalType);
+                            }
+                        }
+                        if (currentType == ToolType::SELECT) {
+                            auto* st = static_cast<SelectTool*>(currentTool.get());
+                            if (st->isSelectionActive() && !st->isHit(tapCX, tapCY)) {
+                                bool dirty = st->isDirty();
+                                withCanvas([&]{ st->deactivate(renderer); });
+                                if (dirty) saveState(undoStack);
+                            }
+                        }
+
+                        withCanvas([&]{ currentTool->onMouseDown(tapCX, tapCY, renderer, toolbar.brushSize, toolbar.brushColor); });
+                        withCanvas([&]{ currentTool->onMouseUp  (tapCX, tapCY, renderer, toolbar.brushSize, toolbar.brushColor); });
+                        needsRedraw = true; overlayDirty = true;
+                    }
+                }
+            }
+            // Cancel tap if the second finger moves significantly before lifting
+            if (e.type == SDL_FINGERMOTION && tapPending && e.tfinger.fingerId == tapFingerId) {
+                int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
+                float mx = e.tfinger.x * winW - tapDownX;
+                float my = e.tfinger.y * winH - tapDownY;
+                if (mx*mx + my*my > 100.f) tapPending = false;
+            }
+
             // ── Pinch-to-zoom + two-finger pan ──
+            if (e.type == SDL_MULTIGESTURE && tapPending) { tapSawGesture = true; }
             if (e.type == SDL_MULTIGESTURE) {
                 // 3-finger gesture: suppress pan/zoom entirely so the real mouse
                 // events (which SDL maps to the primary finger) drive drawing normally.
@@ -719,21 +794,26 @@ void kPen::run() {
             }
 
             // Reset gesture tracking when fingers lift
-            if (e.type == SDL_FINGERUP && activeFingers == 0) {
+            if (e.type == SDL_FINGERUP && activeFingers <= 1) {
                 multiGestureActive = false;
                 pinchActive        = false;
-                viewScrolling      = false;
+                if (activeFingers == 0) {
+                    viewScrolling   = false;
+                    tapConsumed     = false;  // ensure stale tapConsumed never blocks a real click
+                }
             }
 
             int cX, cY;
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT
                 && !multiGestureActive) {
+                if (tapConsumed) { tapConsumed = false; continue; }
                 viewScrolling = false;
                 // Canvas edge resize handles take priority
                 if (canvasResizer.onMouseDown(e.button.x, e.button.y, canvasW, canvasH)) {
                     needsRedraw = true; continue;
                 }
                 if (toolbar.onMouseDown(e.button.x, e.button.y)) { needsRedraw = true; continue; }
+                if (toolbar.inToolbar(e.button.x, e.button.y)) { toolbar.notifyClickOutside(); continue; }
                 toolbar.notifyClickOutside();  // revert resize fields if focused
                 getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
 

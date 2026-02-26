@@ -81,6 +81,16 @@ class kPen : public ICoordinateMapper {
     float lastGestureCY      = 0.f;
     int   activeFingers      = 0;    // live count via FINGERDOWN/FINGERUP
 
+    // Second-finger tap detection — synthesizes a click when a quick tap lands
+    // while one finger is already moving (macOS delays/drops the MOUSEBUTTONDOWN).
+    SDL_FingerID tapFingerId   = 0;
+    float        tapDownX      = 0.f; // window-pixel position at FINGERDOWN
+    float        tapDownY      = 0.f;
+    Uint32       tapDownTime   = 0;
+    bool         tapPending    = false;
+    bool         tapSawGesture = false; // MULTIGESTURE fired while this tap was pending (confirms two-finger scenario)
+    bool         tapConsumed   = false; // suppress the delayed real MOUSEBUTTON events after a synthesized tap
+
     // Smooth zoom lerp target (only used when not actively scrolling)
     float zoomTarget = 1.f;
 
