@@ -5,7 +5,7 @@
 #include <vector>
 #include "DrawingUtils.h"
 
-enum class ToolType { BRUSH, LINE, RECT, CIRCLE, SELECT, FILL, RESIZE };
+enum class ToolType { BRUSH, ERASER, LINE, RECT, CIRCLE, SELECT, FILL, RESIZE };
 
 class ICoordinateMapper {
   public:
@@ -134,6 +134,14 @@ class ResizeTool : public TransformTool {
 // ── Other tools ───────────────────────────────────────────────────────────────
 
 class BrushTool : public AbstractTool {
+  public:
+    using AbstractTool::AbstractTool;
+    void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color) override;
+};
+
+class EraserTool : public AbstractTool {
   public:
     using AbstractTool::AbstractTool;
     void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;

@@ -129,7 +129,12 @@ void ShapeTool::onOverlayRender(SDL_Renderer* r) {
     if (curX == startX && curY == startY) return;
 
     int cw, ch; mapper->getCanvasSize(&cw, &ch);
-    SDL_SetRenderDrawColor(r, cachedColor.r, cachedColor.g, cachedColor.b, 255);
+    SDL_Color drawColor = cachedColor;
+    if (drawColor.a == 0) {
+        drawColor = { 100, 149, 237, 128 }; // CornflowerBlue with 50% alpha
+    }
+
+    SDL_SetRenderDrawColor(r, drawColor.r, drawColor.g, drawColor.b, drawColor.a);
     drawShapeCanvasSpace(r, type, startX, startY, curX, curY, cachedBrushSize, cw, ch, filled);
 }
 

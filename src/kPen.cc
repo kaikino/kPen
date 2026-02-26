@@ -261,6 +261,7 @@ void kPen::setTool(ToolType t) {
     };
     switch (t) {
         case ToolType::BRUSH:  currentTool = std::make_unique<BrushTool>(this); break;
+        case ToolType::ERASER: currentTool = std::make_unique<EraserTool>(this); break;
         case ToolType::LINE:   currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE,   cb, false); break;
         case ToolType::RECT:   currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT,   cb, toolbar.fillShape); break;
         case ToolType::CIRCLE: currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE, cb, toolbar.fillShape); break;
@@ -592,6 +593,7 @@ void kPen::run() {
                         if (originalType == ToolType::CIRCLE) toolbar.fillShape = !toolbar.fillShape;
                         setTool(ToolType::CIRCLE); needsRedraw = true; break;
                     case SDLK_s: setTool(ToolType::SELECT); needsRedraw = true; break;
+                    case SDLK_e: setTool(ToolType::ERASER); needsRedraw = true; break;
                     case SDLK_f: setTool(ToolType::FILL);   needsRedraw = true; break;
                     case SDLK_BACKSPACE:
                     case SDLK_DELETE:

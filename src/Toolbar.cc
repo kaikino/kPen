@@ -5,10 +5,10 @@
 #include <algorithm>
 
 // ── ToolTypes ────────────────────────────────────────────────────────────────
-constexpr int toolGrid[3][3] = {{0,1,-1},{2,3,-1},{4,5,-1}};
+constexpr int toolGrid[3][3] = {{0,1,2},{3,4,-1},{5,6,-1}};
 constexpr ToolType toolTypes[] = {
-    ToolType::BRUSH, ToolType::LINE, ToolType::RECT,
-    ToolType::CIRCLE, ToolType::SELECT, ToolType::FILL
+    ToolType::BRUSH, ToolType::LINE, ToolType::ERASER,
+    ToolType::RECT, ToolType::CIRCLE, ToolType::SELECT, ToolType::FILL
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,10 +75,27 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
     int s = ICON_SIZE/2 - 3;
     switch (t) {
         case ToolType::BRUSH: {
-            for (int i=-s; i<=s; i++) SDL_RenderDrawPoint(renderer, cx+i,   cy+i);
-            for (int i=-s; i<=s; i++) SDL_RenderDrawPoint(renderer, cx+i+1, cy+i);
-            SDL_Rect tip = {cx+s-1, cy+s-1, 3, 3};
-            SDL_RenderFillRect(renderer, &tip);
+            // Solid circle with radius 4 (8x8 footprint)
+            const int r = 4;
+            for (int dy = -r; dy <= r; dy++) {
+                int dx = (int)std::sqrt((float)(r * r - dy * dy) + 0.5f);
+                SDL_RenderDrawLine(renderer, cx - dx, cy + dy, cx + dx, cy + dy);
+            }
+            break;
+        }
+        case ToolType::ERASER: {
+            // Dashed hollow circle with radius 4
+            const int r = 4;
+            // Using a larger degree step (45 degrees) for longer visible dashes/gaps
+            for (int deg = 0; deg < 360; deg++) {
+                // Draws segments of 45 degrees followed by a 45-degree gap
+                if ((deg / 45) % 2 == 0) {
+                    float a = (22.5 + deg) * (float)M_PI / 180.f;
+                    SDL_RenderDrawPoint(renderer, 
+                        cx + (int)std::round(r * std::cos(a)),
+                        cy + (int)std::round(r * std::sin(a)));
+                }
+            }
             break;
         }
         case ToolType::LINE: {
@@ -332,8 +349,16 @@ void Toolbar::draw() {
         int col=i%3, row=i/3;
         int sx=TB_PAD+col*stride, sy=psy+row*stride;
         SDL_Rect r = {sx, sy, sz, sz};
-        SDL_SetRenderDrawColor(renderer, PRESETS[i].r, PRESETS[i].g, PRESETS[i].b, 255);
-        SDL_RenderFillRect(renderer, &r);
+        if (i == TRANSPARENT_PRESET_IDX) {
+            // White background with a diagonal red line — "no color / transparent"
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+            SDL_RenderFillRect(renderer, &r);
+            SDL_SetRenderDrawColor(renderer, 200, 30, 30, 255);
+            SDL_RenderDrawLine(renderer, sx, sy+sz-1, sx+sz-1, sy);
+        } else {
+            SDL_SetRenderDrawColor(renderer, PRESETS[i].r, PRESETS[i].g, PRESETS[i].b, 255);
+            SDL_RenderFillRect(renderer, &r);
+        }
         if (i == selectedPresetSlot) {
             SDL_Rect outer={sx-2,sy-2,sz+4,sz+4}; SDL_SetRenderDrawColor(renderer,255,255,255,255); SDL_RenderDrawRect(renderer,&outer);
             SDL_Rect inner={sx-1,sy-1,sz+2,sz+2}; SDL_SetRenderDrawColor(renderer,0,0,0,255);       SDL_RenderDrawRect(renderer,&inner);

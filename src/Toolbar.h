@@ -16,8 +16,9 @@ class Toolbar {
     static constexpr int ICON_GAP  = 3;
     static constexpr int NUM_CUSTOM = 9;
 
+    static constexpr int TRANSPARENT_PRESET_IDX = 0;
     static constexpr SDL_Color PRESETS[27] = {
-        {255,255,255,255},{0,0,0,255},      {64,64,64,255},
+        {0,0,0,0},        {0,0,0,255},       {255,255,255,255},
         {128,128,128,255},{180,180,180,255},{220,220,220,255},
         {101,55,0,255},   {160,100,40,255}, {210,170,110,255},
         {139,0,0,255},    {240,40,50,255},  {255,120,100,255},

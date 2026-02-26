@@ -7,25 +7,36 @@ static bool onCanvas(ICoordinateMapper* m, int cX, int cY) {
     return cX >= 0 && cX < cw && cY >= 0 && cY < ch;
 }
 
+static void brushSetColor(SDL_Renderer* r, SDL_Color color) {
+    if (color.a == 0) {
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+    } else {
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(r, color.r, color.g, color.b, 255);
+    }
+}
+static void brushRestoreBlend(SDL_Renderer* r, SDL_Color color) {
+    if (color.a == 0) SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+}
+
 void BrushTool::onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
     AbstractTool::onMouseDown(cX, cY, canvasRenderer, brushSize, color);
     if (onCanvas(mapper, cX, cY)) {
         int cw, ch; mapper->getCanvasSize(&cw, &ch);
-        SDL_SetRenderDrawColor(canvasRenderer, color.r, color.g, color.b, 255);
-        // Use drawLine with identical endpoints so addBrush handles even/odd sizing correctly
+        brushSetColor(canvasRenderer, color);
         DrawingUtils::drawLine(canvasRenderer, cX, cY, cX, cY, brushSize, cw, ch);
+        brushRestoreBlend(canvasRenderer, color);
     }
 }
 
 void BrushTool::onMouseMove(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
     if (isDrawing) {
-        // Only draw the segment if at least one endpoint is on the canvas.
-        // drawLine itself clips to the canvas texture bounds, so we just need
-        // to avoid calling it when both points are entirely off-canvas.
         if (onCanvas(mapper, cX, cY) || onCanvas(mapper, lastX, lastY)) {
             int cw, ch; mapper->getCanvasSize(&cw, &ch);
-            SDL_SetRenderDrawColor(canvasRenderer, color.r, color.g, color.b, 255);
+            brushSetColor(canvasRenderer, color);
             DrawingUtils::drawLine(canvasRenderer, lastX, lastY, cX, cY, brushSize, cw, ch);
+            brushRestoreBlend(canvasRenderer, color);
         }
         lastX = cX;
         lastY = cY;

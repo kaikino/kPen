@@ -19,7 +19,7 @@ bool ResizeTool::onMouseUp  (int cX, int cY, SDL_Renderer* r, int brushSize, SDL
 // rx0/rx1 remap startX/endX proportionally into b; exact when b==origBounds.
 
 void ResizeTool::renderShape(SDL_Renderer* r, const SDL_Rect& b, int bs, SDL_Color col, int clipW, int clipH) const {
-    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, 255);
+    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
     int li = (bs - 1) / 2;  // left/top inset  (asymmetric for even brushes)
     int ri = bs / 2;         // right/bottom inset
 
@@ -72,7 +72,11 @@ void ResizeTool::renderShape(SDL_Renderer* r, const SDL_Rect& b, int bs, SDL_Col
 
 void ResizeTool::onOverlayRender(SDL_Renderer* r) {
     int cw, ch; mapper->getCanvasSize(&cw, &ch);
-    renderShape(r, currentBounds, shapeBrushSize, shapeColor, cw, ch);
+    SDL_Color drawColor = shapeColor;
+    if (drawColor.a == 0) {
+        drawColor = { 100, 149, 237, 128 }; // CornflowerBlue with 50% alpha
+    }
+    renderShape(r, currentBounds, shapeBrushSize, drawColor, cw, ch);
 }
 
 void ResizeTool::onPreviewRender(SDL_Renderer* r, int, SDL_Color) {
