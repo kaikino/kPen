@@ -108,12 +108,12 @@ class ResizeTool : public TransformTool {
     ToolType  shapeType;
     SDL_Rect  origBounds;
     int       shapeStartX, shapeStartY, shapeEndX, shapeEndY;
-    int       shapeBrushSize;
     SDL_Color shapeColor;
 
     void renderShape(SDL_Renderer* r, const SDL_Rect& bounds,
                      int bs, SDL_Color col, int clipW = 0, int clipH = 0) const;
   public:
+    int       shapeBrushSize;
     bool      shapeFilled;
     ResizeTool(ICoordinateMapper* m, ToolType shapeType, SDL_Rect bounds, SDL_Rect origBounds,
                int sx, int sy, int ex, int ey, int brushSize, SDL_Color color, bool filled = false);
@@ -127,6 +127,7 @@ class ResizeTool : public TransformTool {
     bool hasOverlayContent() override { return true; }
     bool isHit(int cX, int cY) const  { return TransformTool::isHit(cX, cY); }
     SDL_Rect getBounds() const        { return currentBounds; }
+    bool willRender() const;  // true if the shape will produce visible pixels at current bounds/brushSize
     std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;
 };
 

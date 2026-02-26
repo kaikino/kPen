@@ -101,3 +101,21 @@ std::vector<uint32_t> ResizeTool::getFloatingPixels(SDL_Renderer* r) const {
     SDL_DestroyTexture(tmp);
     return pixels;
 }
+
+bool ResizeTool::willRender() const {
+    const SDL_Rect& b = currentBounds;
+    if (b.w <= 0 || b.h <= 0) return false;
+    if (shapeType == ToolType::LINE) return true;  // line always renders if bounds valid
+    int bs = shapeBrushSize;
+    if (shapeFilled) {
+        // filled shapes render as long as bounds are non-empty
+        return b.w >= 1 && b.h >= 1;
+    } else {
+        // stroked shapes need room for the brush insets on both sides
+        int li = (bs - 1) / 2, ri = bs / 2;
+        // Using b directly as the rect passed to renderShape: cx0=li, cx1=b.w-1-ri
+        int cx1w = b.w - 1 - ri - li;  // cx1 - cx0 = (b.w-1-ri) - li
+        int cy1h = b.h - 1 - ri - li;
+        return cx1w >= 0 && cy1h >= 0;
+    }
+}

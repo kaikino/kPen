@@ -248,7 +248,8 @@ void kPen::setTool(ToolType t) {
     if (currentTool) {
         withCanvas([&]{ currentTool->deactivate(renderer); });
         if (currentType == ToolType::RESIZE) {
-            saveState(undoStack);
+            if (static_cast<ResizeTool*>(currentTool.get())->willRender())
+                saveState(undoStack);
         } else if (currentType == ToolType::SELECT) {
             if (static_cast<SelectTool*>(currentTool.get())->isDirty())
                 saveState(undoStack);
@@ -512,8 +513,10 @@ void kPen::pasteFromClipboard() {
         }
         currentTool = std::make_unique<SelectTool>(this);
     } else if (currentType == ToolType::RESIZE) {
+        auto* rt_ = static_cast<ResizeTool*>(currentTool.get());
+        bool renders_ = rt_->willRender();
         withCanvas([&]{ currentTool->deactivate(renderer); });
-        saveState(undoStack);
+        if (renders_) saveState(undoStack);
         currentTool = std::make_unique<SelectTool>(this);
     } else {
         setTool(ToolType::SELECT);
@@ -596,13 +599,29 @@ void kPen::run() {
                         needsRedraw = true;
                         break;
                     case SDLK_UP:
-                        toolbar.brushSize = std::min(99, toolbar.brushSize + 1);
+                        if (currentType == ToolType::RESIZE) {
+                            auto* rt = static_cast<ResizeTool*>(currentTool.get());
+                            rt->shapeBrushSize = std::min(99, rt->shapeBrushSize + 1);
+                            toolbar.brushSize  = rt->shapeBrushSize;
+                        } else {
+                            toolbar.brushSize = std::min(99, toolbar.brushSize + 1);
+                        }
                         toolbar.syncBrushSize();
-                        needsRedraw = true; break;
+                        needsRedraw = true;
+                        if (currentTool->hasOverlayContent()) overlayDirty = true;
+                        break;
                     case SDLK_DOWN:
-                        toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
+                        if (currentType == ToolType::RESIZE) {
+                            auto* rt = static_cast<ResizeTool*>(currentTool.get());
+                            rt->shapeBrushSize = std::max(1, rt->shapeBrushSize - 1);
+                            toolbar.brushSize  = rt->shapeBrushSize;
+                        } else {
+                            toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
+                        }
                         toolbar.syncBrushSize();
-                        needsRedraw = true; break;
+                        needsRedraw = true;
+                        if (currentTool->hasOverlayContent()) overlayDirty = true;
+                        break;
                     case SDLK_z:
                         if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) { undo(); needsRedraw = true; }
                         break;
@@ -655,7 +674,15 @@ void kPen::run() {
                 #endif
 
                 if (toolbar.onMouseWheel(mx, my, precY)) {
+                    if (currentType == ToolType::RESIZE && toolbar.inToolbar(mx, my)) {
+                        // Redirect brush size change to the active ResizeTool
+                        auto* rt = static_cast<ResizeTool*>(currentTool.get());
+                        rt->shapeBrushSize = std::max(1, std::min(99, toolbar.brushSize));
+                        toolbar.brushSize = rt->shapeBrushSize;
+                        toolbar.syncBrushSize();
+                    }
                     needsRedraw = true;
+                    if (currentTool->hasOverlayContent()) overlayDirty = true;
                 } else if (toolbar.inToolbar(mx, my)) {
                     // Toolbar region: consumed, don't touch canvas
                 } else if (SDL_GetModState() & (KMOD_GUI | KMOD_CTRL)) {
@@ -719,8 +746,9 @@ void kPen::run() {
                         if (currentType == ToolType::RESIZE) {
                             auto* rt = static_cast<ResizeTool*>(currentTool.get());
                             if (!rt->isHit(tapCX, tapCY)) {
+                                bool renders = rt->willRender();
                                 withCanvas([&]{ rt->deactivate(renderer); });
-                                saveState(undoStack);
+                                if (renders) saveState(undoStack);
                                 currentTool.reset();
                                 setTool(originalType);
                             }
@@ -735,6 +763,7 @@ void kPen::run() {
                         }
 
                         withCanvas([&]{ currentTool->onMouseDown(tapCX, tapCY, renderer, toolbar.brushSize, toolbar.brushColor); });
+                        if (currentType == ToolType::FILL) saveState(undoStack);
                         withCanvas([&]{ currentTool->onMouseUp  (tapCX, tapCY, renderer, toolbar.brushSize, toolbar.brushColor); });
                         needsRedraw = true; overlayDirty = true;
                     }
@@ -830,8 +859,9 @@ void kPen::run() {
                 if (currentType == ToolType::RESIZE) {
                     auto* rt = static_cast<ResizeTool*>(currentTool.get());
                     if (!rt->isHit(cX, cY)) {
+                        bool renders = rt->willRender();
                         withCanvas([&]{ rt->deactivate(renderer); });
-                        saveState(undoStack);
+                        if (renders) saveState(undoStack);
                         currentTool.reset(); // already saved; skip setTool's deactivate+save
                         setTool(originalType);
                         // Fall through so this click also starts drawing the next shape
@@ -839,6 +869,7 @@ void kPen::run() {
                 }
 
                 withCanvas([&]{ currentTool->onMouseDown(cX, cY, renderer, toolbar.brushSize, toolbar.brushColor); });
+                if (currentType == ToolType::FILL) saveState(undoStack);
                 needsRedraw = true; overlayDirty = true;
             }
 
@@ -911,6 +942,9 @@ void kPen::run() {
         // 1. Overlay
         bool hasOverlay = currentTool->hasOverlayContent();
         if (overlayDirty) {
+            // Sync cachedBrushSize/cachedColor before redrawing the overlay
+            // so brush-size changes take effect immediately.
+            currentTool->onPreviewRender(renderer, toolbar.brushSize, toolbar.brushColor);
             SDL_SetRenderTarget(renderer, overlay);
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
             SDL_RenderClear(renderer);
