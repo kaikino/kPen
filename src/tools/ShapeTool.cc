@@ -39,17 +39,24 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
         };
         sx = isx; sy = isy; ex = iex; ey = iey;
     } else {
-        // Rect/circle: stroke is contained within the drag extent.
-        // Skip shapes too small to draw (brush would collapse the interior).
+        // Rect/circle: skip shapes too small to draw.
         int dw = std::abs(cX - startX);
         int dh = std::abs(cY - startY);
         if (dw < brushSize || dh < brushSize) { isDrawing = false; return false; }
-        bounds = origBounds = {
-            std::min(startX, cX),
-            std::min(startY, cY),
-            dw,
-            dh
-        };
+        int minX = std::min(startX, cX), minY = std::min(startY, cY);
+        if (type == ToolType::CIRCLE) {
+            int cx0 = minX + li, cy0 = minY + li;
+            int cx1 = minX + dw - 1 - ri, cy1 = minY + dh - 1 - ri;
+            if (cx1 < cx0 || cy1 < cy0) { isDrawing = false; return false; }
+            SDL_Rect cb = DrawingUtils::getOvalCenterBounds(cx0, cy0, cx1, cy1);
+            if (cb.w == 0 && cb.h == 0) { isDrawing = false; return false; }
+            bounds = origBounds = {
+                cb.x - li, cb.y - li,
+                cb.w + brushSize, cb.h + brushSize
+            };
+        } else {
+            bounds = origBounds = { minX, minY, dw, dh };
+        }
     }
     isDrawing = false;
 
@@ -124,9 +131,26 @@ void ShapeTool::onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color)
 
     if (type == ToolType::LINE) return;  // line shows the stroke itself, no bounding box while drawing
 
+    int li = (brushSize - 1) / 2;
+    int ri = brushSize / 2;
+    int minX = std::min(startX, curX), minY = std::min(startY, curY);
+    int dw = std::abs(curX - startX),  dh = std::abs(curY - startY);
+
+    int bx, by, bx2, by2;
+    if (type == ToolType::CIRCLE) {
+        int cx0 = minX + li, cy0 = minY + li;
+        int cx1 = minX + dw - 1 - ri, cy1 = minY + dh - 1 - ri;
+        if (cx1 < cx0 || cy1 < cy0) return;
+        SDL_Rect cb = DrawingUtils::getOvalCenterBounds(cx0, cy0, cx1, cy1);
+        bx = cb.x - li; by = cb.y - li;
+        bx2 = cb.x + cb.w + ri + 1; by2 = cb.y + cb.h + ri + 1;
+    } else {
+        bx = minX; by = minY; bx2 = minX + dw; by2 = minY + dh;
+    }
+
     int wx0, wy0, wx1, wy1;
-    mapper->getWindowCoords(std::min(startX, curX), std::min(startY, curY), &wx0, &wy0);
-    mapper->getWindowCoords(std::max(startX, curX), std::max(startY, curY), &wx1, &wy1);
+    mapper->getWindowCoords(bx,  by,  &wx0, &wy0);
+    mapper->getWindowCoords(bx2, by2, &wx1, &wy1);
     SDL_Rect outline = { wx0, wy0, wx1 - wx0, wy1 - wy0 };
     DrawingUtils::drawMarchingRect(r, &outline);
 }

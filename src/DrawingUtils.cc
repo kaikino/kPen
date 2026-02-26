@@ -109,8 +109,14 @@ namespace DrawingUtils {
         int rx = cx-left, ry = cy-top;
         long rx2 = (long)rx*rx, ry2 = (long)ry*ry;
         auto plot = [&](SpanBuffer& spans, int x, int y) {
-            spans.addBrush(cx+x, cy+y, size); spans.addBrush(cx-x, cy+y, size);
-            spans.addBrush(cx+x, cy-y, size); spans.addBrush(cx-x, cy-y, size);
+            // Clamp brush centers to the oval's bounding box so the stroke never
+            // bleeds outside the region the caller reserved for it.
+            auto clampX = [&](int px){ return std::max(left, std::min(right, px)); };
+            auto clampY = [&](int py){ return std::max(top,  std::min(bottom, py)); };
+            spans.addBrush(clampX(cx+x), clampY(cy+y), size);
+            spans.addBrush(clampX(cx-x), clampY(cy+y), size);
+            spans.addBrush(clampX(cx+x), clampY(cy-y), size);
+            spans.addBrush(clampX(cx-x), clampY(cy-y), size);
         };
         SpanBuffer spans(w, h);
         int x = 0, y = ry;
@@ -128,6 +134,39 @@ namespace DrawingUtils {
             else { x++; ddx += 2*ry2; d2 += ddx - ddy + rx2; }
         }
         spans.flush(renderer);
+    }
+
+    SDL_Rect getOvalCenterBounds(int x0, int y0, int x1, int y1) {
+        int left = std::min(x0,x1), top = std::min(y0,y1);
+        int right = std::max(x0,x1), bottom = std::max(y0,y1);
+        if (left == right || top == bottom) return {x0, y0, 0, 0};
+        int cx = (left+right)/2, cy = (top+bottom)/2;
+        int rx = cx-left, ry = cy-top;
+        long rx2 = (long)rx*rx, ry2 = (long)ry*ry;
+        int minCX = cx, maxCX = cx, minCY = cy, maxCY = cy;
+        auto track = [&](int x, int y) {
+            int pxL = std::max(left,  std::min(right,  cx-x));
+            int pxR = std::max(left,  std::min(right,  cx+x));
+            int pyT = std::max(top,   std::min(bottom, cy-y));
+            int pyB = std::max(top,   std::min(bottom, cy+y));
+            minCX = std::min(minCX, pxL); maxCX = std::max(maxCX, pxR);
+            minCY = std::min(minCY, pyT); maxCY = std::max(maxCY, pyB);
+        };
+        int x = 0, y = ry;
+        long d1 = ry2 - rx2*ry + rx2/4;
+        long ddx = 2*ry2*x, ddy = 2*rx2*y;
+        while (ddx < ddy) {
+            track(x, y); x++; ddx += 2*ry2;
+            if (d1 < 0) { d1 += ddx + ry2; }
+            else { y--; ddy -= 2*rx2; d1 += ddx - ddy + ry2; }
+        }
+        long d2 = ry2*((long)x*x+x) + rx2*((long)(y-1)*(y-1)) - rx2*ry2;
+        while (y >= 0) {
+            track(x, y); y--; ddy -= 2*rx2;
+            if (d2 > 0) { d2 += rx2 - ddy; }
+            else { x++; ddx += 2*ry2; d2 += ddx - ddy + rx2; }
+        }
+        return { minCX, minCY, maxCX - minCX, maxCY - minCY };
     }
 
     void drawMarchingRect(SDL_Renderer* renderer, const SDL_Rect* rect) {
