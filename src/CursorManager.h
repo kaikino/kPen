@@ -52,6 +52,7 @@ private:
     SDL_Cursor* curBucket   = nullptr;  // fill tool — rebuilt on color change
     SDL_Cursor* curBrush    = nullptr;  // rebuilt on change
     SDL_Cursor* curEraser   = nullptr;  // rebuilt on change
+    SDL_Cursor* curPick     = nullptr;  // eyedropper — built once in init()
 
     // 8 rotated resize-arrow cursors (slots 0–7 = 0°, 45°, 90°, … 315°).
     // Slot i points in direction i*45° clockwise from North (up).

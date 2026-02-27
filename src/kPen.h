@@ -2,6 +2,7 @@
 #include <SDL2/SDL.h>
 #include <vector>
 #include <memory>
+#include <string>
 #include "Tools.h"
 #include "Toolbar.h"
 #include "CanvasResizer.h"

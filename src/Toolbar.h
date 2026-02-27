@@ -15,6 +15,7 @@ class Toolbar {
     static constexpr int ICON_SIZE = 24;
     static constexpr int ICON_GAP  = 3;
     static constexpr int NUM_CUSTOM = 9;
+    // PICK tool is in row 3 col 0 (below SELECT/FILL row)
 
     static constexpr int TRANSPARENT_PRESET_IDX = 0;
     static constexpr SDL_Color PRESETS[27] = {

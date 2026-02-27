@@ -423,6 +423,81 @@ void CursorManager::buildBrushCursors(ICoordinateMapper* mapper, int brushSize, 
     curEraser=makeColorCursor(eb.data(),dim,dim,hotX,hotY);
 }
 
+// ── Eyedropper / pick cursor ──────────────────────────────────────────────────
+//
+// Classic eyedropper: diagonal tube body (NE→SW), small square cap at the top,
+// angled nib at the bottom-left. The hotspot is the very tip (bottom-left pixel).
+//
+// Bitmap is 22×22. The dropper body runs diagonally from (16,2) down to (6,12).
+// The tip nib extends to (3,15). Hotspot = (3,15).
+//
+//  ....XXXX......................
+//  ...XXXXXXX....................
+//  ..XXXXXXXXX...................
+//  ...XXXXXXXXX..................
+//  ....XXXXXXXX..................
+//  .....XXXXXXX..................
+//  ......XXXXXXX.................
+//  .......XXXXXXX................
+//  ........XXXXXXX...............
+//  .........XXXXXXX..............
+//  ..........XXXXXX..............
+//  ...........XXXX...............
+//  ..........XXXX................
+//  .........XXX..................
+//  ........XX....................
+//  .......X......................  ← hotspot (tip)
+
+static SDL_Cursor* makePickCursor() {
+    const int W = 22, H = 22;
+    Bitmap b(W, H);
+
+    // Body: 2-px wide diagonal tube (SW direction)
+    // We trace a line from (16,2) to (7,11), drawing 2 pixels wide
+    for (int i = 0; i <= 9; i++) {
+        int x = 16 - i, y = 2 + i;
+        b.set(x,   y,   C_WHITE);
+        b.set(x-1, y,   C_WHITE);
+        b.set(x,   y+1, C_WHITE);
+    }
+
+    // Cap at top-right: 4×3 filled rectangle
+    for (int dy = 0; dy < 3; dy++)
+        for (int dx = 0; dx < 5; dx++)
+            b.set(13 + dx, dy, C_WHITE);
+
+    // Nib: tapered tip pointing to bottom-left
+    b.set(7, 12, C_WHITE);
+    b.set(6, 12, C_WHITE);
+    b.set(6, 13, C_WHITE);
+    b.set(5, 13, C_WHITE);
+    b.set(5, 14, C_WHITE);
+    b.set(4, 14, C_WHITE);
+    b.set(4, 15, C_WHITE);
+    b.set(3, 15, C_WHITE); // tip pixel (hotspot)
+
+    // Black outline around everything for visibility
+    b.outline(C_BLACK);
+
+    // Re-draw inner white after outline (outline may have overwritten some)
+    for (int i = 0; i <= 9; i++) {
+        int x = 16 - i, y = 2 + i;
+        b.set(x,   y,   C_WHITE);
+        b.set(x-1, y,   C_WHITE);
+        b.set(x,   y+1, C_WHITE);
+    }
+    for (int dy = 0; dy < 3; dy++)
+        for (int dx = 0; dx < 5; dx++)
+            b.set(13 + dx, dy, C_WHITE);
+    b.set(7, 12, C_WHITE); b.set(6, 12, C_WHITE);
+    b.set(6, 13, C_WHITE); b.set(5, 13, C_WHITE);
+    b.set(5, 14, C_WHITE); b.set(4, 14, C_WHITE);
+    b.set(4, 15, C_WHITE); b.set(3, 15, C_WHITE);
+
+    // Hotspot at tip (bottom-left pixel of the nib)
+    return b.toCursor(3, 15);
+}
+
 // ── Constructor / destructor ──────────────────────────────────────────────────
 
 CursorManager::CursorManager() {
@@ -440,6 +515,7 @@ void CursorManager::init() {
     curSizeNWSE = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENWSE);
     curSizeNESW = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENESW);
     curBucket   = makeBucketCursor({100, 149, 237, 255}); // default cornflower blue
+    curPick     = makePickCursor();
 
     // Pre-build resize cursors for the default (zero) rotation so they are
     // immediately available before any shape is drawn.
@@ -459,6 +535,7 @@ CursorManager::~CursorManager() {
     if(curBucket) SDL_FreeCursor(curBucket);
     if(curBrush)  SDL_FreeCursor(curBrush);
     if(curEraser) SDL_FreeCursor(curEraser);
+    if(curPick)   SDL_FreeCursor(curPick);
     for (int i = 0; i < NUM_RESIZE_SLOTS; i++)
         if (curResize[i]) SDL_FreeCursor(curResize[i]);
     if (curRotate) SDL_FreeCursor(curRotate);
@@ -546,6 +623,9 @@ void CursorManager::update(ICoordinateMapper* mapper,
         case ToolType::FILL:
             buildBucketCursor(brushColor);
             if(curBucket) setCursor(curBucket);
+            break;
+        case ToolType::PICK:
+            if(curPick) setCursor(curPick);
             break;
         case ToolType::SELECT: {
             auto* st = static_cast<SelectTool*>(currentTool);

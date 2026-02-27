@@ -272,6 +272,20 @@ void kPen::setTool(ToolType t) {
         case ToolType::CIRCLE: currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE, cb, toolbar.fillCircle); break;
         case ToolType::SELECT: currentTool = std::make_unique<SelectTool>(this); break;
         case ToolType::FILL:   currentTool = std::make_unique<FillTool>(this); break;
+        case ToolType::PICK: {
+            auto pickCb = [this](SDL_Color picked) {
+                // If a custom swatch is selected, update it with the picked color.
+                // If a preset swatch is selected, deselect it.
+                // Always apply the picked color as the active brush color.
+                if (toolbar.selectedCustomSlot >= 0)
+                    toolbar.customColors[toolbar.selectedCustomSlot] = picked;
+                toolbar.selectedPresetSlot = -1;
+                toolbar.brushColor = picked;
+                Toolbar::rgbToHsv(picked, toolbar.hue, toolbar.sat, toolbar.val);
+            };
+            currentTool = std::make_unique<PickTool>(this, pickCb);
+            break;
+        }
         case ToolType::RESIZE: break; // only created via activateResizeTool
     }
 }
@@ -866,6 +880,7 @@ void kPen::run() {
                         if (originalType == ToolType::ERASER) toolbar.squareEraser = !toolbar.squareEraser;
                         setTool(ToolType::ERASER); needsRedraw = true; break;
                     case SDLK_f: setTool(ToolType::FILL);   needsRedraw = true; break;
+                    case SDLK_i: setTool(ToolType::PICK);   needsRedraw = true; break;
                     case SDLK_BACKSPACE:
                     case SDLK_DELETE:
                         deleteSelection();

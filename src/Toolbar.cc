@@ -5,10 +5,15 @@
 #include <algorithm>
 
 // ── ToolTypes ────────────────────────────────────────────────────────────────
-constexpr int toolGrid[3][3] = {{0,1,2},{3,4,-1},{5,6,-1}};
+// Grid layout (row, col):
+//   Row 0: BRUSH    LINE    ERASER
+//   Row 1: RECT     CIRCLE  
+//   Row 2: PICK     FILL    SELECT
+constexpr int toolGrid[3][3] = {{0,1,2},{3,4,-1},{5,6,7}};
 constexpr ToolType toolTypes[] = {
     ToolType::BRUSH, ToolType::LINE, ToolType::ERASER,
-    ToolType::RECT, ToolType::CIRCLE, ToolType::SELECT, ToolType::FILL
+    ToolType::RECT, ToolType::CIRCLE, ToolType::SELECT,
+    ToolType::FILL, ToolType::PICK
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -191,8 +196,34 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
             SDL_RenderDrawLine(renderer, dx-1, dy+4, dx+1, dy+4);
             break;
         }
-    }
-}
+        case ToolType::PICK: {
+            // Eyedropper icon matching the cursor shape:
+            //   – wide rectangular cap at top-right
+            //   – 2px-wide diagonal tube body (NE→SW)
+            //   – tapered single-pixel nib at bottom-left
+
+            // Rectangular cap: 5 wide × 3 tall at top-right
+            int capX = cx + 1, capY = cy - 8;
+            SDL_Rect cap = { capX, capY, 5, 3 };
+            SDL_RenderFillRect(renderer, &cap);
+
+            // Body: 2px-wide diagonal tube, 9 steps SW from bottom of cap
+            int ax = cx + 3, ay = cy - 5;
+            for (int i = 0; i < 9; i++) {
+                SDL_RenderDrawPoint(renderer, ax - i,     ay + i);
+                SDL_RenderDrawPoint(renderer, ax - i - 1, ay + i);
+            }
+
+            // Nib: tapered tip, 4 steps continuing SW, narrowing to 1px
+            int nx = ax - 9, ny = ay + 9;
+            SDL_RenderDrawPoint(renderer, nx,     ny);
+            SDL_RenderDrawPoint(renderer, nx - 1, ny);
+            SDL_RenderDrawPoint(renderer, nx - 1, ny + 1);
+            SDL_RenderDrawPoint(renderer, nx - 2, ny + 2); // single-pixel tip
+            break;
+        }
+    }  // end switch
+}  // end drawIcon
 
 // ── Full draw ─────────────────────────────────────────────────────────────────
 

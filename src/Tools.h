@@ -5,7 +5,7 @@
 #include <vector>
 #include "DrawingUtils.h"
 
-enum class ToolType { BRUSH, ERASER, LINE, RECT, CIRCLE, SELECT, FILL, RESIZE };
+enum class ToolType { BRUSH, ERASER, LINE, RECT, CIRCLE, SELECT, FILL, PICK, RESIZE };
 
 class ICoordinateMapper {
   public:
@@ -201,4 +201,16 @@ class FillTool : public AbstractTool {
   public:
     using AbstractTool::AbstractTool;
     void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+};
+
+// ── PickTool — samples a canvas pixel and fires a callback with the color ──────
+
+class PickTool : public AbstractTool {
+    using ColorPickedCallback = std::function<void(SDL_Color)>;
+    ColorPickedCallback onColorPicked;
+  public:
+    PickTool(ICoordinateMapper* m, ColorPickedCallback cb)
+        : AbstractTool(m), onColorPicked(std::move(cb)) {}
+    void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
 };
