@@ -21,6 +21,7 @@ kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
     window   = SDL_CreateWindow("kPen", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                 1000, 700, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE);
+    cursorManager.init();  // must be after SDL_CreateWindow
 
     toolbar = Toolbar(renderer, this);
 
@@ -261,10 +262,10 @@ void kPen::setTool(ToolType t) {
     };
     switch (t) {
         case ToolType::BRUSH:  currentTool = std::make_unique<BrushTool>(this, toolbar.squareBrush); break;
-        case ToolType::ERASER: currentTool = std::make_unique<EraserTool>(this, toolbar.squareBrush); break;
+        case ToolType::ERASER: currentTool = std::make_unique<EraserTool>(this, toolbar.squareEraser); break;
         case ToolType::LINE:   currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE,   cb, false); break;
-        case ToolType::RECT:   currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT,   cb, toolbar.fillShape); break;
-        case ToolType::CIRCLE: currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE, cb, toolbar.fillShape); break;
+        case ToolType::RECT:   currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT,   cb, toolbar.fillRect); break;
+        case ToolType::CIRCLE: currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE, cb, toolbar.fillCircle); break;
         case ToolType::SELECT: currentTool = std::make_unique<SelectTool>(this); break;
         case ToolType::FILL:   currentTool = std::make_unique<FillTool>(this); break;
         case ToolType::RESIZE: break; // only created via activateResizeTool
@@ -273,10 +274,10 @@ void kPen::setTool(ToolType t) {
 
 void kPen::activateResizeTool(ToolType shapeType, SDL_Rect bounds, SDL_Rect origBounds,
                                int sx, int sy, int ex, int ey,
-                               int brushSize, SDL_Color color, bool filled) {
+                               int /*brushSize*/, SDL_Color /*color*/, bool filled) {
     currentType = toolbar.currentType = ToolType::RESIZE;
     currentTool = std::make_unique<ResizeTool>(this, shapeType, bounds, origBounds,
-                                               sx, sy, ex, ey, brushSize, color, filled);
+                                               sx, sy, ex, ey, &toolbar.brushSize, &toolbar.brushColor, filled);
 }
 
 // ── Undo ──────────────────────────────────────────────────────────────────────
@@ -585,18 +586,18 @@ void kPen::run() {
 
                 switch (e.key.keysym.sym) {
                     case SDLK_b:
-                        if (originalType == ToolType::BRUSH)  toolbar.squareBrush = !toolbar.squareBrush;
+                        if (originalType == ToolType::BRUSH)  toolbar.squareBrush  = !toolbar.squareBrush;
                         setTool(ToolType::BRUSH);  needsRedraw = true; break;
                     case SDLK_l: setTool(ToolType::LINE);   needsRedraw = true; break;
                     case SDLK_r:
-                        if (originalType == ToolType::RECT)   toolbar.fillShape = !toolbar.fillShape;
+                        if (originalType == ToolType::RECT)   toolbar.fillRect     = !toolbar.fillRect;
                         setTool(ToolType::RECT);   needsRedraw = true; break;
                     case SDLK_o:
-                        if (originalType == ToolType::CIRCLE) toolbar.fillShape = !toolbar.fillShape;
+                        if (originalType == ToolType::CIRCLE) toolbar.fillCircle   = !toolbar.fillCircle;
                         setTool(ToolType::CIRCLE); needsRedraw = true; break;
                     case SDLK_s: setTool(ToolType::SELECT); needsRedraw = true; break;
                     case SDLK_e:
-                        if (originalType == ToolType::ERASER) toolbar.squareBrush = !toolbar.squareBrush;
+                        if (originalType == ToolType::ERASER) toolbar.squareEraser = !toolbar.squareEraser;
                         setTool(ToolType::ERASER); needsRedraw = true; break;
                     case SDLK_f: setTool(ToolType::FILL);   needsRedraw = true; break;
                     case SDLK_BACKSPACE:
@@ -605,25 +606,13 @@ void kPen::run() {
                         needsRedraw = true;
                         break;
                     case SDLK_UP:
-                        if (currentType == ToolType::RESIZE) {
-                            auto* rt = static_cast<ResizeTool*>(currentTool.get());
-                            rt->shapeBrushSize = std::min(99, rt->shapeBrushSize + 1);
-                            toolbar.brushSize  = rt->shapeBrushSize;
-                        } else {
-                            toolbar.brushSize = std::min(99, toolbar.brushSize + 1);
-                        }
+                        toolbar.brushSize = std::min(99, toolbar.brushSize + 1);
                         toolbar.syncBrushSize();
                         needsRedraw = true;
                         if (currentTool->hasOverlayContent()) overlayDirty = true;
                         break;
                     case SDLK_DOWN:
-                        if (currentType == ToolType::RESIZE) {
-                            auto* rt = static_cast<ResizeTool*>(currentTool.get());
-                            rt->shapeBrushSize = std::max(1, rt->shapeBrushSize - 1);
-                            toolbar.brushSize  = rt->shapeBrushSize;
-                        } else {
-                            toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
-                        }
+                        toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
                         toolbar.syncBrushSize();
                         needsRedraw = true;
                         if (currentTool->hasOverlayContent()) overlayDirty = true;
@@ -680,13 +669,6 @@ void kPen::run() {
                 #endif
 
                 if (toolbar.onMouseWheel(mx, my, precY)) {
-                    if (currentType == ToolType::RESIZE && toolbar.inToolbar(mx, my)) {
-                        // Redirect brush size change to the active ResizeTool
-                        auto* rt = static_cast<ResizeTool*>(currentTool.get());
-                        rt->shapeBrushSize = std::max(1, std::min(99, toolbar.brushSize));
-                        toolbar.brushSize = rt->shapeBrushSize;
-                        toolbar.syncBrushSize();
-                    }
                     needsRedraw = true;
                     if (currentTool->hasOverlayContent()) overlayDirty = true;
                 } else if (toolbar.inToolbar(mx, my)) {
@@ -910,7 +892,7 @@ void kPen::run() {
                     needsRedraw = true; continue;
                 }
                 viewScrolling = false;
-                if (toolbar.onMouseMotion(e.motion.x, e.motion.y)) { needsRedraw = true; continue; }
+                if (toolbar.onMouseMotion(e.motion.x, e.motion.y)) { needsRedraw = true; overlayDirty = true; continue; }
                 getCanvasCoords(e.motion.x, e.motion.y, &cX, &cY);
                 withCanvas([&]{ currentTool->onMouseMove(cX, cY, renderer, toolbar.brushSize, toolbar.brushColor); });
 
@@ -932,6 +914,21 @@ void kPen::run() {
                 resizeCanvas(req.w, req.h, req.scale);
                 needsRedraw = true;
             }
+        }
+
+        // Cursor update runs every tick — hovering over handles must update
+        // the cursor even when nothing else is redrawing.
+        {
+            int mx, my; SDL_GetMouseState(&mx, &my);
+            // Treat transparent brush color the same as eraser for cursor purposes
+            bool actAsEraser = (currentType == ToolType::ERASER) ||
+                               (currentType == ToolType::BRUSH && toolbar.brushColor.a == 0);
+            ToolType cursorType = actAsEraser ? ToolType::ERASER : currentType;
+            bool cursorSquare = actAsEraser ? toolbar.squareEraser : toolbar.squareBrush;
+            cursorManager.update(this, cursorType, originalType, currentTool.get(),
+                                 toolbar.brushSize, cursorSquare,
+                                 toolbar.brushColor,
+                                 mx, my, toolbar.inToolbar(mx, my));
         }
 
         if (!needsRedraw) {

@@ -23,16 +23,17 @@ TransformTool::Handle TransformTool::getHandle(int cX, int cY) const {
     bool onR = std::abs(wX - wx2) <= G;
     bool onT = std::abs(wY - wy1) <= G;
     bool onB = std::abs(wY - wy2) <= G;
-    bool inX = wX >= wx1 - G && wX <= wx2 + G;
-    bool inY = wY >= wy1 - G && wY <= wy2 + G;
+    // Mid-edge handles: only trigger near the midpoint, not the full edge
+    bool nearMX = std::abs(wX - wmx) <= G;
+    bool nearMY = std::abs(wY - wmy) <= G;
     if (onL && onT) return Handle::NW;
     if (onR && onT) return Handle::NE;
     if (onL && onB) return Handle::SW;
     if (onR && onB) return Handle::SE;
-    if (onT && inX) return Handle::N;
-    if (onB && inX) return Handle::S;
-    if (onL && inY) return Handle::W;
-    if (onR && inY) return Handle::E;
+    if (onT && nearMX) return Handle::N;
+    if (onB && nearMX) return Handle::S;
+    if (onL && nearMY) return Handle::W;
+    if (onR && nearMY) return Handle::E;
     return Handle::NONE;
 }
 

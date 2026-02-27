@@ -33,9 +33,11 @@ class Toolbar {
     float       hue = 0.f, sat = 0.f, val = 0.f;
     SDL_Color   brushColor  = {0, 0, 0, 255};
     int         brushSize   = 2;
-    ToolType    currentType = ToolType::BRUSH;
-    bool        fillShape   = false;   // toggled by clicking RECT/CIRCLE while already active
-    bool        squareBrush = false;   // toggled by clicking BRUSH/ERASER while already active
+    ToolType    currentType  = ToolType::BRUSH;
+    bool        fillRect     = false;  // toggled by clicking RECT while already active
+    bool        fillCircle   = false;  // toggled by clicking CIRCLE while already active
+    bool        squareBrush  = false;  // toggled by clicking BRUSH while already active
+    bool        squareEraser = false;  // toggled by clicking ERASER while already active
 
     SDL_Color   customColors[NUM_CUSTOM] = {
         {220,220,220,255},{180,180,180,255},{120,120,120,255},

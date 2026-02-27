@@ -75,7 +75,7 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
     int s = ICON_SIZE/2 - 3;
     switch (t) {
         case ToolType::BRUSH: {
-            if (active && squareBrush) {
+            if (squareBrush) {
                 // Filled square
                 const int r = 4;
                 SDL_Rect sq = { cx - r, cy - r, r * 2 + 1, r * 2 + 1 };
@@ -91,7 +91,7 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
             break;
         }
         case ToolType::ERASER: {
-            if (active && squareBrush) {
+            if (squareEraser) {
                 // Dashed hollow square: 2-px L-shaped dash at each corner.
                 // r=4 → square runs from (cx-4,cy-4) to (cx+4,cy+4), 9×9 px.
                 const int r = 4;
@@ -130,12 +130,12 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
         }
         case ToolType::RECT: {
             SDL_Rect r = {cx-s, cy-s, s*2, s*2};
-            if (active && fillShape) SDL_RenderFillRect(renderer, &r);
-            else                     SDL_RenderDrawRect(renderer, &r);
+            if (fillRect) SDL_RenderFillRect(renderer, &r);
+            else          SDL_RenderDrawRect(renderer, &r);
             break;
         }
         case ToolType::CIRCLE: {
-            if (active && fillShape) {
+            if (fillCircle) {
                 for (int h = -s; h <= s; h++) {
                     int half = (int)std::sqrt((float)(s*s - h*h));
                     SDL_RenderDrawLine(renderer, cx-half, cy+h, cx+half, cy+h);
@@ -273,7 +273,9 @@ void Toolbar::draw() {
     int maxR = BS_ROW1_H / 2 - 1;
     int dotR = std::max(1, (int)((std::min(brushSize, 25) / 25.f) * maxR + 0.5f));
     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-    if (squareBrush) {
+    bool previewSquare = (currentType == ToolType::BRUSH   && squareBrush) ||
+                         (currentType == ToolType::ERASER  && squareEraser);
+    if (previewSquare) {
         SDL_Rect sq = { previewCX - dotR, previewCY - dotR, dotR * 2 + 1, dotR * 2 + 1 };
         SDL_RenderFillRect(renderer, &sq);
     } else {
@@ -550,14 +552,14 @@ bool Toolbar::onMouseDown(int x, int y) {
             SDL_Point pt = {x, sy};
             if (SDL_PointInRect(&pt, &btn)) {
                 ToolType t = toolTypes[idx];
-                if (t == currentType &&
-                    (t == ToolType::RECT || t == ToolType::CIRCLE))
-                    fillShape = !fillShape;
-                else if (t == currentType &&
-                    (t == ToolType::BRUSH || t == ToolType::ERASER))
+                if (t == currentType && t == ToolType::RECT)
+                    fillRect = !fillRect;
+                else if (t == currentType && t == ToolType::CIRCLE)
+                    fillCircle = !fillCircle;
+                else if (t == currentType && t == ToolType::BRUSH)
                     squareBrush = !squareBrush;
-                else if (t != ToolType::RECT && t != ToolType::CIRCLE)
-                    fillShape = false;
+                else if (t == currentType && t == ToolType::ERASER)
+                    squareEraser = !squareEraser;
                 app->setTool(t);
                 currentType = t;
                 return true;

@@ -3,9 +3,9 @@
 #include <algorithm>
 
 ResizeTool::ResizeTool(ICoordinateMapper* m, ToolType st, SDL_Rect bounds, SDL_Rect ob,
-                       int sx, int sy, int ex, int ey, int bs, SDL_Color col, bool filled)
+                       int sx, int sy, int ex, int ey, int* liveBS, const SDL_Color* liveCol, bool filled)
     : TransformTool(m), shapeType(st), origBounds(ob), shapeStartX(sx), shapeStartY(sy)
-    , shapeEndX(ex), shapeEndY(ey), shapeBrushSize(bs), shapeColor(col), shapeFilled(filled)
+    , shapeEndX(ex), shapeEndY(ey), liveBrushSize(liveBS), liveColor(liveCol), shapeFilled(filled)
 { currentBounds = bounds; }
 
 ResizeTool::~ResizeTool() {}
@@ -77,11 +77,11 @@ void ResizeTool::renderShape(SDL_Renderer* r, const SDL_Rect& b, int bs, SDL_Col
 
 void ResizeTool::onOverlayRender(SDL_Renderer* r) {
     int cw, ch; mapper->getCanvasSize(&cw, &ch);
-    SDL_Color drawColor = shapeColor;
+    SDL_Color drawColor = *liveColor;
     if (drawColor.a == 0) {
         drawColor = { 100, 149, 237, 128 }; // CornflowerBlue with 50% alpha
     }
-    renderShape(r, currentBounds, shapeBrushSize, drawColor, cw, ch);
+    renderShape(r, currentBounds, *liveBrushSize, drawColor, cw, ch);
 }
 
 void ResizeTool::onPreviewRender(SDL_Renderer* r, int, SDL_Color) {
@@ -90,7 +90,7 @@ void ResizeTool::onPreviewRender(SDL_Renderer* r, int, SDL_Color) {
 
 void ResizeTool::deactivate(SDL_Renderer* r) {
     int cw, ch; mapper->getCanvasSize(&cw, &ch);
-    renderShape(r, currentBounds, shapeBrushSize, shapeColor, cw, ch);
+    renderShape(r, currentBounds, *liveBrushSize, *liveColor, cw, ch);
 }
 
 std::vector<uint32_t> ResizeTool::getFloatingPixels(SDL_Renderer* r) const {
@@ -103,7 +103,7 @@ std::vector<uint32_t> ResizeTool::getFloatingPixels(SDL_Renderer* r) const {
     SDL_SetRenderTarget(r, tmp);
     SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
     SDL_RenderClear(r);
-    renderShape(r, {0, 0, w, h}, shapeBrushSize, shapeColor, w, h);
+    renderShape(r, {0, 0, w, h}, *liveBrushSize, *liveColor, w, h);
     std::vector<uint32_t> pixels(w * h);
     SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), w * 4);
     SDL_SetRenderTarget(r, prev);
@@ -115,7 +115,7 @@ bool ResizeTool::willRender() const {
     const SDL_Rect& b = currentBounds;
     if (b.w <= 0 || b.h <= 0) return false;
     if (shapeType == ToolType::LINE) return true;  // line always renders if bounds valid
-    int bs = shapeBrushSize;
+    int bs = *liveBrushSize;
     if (shapeFilled) {
         // filled shapes render as long as bounds are non-empty
         return b.w >= 1 && b.h >= 1;

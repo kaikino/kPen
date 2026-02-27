@@ -49,9 +49,12 @@ class AbstractTool {
 // ── TransformTool — shared handle/move logic for Select and Resize ────────────
 
 class TransformTool : public AbstractTool {
-  protected:
+  public:
+    // Handle is public so CursorManager can switch on it directly.
     enum class Handle { NONE, N, S, E, W, NE, NW, SE, SW };
-    static const int GRAB_WIN = 8;  // hit radius in window pixels (zoom-independent)
+
+  protected:
+    static const int GRAB_WIN = 4;  // hit radius in window pixels (zoom-independent)
 
     SDL_Rect currentBounds = {0, 0, 0, 0};
 
@@ -72,10 +75,12 @@ class TransformTool : public AbstractTool {
 
   public:
     using AbstractTool::AbstractTool;
-    bool isHit          (int cX, int cY) const;
-    bool hasMoved       () const { return moved; }
-    bool isMutating     () const { return isMoving || resizing != Handle::NONE; }
+    bool isHit              (int cX, int cY) const;
+    bool hasMoved           () const { return moved; }
+    bool isMutating         () const { return isMoving || resizing != Handle::NONE; }
     SDL_Rect getFloatingBounds() const { return currentBounds; }
+    // Used by CursorManager to pick the right resize-arrow cursor.
+    Handle getHandleForCursor(int cX, int cY) const { return getHandle(cX, cY); }
 };
 
 // ── SelectTool ────────────────────────────────────────────────────────────────
@@ -105,18 +110,18 @@ class SelectTool : public TransformTool {
 // ── ResizeTool ────────────────────────────────────────────────────────────────
 
 class ResizeTool : public TransformTool {
-    ToolType  shapeType;
-    SDL_Rect  origBounds;
-    int       shapeStartX, shapeStartY, shapeEndX, shapeEndY;
-    SDL_Color shapeColor;
+    ToolType         shapeType;
+    SDL_Rect         origBounds;
+    int              shapeStartX, shapeStartY, shapeEndX, shapeEndY;
+    const SDL_Color* liveColor;   // points to toolbar.brushColor — always current
 
     void renderShape(SDL_Renderer* r, const SDL_Rect& bounds,
                      int bs, SDL_Color col, int clipW = 0, int clipH = 0) const;
   public:
-    int       shapeBrushSize;
+    int*      liveBrushSize;  // points to toolbar.brushSize — always current
     bool      shapeFilled;
     ResizeTool(ICoordinateMapper* m, ToolType shapeType, SDL_Rect bounds, SDL_Rect origBounds,
-               int sx, int sy, int ex, int ey, int brushSize, SDL_Color color, bool filled = false);
+               int sx, int sy, int ex, int ey, int* liveBrushSize, const SDL_Color* liveColor, bool filled = false);
     ~ResizeTool();
     void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;

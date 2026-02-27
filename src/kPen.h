@@ -5,6 +5,7 @@
 #include "Tools.h"
 #include "Toolbar.h"
 #include "CanvasResizer.h"
+#include "CursorManager.h"
 
 class kPen : public ICoordinateMapper {
   public:
@@ -43,6 +44,7 @@ class kPen : public ICoordinateMapper {
 
     Toolbar       toolbar;
     CanvasResizer canvasResizer;
+    CursorManager cursorManager;
 
     // Drag-handle resize preview (ghost outline while dragging)
     int  previewW = 0, previewH = 0;
