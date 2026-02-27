@@ -686,20 +686,52 @@ void kPen::run() {
             }
 
             // ── Track live finger count ──
-            if (e.type == SDL_FINGERDOWN) activeFingers++;
-            if (e.type == SDL_FINGERUP)   activeFingers = std::max(0, activeFingers - 1);
+            if (e.type == SDL_FINGERDOWN) {
+                activeFingers++;
+                // If a 3rd finger lands while 2-finger pan/zoom is already active,
+                // mark that this 3-finger gesture should continue pan/zoom rather
+                // than switching to 3-finger draw mode.
+                if (activeFingers == 3 && multiGestureActive) {
+                    threeFingerPanMode = true;
+                    multiGestureActive = false;  // re-capture centroid on next MULTIGESTURE to avoid jump
+                    pinchActive        = false;
+                }
+            }
+            if (e.type == SDL_FINGERUP) {
+                int prevFingers = activeFingers;
+                activeFingers = std::max(0, activeFingers - 1);
+                // When dropping back from 3 to 2 fingers, reset the centroid so the
+                // first MULTIGESTURE doesn't produce a spurious pan jump.
+                // Keep threeFingerPanMode alive so 2->3->2 stays in pan/zoom.
+                if (prevFingers >= 3 && activeFingers == 2) {
+                    multiGestureActive = false;  // will be re-armed by next MULTIGESTURE
+                    pinchActive        = false;
+                }
+                // Clear threeFingerPanMode only when all fingers lift
+                if (activeFingers == 0) {
+                    threeFingerPanMode = false;
+                }
+            }
 
             // ── Second-finger tap detection ──
             // macOS holds MOUSEBUTTONDOWN until the primary finger stops moving,
             // so we detect the tap via FINGER events and synthesize the click ourselves.
             if (e.type == SDL_FINGERDOWN) {
                 int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
+                // Only arm tap detection for the 2nd finger (activeFingers==2 after
+                // the increment above). A 3rd finger signals a 3-finger draw gesture,
+                // not a canvas tap, so don't overwrite tap state in that case.
+                if (activeFingers == 2) {
                 tapFingerId    = e.tfinger.fingerId;
                 tapDownX       = e.tfinger.x * winW;
                 tapDownY       = e.tfinger.y * winH;
                 tapDownTime    = e.tfinger.timestamp;
                 tapPending     = true;
                 tapSawGesture  = false;
+                } else {
+                    // 3rd+ finger: cancel any pending tap to avoid a false draw-click
+                    tapPending = false;
+                }
             }
             if (e.type == SDL_FINGERUP && tapPending && e.tfinger.fingerId == tapFingerId) {
                 tapPending = false;
@@ -768,9 +800,10 @@ void kPen::run() {
             // ── Pinch-to-zoom + two-finger pan ──
             if (e.type == SDL_MULTIGESTURE && tapPending) { tapSawGesture = true; }
             if (e.type == SDL_MULTIGESTURE) {
-                // 3-finger gesture: suppress pan/zoom entirely so the real mouse
-                // events (which SDL maps to the primary finger) drive drawing normally.
-                if (activeFingers >= 3) {
+                // 3-finger gesture started fresh: suppress pan/zoom so mouse events
+                // drive drawing normally. But if we got here via 2->3 finger transition
+                // (threeFingerPanMode), continue pan/zoom instead.
+                if (activeFingers >= 3 && !threeFingerPanMode) {
                     needsRedraw = true;
                 } else {
                 int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
@@ -807,7 +840,7 @@ void kPen::run() {
                 multiGestureActive = true;
 
                 needsRedraw = true;
-                } // end 2-finger branch
+                } // end pan/zoom branch
             }
 
             // Reset gesture tracking when fingers lift

@@ -92,6 +92,7 @@ class kPen : public ICoordinateMapper {
     bool         tapPending    = false;
     bool         tapSawGesture = false; // MULTIGESTURE fired while this tap was pending (confirms two-finger scenario)
     bool         tapConsumed   = false; // suppress the delayed real MOUSEBUTTON events after a synthesized tap
+    bool         threeFingerPanMode = false; // true when 3rd finger landed while 2-finger pan/zoom was active
 
     // Smooth zoom lerp target (only used when not actively scrolling)
     float zoomTarget = 1.f;
