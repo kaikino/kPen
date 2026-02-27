@@ -5,6 +5,8 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
+#include <string>
+#include "menu/MacMenu.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -22,6 +24,7 @@ kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
                                 1000, 700, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE);
     cursorManager.init();  // must be after SDL_CreateWindow
+    MacMenu::install();    // native macOS menu bar (no-op on other platforms)
 
     toolbar = Toolbar(renderer, this);
 
@@ -38,8 +41,9 @@ kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
     SDL_SetRenderTarget(renderer, nullptr);
 
     toolbar.syncCanvasSize(canvasW, canvasH);
-    setTool(ToolType::BRUSH);
+    setTool(ToolType::SELECT);
     saveState(undoStack);
+    savedStateId = undoStack.back().serial;  // treat initial blank as "saved"
     zoomTarget = zoom;
 }
 
@@ -282,13 +286,25 @@ void kPen::activateResizeTool(ToolType shapeType, SDL_Rect bounds, SDL_Rect orig
 
 // ── Undo ──────────────────────────────────────────────────────────────────────
 
+void kPen::updateWindowTitle() {
+    std::string base = currentFilePath.empty() ? "kPen" : [&]() -> std::string {
+        auto s = currentFilePath.rfind('/');
+        if (s == std::string::npos) s = currentFilePath.rfind('\\');
+        return std::string("kPen — ") + (s != std::string::npos
+               ? currentFilePath.substr(s + 1) : currentFilePath);
+    }();
+    SDL_SetWindowTitle(window,
+        hasUnsavedChanges() ? (base + " •").c_str() : base.c_str());
+}
+
 void kPen::saveState(std::vector<CanvasState>& stack) {
     CanvasState s;
     s.w = canvasW; s.h = canvasH;
     s.pixels.resize(canvasW * canvasH);
     withCanvas([&]{ SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, s.pixels.data(), canvasW * 4); });
+    if (&stack == &undoStack) s.serial = nextStateSerial++;
     stack.push_back(std::move(s));
-    if (&stack == &undoStack) redoStack.clear();
+    if (&stack == &undoStack) { redoStack.clear(); updateWindowTitle(); }
 }
 
 void kPen::applyState(CanvasState& s) {
@@ -349,9 +365,13 @@ void kPen::undo() {
     }
     if (undoStack.size() > 1) {
         saveState(redoStack);
+        // The state we just snapshotted into redoStack is the same content as
+        // the current undoStack top — carry its serial so redo can match savedStateId.
+        redoStack.back().serial = undoStack.back().serial;
         undoStack.pop_back();
         applyState(undoStack.back());
     }
+    updateWindowTitle();
 }
 
 void kPen::redo() {
@@ -360,6 +380,7 @@ void kPen::redo() {
         undoStack.push_back(std::move(redoStack.back()));
         redoStack.pop_back();
     }
+    updateWindowTitle();
 }
 
 // ── Canvas resize ─────────────────────────────────────────────────────────────
@@ -452,6 +473,7 @@ void kPen::resizeCanvas(int newW, int newH, bool scaleContent, int originX, int 
     CanvasState newState;
     newState.w = canvasW; newState.h = canvasH;
     newState.pixels = std::move(newPixels);
+    newState.serial = nextStateSerial++;
     undoStack.push_back(std::move(newState));
 
     toolbar.syncCanvasSize(canvasW, canvasH);
@@ -526,6 +548,13 @@ void kPen::pasteFromClipboard() {
     }
     currentType = toolbar.currentType = ToolType::SELECT;
 
+    // Expand canvas if the pasted image is larger (never scale — always crop/pad).
+    if (w > canvasW || h > canvasH) {
+        int newW = std::max(canvasW, w);
+        int newH = std::max(canvasH, h);
+        resizeCanvas(newW, newH, /*scaleContent=*/false);
+    }
+
     // Place pasted content centred on the mouse cursor, clamped to canvas
     int mouseWinX, mouseWinY, mouseCX, mouseCY;
     SDL_GetMouseState(&mouseWinX, &mouseWinY);
@@ -552,7 +581,238 @@ void kPen::pasteFromClipboard() {
     // tex ownership transferred to SelectTool
 }
 
+// ── File I/O ────────────────────────────────────────────
+
+#include "menu/tinyfiledialogs.h"
+
+// Guard: macOS fires both SDL_USEREVENT (menu) and SDL_KEYDOWN for Cmd+S.
+static bool gDialogOpen = false;
+
+static void resetCursorForDialog() {
+    // Call the native macOS API directly — SDL_SetCursor isn't flushed to the
+    // OS before the blocking dialog takes over, so the tool cursor would remain.
+    MacMenu::useArrowCursor();
+}
+
+// After a blocking native dialog returns, macOS has queued both the
+// SDL_USEREVENT (from the menu bar) and the SDL_KEYDOWN (Cmd+key) that
+// triggered the same action.  Flushing them here prevents the second
+// event from re-opening the dialog once gDialogOpen is cleared.
+// We also re-apply the arrow cursor: macOS restores SDL's last-known
+// cursor when the window regains focus, overwriting the pre-dialog reset.
+static void postDialogCleanup() {
+    SDL_FlushEvent(SDL_KEYDOWN);
+    SDL_FlushEvent(SDL_USEREVENT);
+    // Re-apply the arrow natively: macOS restores SDL's last-known cursor
+    // when the window regains focus, overwriting the pre-dialog reset.
+    MacMenu::useArrowCursor();
+}
+
+static std::string nativeSaveDialog(const std::string& defaultPath) {
+    if (gDialogOpen) return "";
+    gDialogOpen = true;
+    resetCursorForDialog();
+    const char* filters[] = { "*.png", "*.jpg", "*.jpeg" };
+    const char* result = tinyfd_saveFileDialog(
+        "Save image", defaultPath.empty() ? "untitled.png" : defaultPath.c_str(),
+        3, filters, "Image files (PNG, JPEG)");
+    gDialogOpen = false;
+    postDialogCleanup();
+    return result ? result : "";
+}
+
+static std::string nativeOpenDialog() {
+    if (gDialogOpen) return "";
+    gDialogOpen = true;
+    resetCursorForDialog();
+    const char* filters[] = { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif" };
+    const char* result = tinyfd_openFileDialog(
+        "Open image", "", 5, filters, "Image files", 0);
+    gDialogOpen = false;
+    postDialogCleanup();
+    return result ? result : "";
+}
+
+bool kPen::promptSaveIfNeeded() {
+    if (!hasUnsavedChanges()) return true;
+    if (gDialogOpen) return true;
+    gDialogOpen = true;
+    resetCursorForDialog();
+    int choice = tinyfd_messageBox(
+        "Unsaved changes",
+        "You have unsaved changes. Save before continuing?",
+        "yesnocancel", "question", 1);
+    gDialogOpen = false;
+    postDialogCleanup();
+    if (choice == 0) return false;
+    if (choice == 1) { doSave(false); if (hasUnsavedChanges()) return false; }
+    return true;
+}
+
+void kPen::doSave(bool forceSaveAs) {
+    // Commit any active tool so all pixels are on the canvas
+    if (currentTool) {
+        withCanvas([&]{ currentTool->deactivate(renderer); });
+        setTool(originalType);
+    }
+
+    std::string path = (!forceSaveAs && !currentFilePath.empty()) ? currentFilePath : "";
+    if (path.empty()) {
+        path = nativeSaveDialog(currentFilePath);
+        if (path.empty()) return;  // user cancelled
+    }
+
+    // Read canvas pixels
+    std::vector<uint32_t> pixels(canvasW * canvasH);
+    withCanvas([&]{
+        SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888,
+                             pixels.data(), canvasW * 4);
+    });
+
+    // Encode and write
+    bool ok = false;
+    auto lower = [](std::string s){ for (auto& c : s) c = (char)tolower(c); return s; };
+    std::string ext;
+    auto dot = path.rfind('.');
+    if (dot != std::string::npos) ext = lower(path.substr(dot));
+
+    if (ext == ".jpg" || ext == ".jpeg") {
+        auto bytes = DrawingUtils::encodeJPEG(pixels.data(), canvasW, canvasH);
+        if (!bytes.empty()) {
+            FILE* f = fopen(path.c_str(), "wb");
+            if (f) { fwrite(bytes.data(), 1, bytes.size(), f); fclose(f); ok = true; }
+        }
+    } else {
+        // Default to PNG
+        if (ext != ".png") path += ".png";
+        auto bytes = DrawingUtils::encodePNG(pixels.data(), canvasW, canvasH);
+        if (!bytes.empty()) {
+            FILE* f = fopen(path.c_str(), "wb");
+            if (f) { fwrite(bytes.data(), 1, bytes.size(), f); fclose(f); ok = true; }
+        }
+    }
+
+    if (ok) {
+        currentFilePath  = path;
+        savedStateId = undoStack.back().serial;
+        updateWindowTitle();
+    } else {
+        tinyfd_messageBox("Save failed", ("Could not write to:\n" + path).c_str(),
+                          "ok", "error", 1);
+    }
+}
+
+void kPen::doOpen() {
+    std::string path = nativeOpenDialog();
+    if (path.empty()) return;
+
+    // Read and decode the file
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return;
+    fseek(f, 0, SEEK_END); long sz = ftell(f); rewind(f);
+    std::vector<uint8_t> raw(sz);
+    fread(raw.data(), 1, sz, f);
+    fclose(f);
+
+    int iw = 0, ih = 0;
+    auto pixels = DrawingUtils::decodeImage(raw.data(), (int)sz, iw, ih);
+    if (pixels.empty() || iw <= 0 || ih <= 0) {
+        tinyfd_messageBox("Open failed", ("Could not read image:\n" + path).c_str(),
+                          "ok", "error", 1);
+        return;
+    }
+
+    // Commit any active tool
+    if (currentTool) {
+        withCanvas([&]{ currentTool->deactivate(renderer); });
+        setTool(originalType);
+    }
+
+    // Reset history and replace canvas
+    undoStack.clear(); redoStack.clear();
+    resizeCanvas(iw, ih, /*scaleContent=*/false);  // creates new textures
+    if (undoStack.empty()) saveState(undoStack);  // same-size: resizeCanvas returned early
+
+    // Upload pixels (resizeCanvas left canvas transparent; overwrite with image)
+    SDL_UpdateTexture(canvas, nullptr, pixels.data(), iw * 4);
+    undoStack.back().pixels = pixels;
+
+    currentFilePath = path;
+    savedStateId = undoStack.back().serial;
+    updateWindowTitle();
+    zoom = 1.f; zoomTarget = 1.f; panX = 0.f; panY = 0.f;
+}
+
 // ── Run loop ──────────────────────────────────────────────────────────────────
+
+// ── dispatchCommand ───────────────────────────────────────────────────────────
+// Single source of truth for all menu-driven actions.
+// Called from the SDL_USEREVENT handler (macOS native menu) and, on
+// Windows/Linux, synthesised from SDL_KEYDOWN modifier shortcuts.
+
+void kPen::dispatchCommand(int code, bool& running, bool& needsRedraw, bool& overlayDirty) {
+    switch (code) {
+        case MacMenu::FILE_NEW:
+            if (promptSaveIfNeeded()) {
+                if (currentTool) { withCanvas([&]{ currentTool->deactivate(renderer); }); setTool(originalType); }
+                undoStack.clear(); redoStack.clear();
+                currentFilePath.clear();
+                withCanvas([&]{
+                    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+                    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+                    SDL_RenderClear(renderer);
+                    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+                });
+                resizeCanvas(1200, 800, false);
+                if (undoStack.empty()) saveState(undoStack);  // same-size: resizeCanvas returned early
+                savedStateId = undoStack.back().serial;
+                updateWindowTitle();
+                zoom = 1.f; zoomTarget = 1.f; panX = 0.f; panY = 0.f;
+                needsRedraw = true;
+            }
+            break;
+        case MacMenu::FILE_OPEN:
+            if (promptSaveIfNeeded()) { doOpen(); needsRedraw = true; }
+            break;
+        case MacMenu::FILE_SAVE:    doSave(currentFilePath.empty()); needsRedraw = true; break;
+        case MacMenu::FILE_SAVE_AS: doSave(true); needsRedraw = true; break;
+        case MacMenu::FILE_CLOSE:
+        case MacMenu::QUIT:
+            if (promptSaveIfNeeded()) { running = false; }
+            break;
+        case MacMenu::EDIT_UNDO:  undo(); needsRedraw = true; break;
+        case MacMenu::EDIT_REDO:  redo(); needsRedraw = true; break;
+        case MacMenu::EDIT_CUT:
+            copySelectionToClipboard(); deleteSelection(); needsRedraw = true; break;
+        case MacMenu::EDIT_COPY:
+            copySelectionToClipboard(); needsRedraw = true; break;
+        case MacMenu::EDIT_PASTE:
+            pasteFromClipboard(); needsRedraw = true; overlayDirty = true; break;
+        case MacMenu::EDIT_SELECT_ALL: {
+            setTool(ToolType::SELECT);
+            auto* st = static_cast<SelectTool*>(currentTool.get());
+            SDL_Rect all = {0, 0, canvasW, canvasH};
+            std::vector<uint32_t> px(canvasW * canvasH);
+            withCanvas([&]{ SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, px.data(), canvasW*4); });
+            SDL_Texture* selTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, canvasW, canvasH);
+            if (selTex) {
+                SDL_SetTextureBlendMode(selTex, SDL_BLENDMODE_BLEND);
+                void* tp; int pitch;
+                if (SDL_LockTexture(selTex, nullptr, &tp, &pitch) == 0) {
+                    for (int row = 0; row < canvasH; ++row)
+                        memcpy((uint8_t*)tp + row*pitch, px.data() + row*canvasW, canvasW*4);
+                    SDL_UnlockTexture(selTex);
+                }
+                withCanvas([&]{ SDL_SetRenderDrawColor(renderer,0,0,0,0); SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE); SDL_RenderFillRect(renderer,nullptr); SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND); });
+                st->activateWithTexture(selTex, all);
+            }
+            currentType = toolbar.currentType = ToolType::SELECT;
+            needsRedraw = true; overlayDirty = true;
+            break;
+        }
+        default: break;
+    }
+}
 
 void kPen::run() {
     bool running      = true;
@@ -564,7 +824,17 @@ void kPen::run() {
 
     while (running) {
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) { running = false; break; }
+            if (e.type == SDL_QUIT) {
+                if (promptSaveIfNeeded()) { running = false; }
+                break;
+            }
+
+            // ── Menu commands — native menu bar (macOS) or synthesised below (Windows/Linux) ──
+            if (e.type == SDL_USEREVENT) {
+                dispatchCommand(e.user.code, running, needsRedraw, overlayDirty);
+                continue;
+            }
+
 
             // ── Text input for toolbar resize fields ──
             if (e.type == SDL_TEXTINPUT) {
@@ -586,16 +856,12 @@ void kPen::run() {
 
                 switch (e.key.keysym.sym) {
                     case SDLK_b:
-                        if (originalType == ToolType::BRUSH)  toolbar.squareBrush  = !toolbar.squareBrush;
+                        if (originalType == ToolType::BRUSH)  toolbar.squareBrush = !toolbar.squareBrush;
                         setTool(ToolType::BRUSH);  needsRedraw = true; break;
                     case SDLK_l: setTool(ToolType::LINE);   needsRedraw = true; break;
                     case SDLK_r:
                         if (originalType == ToolType::RECT)   toolbar.fillRect     = !toolbar.fillRect;
                         setTool(ToolType::RECT);   needsRedraw = true; break;
-                    case SDLK_o:
-                        if (originalType == ToolType::CIRCLE) toolbar.fillCircle   = !toolbar.fillCircle;
-                        setTool(ToolType::CIRCLE); needsRedraw = true; break;
-                    case SDLK_s: setTool(ToolType::SELECT); needsRedraw = true; break;
                     case SDLK_e:
                         if (originalType == ToolType::ERASER) toolbar.squareEraser = !toolbar.squareEraser;
                         setTool(ToolType::ERASER); needsRedraw = true; break;
@@ -617,25 +883,71 @@ void kPen::run() {
                         needsRedraw = true;
                         if (currentTool->hasOverlayContent()) overlayDirty = true;
                         break;
+                    case SDLK_s:
+                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
+#ifndef __APPLE__
+                            // macOS: native menu fires EDIT_UNDO via SDL_USEREVENT — handled there.
+                            // Windows/Linux: synthesise the command here.
+                            bool saveAs = (e.key.keysym.mod & KMOD_SHIFT) != 0 || currentFilePath.empty();
+                            dispatchCommand(saveAs ? MacMenu::FILE_SAVE_AS : MacMenu::FILE_SAVE,
+                                            running, needsRedraw, overlayDirty);
+#endif
+                            break;
+                        }
+                        // No modifier — select tool shortcut
+                        setTool(ToolType::SELECT); needsRedraw = true; break;
+                    case SDLK_o:
+                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
+#ifndef __APPLE__
+                            dispatchCommand(MacMenu::FILE_OPEN, running, needsRedraw, overlayDirty);
+#endif
+                            break;
+                        }
+                        // No modifier — circle tool shortcut
+                        if (originalType == ToolType::CIRCLE) toolbar.fillCircle = !toolbar.fillCircle;
+                        setTool(ToolType::CIRCLE); needsRedraw = true; break;
+                    case SDLK_n:
+#ifndef __APPLE__
+                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))
+                            dispatchCommand(MacMenu::FILE_NEW, running, needsRedraw, overlayDirty);
+#endif
+                        break;
                     case SDLK_z:
-                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) { undo(); needsRedraw = true; }
+#ifndef __APPLE__
+                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
+                            bool isRedo = (e.key.keysym.mod & KMOD_SHIFT) != 0;
+                            dispatchCommand(isRedo ? MacMenu::EDIT_REDO : MacMenu::EDIT_UNDO,
+                                            running, needsRedraw, overlayDirty);
+                        }
+#endif
                         break;
                     case SDLK_y:
-                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) { redo(); needsRedraw = true; }
+#ifndef __APPLE__
+                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))
+                            dispatchCommand(MacMenu::EDIT_REDO, running, needsRedraw, overlayDirty);
+#endif
                         break;
                     case SDLK_c:
                     case SDLK_x:
+#ifndef __APPLE__
                         if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
-                            copySelectionToClipboard();
-                            if (e.key.keysym.sym == SDLK_x) deleteSelection();
-                            needsRedraw = true;
+                            dispatchCommand(e.key.keysym.sym == SDLK_x
+                                            ? MacMenu::EDIT_CUT : MacMenu::EDIT_COPY,
+                                            running, needsRedraw, overlayDirty);
                         }
+#endif
                         break;
                     case SDLK_v:
-                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
-                            pasteFromClipboard();
-                            needsRedraw = true; overlayDirty = true;
-                        }
+#ifndef __APPLE__
+                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))
+                            dispatchCommand(MacMenu::EDIT_PASTE, running, needsRedraw, overlayDirty);
+#endif
+                        break;
+                    case SDLK_a:
+#ifndef __APPLE__
+                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))
+                            dispatchCommand(MacMenu::EDIT_SELECT_ALL, running, needsRedraw, overlayDirty);
+#endif
                         break;
                     case SDLK_0:
                         if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
@@ -758,6 +1070,7 @@ void kPen::run() {
                         // if onMouseDown missed (returned false), leave tapConsumed=false
                         // so the real MOUSEBUTTONDOWN can still fire normally
                     } else {
+                        toolbar.notifyClickOutside();  // canvas tap defocuses text fields
                         tapConsumed = true;
                         // Canvas tap — use primary finger (mouse) position for draw coords
                         int mx, my; SDL_GetMouseState(&mx, &my);
@@ -858,13 +1171,14 @@ void kPen::run() {
                 && !multiGestureActive) {
                 if (tapConsumed) { tapConsumed = false; continue; }
                 viewScrolling = false;
+                // Any mouse-down defocuses toolbar text fields immediately.
+                toolbar.notifyClickOutside();
                 // Canvas edge resize handles take priority
                 if (canvasResizer.onMouseDown(e.button.x, e.button.y, canvasW, canvasH)) {
                     needsRedraw = true; continue;
                 }
                 if (toolbar.onMouseDown(e.button.x, e.button.y)) { needsRedraw = true; continue; }
-                if (toolbar.inToolbar(e.button.x, e.button.y)) { toolbar.notifyClickOutside(); continue; }
-                toolbar.notifyClickOutside();  // revert resize fields if focused
+                if (toolbar.inToolbar(e.button.x, e.button.y)) { continue; }
                 getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
 
                 if (currentType == ToolType::SELECT) {
@@ -957,11 +1271,27 @@ void kPen::run() {
             bool actAsEraser = (currentType == ToolType::ERASER) ||
                                (currentType == ToolType::BRUSH && toolbar.brushColor.a == 0);
             ToolType cursorType = actAsEraser ? ToolType::ERASER : currentType;
-            bool cursorSquare = actAsEraser ? toolbar.squareEraser : toolbar.squareBrush;
-            cursorManager.update(this, cursorType, originalType, currentTool.get(),
-                                 toolbar.brushSize, cursorSquare,
-                                 toolbar.brushColor,
-                                 mx, my, toolbar.inToolbar(mx, my));
+            bool cursorSquare = (currentType == ToolType::ERASER) ? toolbar.squareEraser : toolbar.squareBrush;
+            SDL_Rect vp = getViewport();
+            bool overCanvas = (mx >= vp.x && mx < vp.x + vp.w && my >= vp.y && my < vp.y + vp.h);
+            bool inToolbar  = toolbar.inToolbar(mx, my);
+            // Toolbar: hand over interactive elements, arrow elsewhere
+            if (inToolbar) {
+                if (toolbar.isInteractive(mx, my))
+                    cursorManager.forceSetCursor(cursorManager.getHandCursor());
+                else
+                    cursorManager.forceSetCursor(cursorManager.getArrowCursor());
+            } else {
+                // nearHandle: hovering or dragging a canvas resize handle
+                bool nearHandle = canvasResizer.isDragging() ||
+                    (!overCanvas &&
+                     canvasResizer.hitTest(mx, my, canvasW, canvasH) != CanvasResizer::Handle::NONE);
+                cursorManager.update(this, cursorType, originalType, currentTool.get(),
+                                     toolbar.brushSize, cursorSquare,
+                                     toolbar.brushColor,
+                                     mx, my, false, overCanvas, nearHandle,
+                                     &canvasResizer, canvasW, canvasH);
+            }
         }
 
         if (!needsRedraw) {

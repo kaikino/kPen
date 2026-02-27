@@ -62,6 +62,7 @@ class Toolbar {
     void stopScrolling() { userScrolling = false; scrollRawOffset = 0.f; scrollBaseY = scrollY; }
     bool tickScroll();
     bool inToolbar(int x, int y) const { return x < TB_W; }
+    bool isInteractive(int x, int y) const;  // true when cursor is over a clickable element
 
     // ── Canvas resize panel ───────────────────────────────────────────────────
     struct CanvasResizeRequest {

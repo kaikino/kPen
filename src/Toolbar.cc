@@ -502,6 +502,67 @@ void Toolbar::notifyClickOutside() {
     }
 }
 
+bool Toolbar::isInteractive(int x, int y) const {
+    if (!inToolbar(x, y)) return false;
+    int sy = y + scrollY;
+
+    // Tool buttons
+    int cellW = (TB_W - TB_PAD) / 3;
+    for (int row = 0; row < 3; row++) {
+        for (int col = 0; col < 3; col++) {
+            int bx = TB_PAD/2 + col*cellW;
+            int by = toolStartY() + row*(ICON_SIZE+ICON_GAP);
+            SDL_Rect btn = {bx, by, cellW-2, ICON_SIZE};
+            SDL_Point pt = {x, sy};
+            if (SDL_PointInRect(&pt, &btn)) return true;
+        }
+    }
+
+    // Brush size field and slider
+    SDL_Rect bsExp = { brushSizeFieldRect.x - 2, brushSizeFieldRect.y - 4,
+                       brushSizeFieldRect.w + 4, brushSizeFieldRect.h + 8 };
+    SDL_Point bsPt = {x, y};
+    if (SDL_PointInRect(&bsPt, &bsExp)) return true;
+
+    int sTop = sliderSectionY();
+    SDL_Rect sliderArea = { 0, sTop - 4, TB_W, sliderSectionH() + 8 };
+    SDL_Point sPt = {x, sy};
+    if (SDL_PointInRect(&sPt, &sliderArea)) return true;
+
+    // Color wheel
+    float dx = x - colorWheelCX, dy2 = y - colorWheelCY;
+    if (dx*dx + dy2*dy2 <= (float)colorWheelR * colorWheelR) return true;
+
+    // Brightness bar
+    SDL_Rect bExp = {brightnessRect.x-2, brightnessRect.y-4,
+                     brightnessRect.w+4, brightnessRect.h+8};
+    if (SDL_PointInRect(&bsPt, &bExp)) return true;
+
+    // Swatches
+    if (hitCustomSwatch(x, y) >= 0) return true;
+    if (hitPresetSwatch(x, y) >= 0) return true;
+
+    // Resize panel fields and buttons
+    {
+        int panelY = resizePanelY;
+        int py     = panelY + 12;
+        int fieldX = TB_PAD + 10;
+        int fieldW = TB_W - TB_PAD * 2 - 10;
+        SDL_Rect wField   = { fieldX, py,           fieldW, 16 };
+        SDL_Rect hField   = { fieldX, py + 16 + 4,  fieldW, 16 };
+        int btnY  = py + 16 + 4 + 16 + 6;
+        SDL_Rect lockBtn  = { TB_PAD, btnY, TB_W - TB_PAD*2, 14 };
+        SDL_Rect scaleBtn = { TB_PAD, btnY + 14 + 4, TB_W - TB_PAD*2, 14 };
+        SDL_Point rpt = {x, y};
+        if (SDL_PointInRect(&rpt, &wField)   ||
+            SDL_PointInRect(&rpt, &hField)   ||
+            SDL_PointInRect(&rpt, &lockBtn)  ||
+            SDL_PointInRect(&rpt, &scaleBtn)) return true;
+    }
+
+    return false;
+}
+
 bool Toolbar::onMouseDown(int x, int y) {
     if (!inToolbar(x, y)) return false;
     userScrolling = false;

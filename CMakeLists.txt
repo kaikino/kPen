@@ -13,8 +13,11 @@ include_directories(${SDL2_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS}/SDL2)
 # Collect all .cc sources; add .mm only on Apple
 file(GLOB_RECURSE SRC_FILES "src/*.cc")
 
+list(APPEND SRC_FILES "src/menu/tinyfiledialogs.c")
+
 if(APPLE)
-    list(APPEND SRC_FILES "src/ClipboardMac.mm")
+    list(APPEND SRC_FILES "src/menu/Macmenu.mm")
+    list(APPEND SRC_FILES "src/stb/ClipboardMac.mm")
     add_executable(kPen MACOSX_BUNDLE ${SRC_FILES})
     set_target_properties(kPen PROPERTIES
         MACOSX_BUNDLE TRUE

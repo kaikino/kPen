@@ -124,6 +124,216 @@ static SDL_Cursor* makeBucketCursor(SDL_Color fillColor) {
     return b.toCursor(ddx, ddy + 2);
 }
 
+// ── Rotated resize-arrow cursors ──────────────────────────────────────────────
+//
+// We draw a double-headed arrow pointing straight up (north↔south) in a 21×21
+// bitmap, then rotate the whole bitmap to the target angle. The hotspot is
+// always the bitmap center (10,10).
+//
+// Arrow anatomy (north-pointing half, mirrored for south):
+//
+//      █          ← tip
+//     ███
+//    █████
+//      █          ← shaft
+//      █
+//      █
+//
+// The shaft runs through the center; arrowheads sit at the top and bottom.
+
+static void drawArrowUp(Bitmap& b, int cx, int cy, Uint32 fill, Uint32 outline) {
+    // Symmetry axis is between cx-1 and cx (i.e. x = cx - 0.5).
+    // All even-width rows use cx-N..cx+N-1 to stay balanced about that axis.
+    //   2px: cx-1..cx
+    //   4px: cx-2..cx+1
+    //   6px: cx-3..cx+2
+
+    // Arrowhead (north): 2→4→6px, tip is 2px to match shaft
+    b.hline(cx-1, cx,   cy-9, fill);  // 2px tip
+    b.hline(cx-2, cx+1, cy-8, fill);  // 4px
+    b.hline(cx-3, cx+2, cy-7, fill);  // 6px base
+
+    // Shaft: 2px wide
+    for (int y = cy-6; y <= cy+6; y++) b.hline(cx-1, cx, y, fill);
+
+    // Arrowhead (south) — exact vertical mirror
+    b.hline(cx-1, cx,   cy+9, fill);  // 2px tip
+    b.hline(cx-2, cx+1, cy+8, fill);  // 4px
+    b.hline(cx-3, cx+2, cy+7, fill);  // 6px base
+
+    // 1-pixel outline
+    b.outline(outline);
+}
+
+// Rotate src bitmap by angleDeg (clockwise) into a new same-size bitmap.
+// Uses nearest-neighbour so pixels stay crisp at cursor resolution.
+static Bitmap rotateBitmap(const Bitmap& src, float angleDeg) {
+    Bitmap dst(src.w, src.h);
+    float rad  = angleDeg * (float)M_PI / 180.f;
+    float cosA = std::cos(rad);
+    float sinA = std::sin(rad);
+    float cx   = (src.w - 1) * 0.5f;
+    float cy   = (src.h - 1) * 0.5f;
+    for (int y = 0; y < dst.h; y++) {
+        for (int x = 0; x < dst.w; x++) {
+            // Map destination pixel back to source space (inverse rotation)
+            float fx = (x - cx);
+            float fy = (y - cy);
+            int sx = (int)std::round( cosA * fx + sinA * fy + cx);
+            int sy = (int)std::round(-sinA * fx + cosA * fy + cy);
+            dst.set(x, y, src.get(sx, sy));
+        }
+    }
+    return dst;
+}
+
+// Build one resize-arrow cursor pointing at angleDeg clockwise from north.
+SDL_Cursor* CursorManager::makeResizeArrowCursor(float angleDeg) {
+    const int SZ = 23;            // bitmap size; must be odd so center is exact
+    const int cx = SZ / 2;       // = 10
+    const int cy = SZ / 2;
+
+    // Draw a north↔south double-headed arrow (angle 0°)
+    Bitmap base(SZ, SZ);
+    drawArrowUp(base, cx, cy, C_BLACK, C_WHITE);
+
+    // Rotate to the desired direction
+    Bitmap rotated = rotateBitmap(base, angleDeg);
+
+    return rotated.toCursor(cx, cy);
+}
+
+// ── Rotate cursor ─────────────────────────────────────────────────────────────
+//
+// A circular arc (~270°) with a filled arrowhead at the clockwise end.
+// Drawn in a 23×23 bitmap, then rotated to match the shape's current rotation
+// so the open gap always faces the rotate-handle stem direction.
+
+static void drawRotateCursorBase(Bitmap& b, Uint32 fill, Uint32 outlineCol) {
+    // 23x23 bitmap. Double-headed arrow with a smooth leftward bow.
+    // Shaft is 2px wide throughout; the left column of the pair shifts left
+    // toward the centre using a sine curve, giving 3px of total travel.
+    //
+    // Shaft pair (sc, sc+1) per row — sc = shaft_col(y):
+    //   y= 1: sc=11  (tip, rightmost)
+    //   y= 5: sc= 9
+    //   y= 7: sc= 8  (peak bow, leftmost)
+    //   ...
+    //   y=13: sc= 8
+    //   y=16: sc=10
+    //   y=19: sc=11  (tip, rightmost)
+    //
+    // Arrowheads are 2/4/6px, centred on the tip shaft pair (sc=11 → cols 11,12).
+    //
+    // ASCII preview (# = fill, o = 1px white outline):
+    //  y 0  ..........oooo.........
+    //  y 1  .........oo##oo........   north tip
+    //  y 2  ........oo####oo.......
+    //  y 3  ........o######o.......   head base
+    //  y 4  ........oo##oooo.......
+    //  y 5  ........o##oo..........
+    //  y 6  .......oo##o...........
+    //  y 7  .......o##oo...........   peak bow
+    //  y10  .......o##o............
+    //  y13  .......o##oo...........
+    //  y16  ........oo##oooo.......
+    //  y17  ........o######o.......   head base
+    //  y18  ........oo####oo.......
+    //  y19  .........oo##oo........   south tip
+
+    // North arrowhead — symmetric, centred on tip shaft position (cols 11,12)
+    b.hline(11, 12,  1, fill);  // 2px tip
+    b.hline(10, 13,  2, fill);  // 4px
+    b.hline( 9, 14,  3, fill);  // 6px base
+
+    // Shaft — row by row following the bow curve
+    b.hline(10, 11,  4, fill);
+    b.hline( 9, 10,  5, fill);
+    b.hline( 9, 10,  6, fill);
+    b.hline( 8,  9,  7, fill);
+    b.hline( 8,  9,  8, fill);
+    b.hline( 8,  9,  9, fill);
+    b.hline( 8,  9, 10, fill);
+    b.hline( 8,  9, 11, fill);
+    b.hline( 8,  9, 12, fill);
+    b.hline( 8,  9, 13, fill);
+    b.hline( 9, 10, 14, fill);
+    b.hline( 9, 10, 15, fill);
+    b.hline(10, 11, 16, fill);
+
+    // South arrowhead — symmetric, centred on tip shaft position (cols 11,12)
+    b.hline( 9, 14, 17, fill);  // 6px base
+    b.hline(10, 13, 18, fill);  // 4px
+    b.hline(11, 12, 19, fill);  // 2px tip
+
+    b.outline(outlineCol);
+}
+
+SDL_Cursor* CursorManager::makeRotateCursor(float angleDeg) {
+    const int SZ = 23;
+    Bitmap base(SZ, SZ);
+    drawRotateCursorBase(base, C_BLACK, C_WHITE);
+    // The arrow is drawn vertically (north↔south). Rotate 90° so it sits
+    // horizontally, then add the shape's rotation on top.
+    Bitmap rotated = rotateBitmap(base, angleDeg + 90.f);
+    const int c = SZ / 2;
+    return rotated.toCursor(c, c);
+}
+
+void CursorManager::buildRotateCursor(float rotationRad) {
+    float deg = std::fmod(rotationRad * 180.f / (float)M_PI, 360.f);
+    if (deg < 0.f) deg += 360.f;
+    if (std::fabs(deg - lastRotateCursorDeg) < 0.5f && lastRotateCursorDeg > -999.f) return;
+    lastRotateCursorDeg = deg;
+    if (curRotate) { SDL_FreeCursor(curRotate); curRotate = nullptr; }
+    curRotate = makeRotateCursor(deg);
+}
+
+// ── Build / cache the 8 resize cursors ───────────────────────────────────────
+
+void CursorManager::buildResizeCursors(float rotationRad) {
+    // Convert to degrees, normalize to [0, 360)
+    float deg = std::fmod(rotationRad * 180.f / (float)M_PI, 360.f);
+    if (deg < 0.f) deg += 360.f;
+
+    // Skip rebuild if rotation hasn't changed by more than 0.5°
+    if (std::fabs(deg - lastResizeRotationDeg) < 0.5f &&
+        lastResizeRotationDeg > -999.f) return;
+    lastResizeRotationDeg = deg;
+
+    // Free old cursors
+    for (int i = 0; i < NUM_RESIZE_SLOTS; i++) {
+        if (curResize[i]) { SDL_FreeCursor(curResize[i]); curResize[i] = nullptr; }
+    }
+
+    // Slot i corresponds to a handle whose unrotated axis sits at i*45° from
+    // north (N=0, NE=1, E=2, SE=3, S=4, SW=5, W=6, NW=7).
+    // With shape rotation added, the actual screen direction is i*45° + deg.
+    // A double-headed arrow for slot i should point along that axis, so we
+    // draw the 0°-base arrow (N↔S) and rotate it by (i*45° + deg).
+    for (int i = 0; i < NUM_RESIZE_SLOTS; i++) {
+        float arrowAngle = (float)i * 45.f + deg;
+        curResize[i] = makeResizeArrowCursor(arrowAngle);
+    }
+}
+
+// Map a Handle to its slot index (0-7: N, NE, E, SE, S, SW, W, NW)
+// and return the matching pre-built cursor.
+SDL_Cursor* CursorManager::getResizeCursor(TransformTool::Handle h, float rotationRad) {
+    buildResizeCursors(rotationRad);
+    switch (h) {
+        case TransformTool::Handle::N:  return curResize[0];
+        case TransformTool::Handle::NE: return curResize[1];
+        case TransformTool::Handle::E:  return curResize[2];
+        case TransformTool::Handle::SE: return curResize[3];
+        case TransformTool::Handle::S:  return curResize[4];
+        case TransformTool::Handle::SW: return curResize[5];
+        case TransformTool::Handle::W:  return curResize[6];
+        case TransformTool::Handle::NW: return curResize[7];
+        default:                        return nullptr;
+    }
+}
+
 // ── Brush / eraser pixel helpers ──────────────────────────────────────────────
 
 void CursorManager::fillCircle(Uint32* buf, int w, int h, int cx, int cy, int r, Uint32 color) {
@@ -223,17 +433,24 @@ CursorManager::CursorManager() {
 void CursorManager::init() {
     curArrow    = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
     curCross    = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
+    curHand     = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
     curSizeAll  = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEALL);
     curSizeNS   = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENS);
     curSizeWE   = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEWE);
     curSizeNWSE = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENWSE);
     curSizeNESW = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENESW);
     curBucket   = makeBucketCursor({100, 149, 237, 255}); // default cornflower blue
+
+    // Pre-build resize cursors for the default (zero) rotation so they are
+    // immediately available before any shape is drawn.
+    buildResizeCursors(0.f);
+    buildRotateCursor(0.f);
 }
 
 CursorManager::~CursorManager() {
     SDL_FreeCursor(curArrow);
     SDL_FreeCursor(curCross);
+    SDL_FreeCursor(curHand);
     SDL_FreeCursor(curSizeAll);
     SDL_FreeCursor(curSizeNS);
     SDL_FreeCursor(curSizeWE);
@@ -242,6 +459,9 @@ CursorManager::~CursorManager() {
     if(curBucket) SDL_FreeCursor(curBucket);
     if(curBrush)  SDL_FreeCursor(curBrush);
     if(curEraser) SDL_FreeCursor(curEraser);
+    for (int i = 0; i < NUM_RESIZE_SLOTS; i++)
+        if (curResize[i]) SDL_FreeCursor(curResize[i]);
+    if (curRotate) SDL_FreeCursor(curRotate);
 }
 
 // ── setCursor ─────────────────────────────────────────────────────────────────
@@ -264,8 +484,50 @@ void CursorManager::update(ICoordinateMapper* mapper,
                             int brushSize, bool squareBrush,
                             SDL_Color brushColor,
                             int mouseWinX, int mouseWinY,
-                            bool overToolbar) {
-    if(overToolbar) { setCursor(curArrow); return; }
+                            bool overToolbar,
+                            bool overCanvas,
+                            bool nearHandle,
+                            const CanvasResizer* canvasResizer,
+                            int canvasW, int canvasH) {
+    if (overToolbar) { setCursor(curArrow); return; }
+
+    // Canvas resize drag — lock the directional cursor for the entire drag,
+    // even when the mouse wanders off the canvas edge.
+    if (canvasResizer && canvasResizer->isDragging()) {
+        // Re-run the hit-test at the drag origin isn't available here, so we
+        // store the locked cursor when the drag begins (nearHandle + hitTest).
+        // Instead, keep it simple: the locked handle was captured into
+        // dragResizeHandle at the moment nearHandle+hitTest fired, so just use it.
+        if (dragResizeCursor) { setCursor(dragResizeCursor); return; }
+    } else {
+        dragResizeCursor = nullptr; // clear when not dragging
+    }
+
+    // Canvas resize handles take priority over everything — show the correct
+    // directional arrow even while a draw tool is active.
+    if (nearHandle && canvasResizer) {
+        CanvasResizer::Handle ch = canvasResizer->hitTest(mouseWinX, mouseWinY, canvasW, canvasH);
+        SDL_Cursor* rc = nullptr;
+        switch (ch) {
+            case CanvasResizer::Handle::N:
+            case CanvasResizer::Handle::S:  rc = curSizeNS;   break;
+            case CanvasResizer::Handle::E:
+            case CanvasResizer::Handle::W:  rc = curSizeWE;   break;
+            case CanvasResizer::Handle::NW:
+            case CanvasResizer::Handle::SE: rc = curSizeNWSE; break;
+            case CanvasResizer::Handle::NE:
+            case CanvasResizer::Handle::SW: rc = curSizeNESW; break;
+            default: break;
+        }
+        if (rc) { dragResizeCursor = rc; setCursor(rc); return; }
+    }
+
+    // Outside canvas and not actively drawing
+    bool toolActive = currentTool && currentTool->isActive();
+    if (!overCanvas && !toolActive) {
+        setCursor(curArrow);
+        return;
+    }
 
     switch(currentType) {
         case ToolType::BRUSH:
@@ -286,44 +548,62 @@ void CursorManager::update(ICoordinateMapper* mapper,
             if(curBucket) setCursor(curBucket);
             break;
         case ToolType::SELECT: {
-            auto* st=static_cast<SelectTool*>(currentTool);
-            if(!st||!st->isSelectionActive()){ setCursor(curCross); break; }
-            int cX,cY; mapper->getCanvasCoords(mouseWinX,mouseWinY,&cX,&cY);
-            TransformTool::Handle h=st->getHandleForCursor(cX,cY);
-            switch(h){
-                case TransformTool::Handle::N:
-                case TransformTool::Handle::S:  setCursor(curSizeNS);   break;
-                case TransformTool::Handle::E:
-                case TransformTool::Handle::W:  setCursor(curSizeWE);   break;
-                case TransformTool::Handle::NW:
-                case TransformTool::Handle::SE: setCursor(curSizeNWSE); break;
-                case TransformTool::Handle::NE:
-                case TransformTool::Handle::SW: setCursor(curSizeNESW); break;
-                default: {
-                    SDL_Point pt={cX,cY}; SDL_Rect bounds=st->getFloatingBounds();
-                    setCursor(SDL_PointInRect(&pt,&bounds)?curSizeAll:curArrow); break;
+            auto* st = static_cast<SelectTool*>(currentTool);
+            if (!st || !st->isSelectionActive()) { setCursor(curCross); break; }
+            float rot = st->getRotation();
+            int cX, cY; mapper->getCanvasCoords(mouseWinX, mouseWinY, &cX, &cY);
+            // Track which handle started the drag so the cursor stays locked
+            // for the full duration, even when the mouse wanders off the shape.
+            if (st->isMutating()) {
+                if (!dragHandleLocked) {
+                    dragHandleLocked = true;
+                    lockedHandle = st->getHandleForCursor(cX, cY);
                 }
+            } else {
+                dragHandleLocked = false;
+            }
+            TransformTool::Handle h = dragHandleLocked ? lockedHandle
+                                                       : st->getHandleForCursor(cX, cY);
+            if (h == TransformTool::Handle::ROTATE) {
+                buildRotateCursor(rot);
+                if (curRotate) setCursor(curRotate);
+                break;
+            }
+            SDL_Cursor* rc = getResizeCursor(h, rot);
+            if (rc) {
+                setCursor(rc);
+            } else {
+                // Not on a resize handle — check move vs. outside using rotated bounds
+                setCursor(st->isHit(cX, cY) ? curSizeAll : curArrow);
             }
             break;
         }
         case ToolType::RESIZE: {
-            auto* rt=static_cast<ResizeTool*>(currentTool);
-            if(!rt){ setCursor(curArrow); break; }
-            int cX,cY; mapper->getCanvasCoords(mouseWinX,mouseWinY,&cX,&cY);
-            TransformTool::Handle h=rt->getHandleForCursor(cX,cY);
-            switch(h){
-                case TransformTool::Handle::N:
-                case TransformTool::Handle::S:  setCursor(curSizeNS);   break;
-                case TransformTool::Handle::E:
-                case TransformTool::Handle::W:  setCursor(curSizeWE);   break;
-                case TransformTool::Handle::NW:
-                case TransformTool::Handle::SE: setCursor(curSizeNWSE); break;
-                case TransformTool::Handle::NE:
-                case TransformTool::Handle::SW: setCursor(curSizeNESW); break;
-                default: {
-                    SDL_Point pt={cX,cY}; SDL_Rect bounds=rt->getBounds();
-                    setCursor(SDL_PointInRect(&pt,&bounds)?curSizeAll:curArrow); break;
+            auto* rt = static_cast<ResizeTool*>(currentTool);
+            if (!rt) { setCursor(curArrow); break; }
+            float rot = rt->getRotation();
+            int cX, cY; mapper->getCanvasCoords(mouseWinX, mouseWinY, &cX, &cY);
+            if (rt->isMutating()) {
+                if (!dragHandleLocked) {
+                    dragHandleLocked = true;
+                    lockedHandle = rt->getHandleForCursor(cX, cY);
                 }
+            } else {
+                dragHandleLocked = false;
+            }
+            TransformTool::Handle h = dragHandleLocked ? lockedHandle
+                                                       : rt->getHandleForCursor(cX, cY);
+            if (h == TransformTool::Handle::ROTATE) {
+                buildRotateCursor(rot);
+                if (curRotate) setCursor(curRotate);
+                break;
+            }
+            SDL_Cursor* rc = getResizeCursor(h, rot);
+            if (rc) {
+                setCursor(rc);
+            } else {
+                // Not on a resize handle — check move vs. outside using rotated bounds
+                setCursor(rt->isHit(cX, cY) ? curSizeAll : curArrow);
             }
             break;
         }

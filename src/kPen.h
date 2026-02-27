@@ -6,6 +6,7 @@
 #include "Toolbar.h"
 #include "CanvasResizer.h"
 #include "CursorManager.h"
+#include "menu/MacMenu.h"
 
 class kPen : public ICoordinateMapper {
   public:
@@ -55,6 +56,7 @@ class kPen : public ICoordinateMapper {
     struct CanvasState {
         int w = 0, h = 0;
         std::vector<uint32_t> pixels;
+        int serial = 0;  // unique ID assigned at push time
     };
     std::vector<CanvasState> undoStack;
     std::vector<CanvasState> redoStack;
@@ -125,4 +127,21 @@ class kPen : public ICoordinateMapper {
     void copySelectionToClipboard();
     void pasteFromClipboard();
     void deleteSelection();   // delete without stamping back; saves undo state
+
+    // File I/O
+    std::string currentFilePath;
+    int         nextStateSerial = 1;  // increments each time a new state is pushed
+    int         savedStateId    = 0;  // serial of the CanvasState that matches the saved file
+    bool hasUnsavedChanges() const {
+        return undoStack.empty() || undoStack.back().serial != savedStateId;
+    }
+    void updateWindowTitle();
+    bool promptSaveIfNeeded();  // returns false if user cancelled
+    void doSave(bool forceSaveAs);
+    void doOpen();
+
+    // Single dispatcher for all menu-driven actions (MacMenu::Code values).
+    // Called from SDL_USEREVENT (macOS native menu) and synthesised from
+    // SDL_KEYDOWN on Windows/Linux.
+    void dispatchCommand(int code, bool& running, bool& needsRedraw, bool& overlayDirty);
 };
