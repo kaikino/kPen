@@ -6,6 +6,21 @@ SelectTool::~SelectTool() {
     if (selectionTexture) SDL_DestroyTexture(selectionTexture);
 }
 
+// Render the selection texture into the current render target (canvas space)
+// with the current rotation, flip, and bounds applied.
+void SelectTool::renderWithTransform(SDL_Renderer* r, const SDL_Rect& dst) const {
+    SDL_RendererFlip flip = (SDL_RendererFlip)(
+        (flipX ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE) |
+        (flipY ? SDL_FLIP_VERTICAL   : SDL_FLIP_NONE));
+    // SDL_RenderCopyExF with float pivot so rotation center is exact at the
+    // texture midpoint — integer division (w/2) drifts 0.5px for odd sizes,
+    // producing a visible 1px offset at 90/180/270 degree rotations.
+    double angleDeg = rotation * 180.0 / M_PI;
+    SDL_FRect dstF = { (float)dst.x, (float)dst.y, (float)dst.w, (float)dst.h };
+    SDL_FPoint centerF = { dst.w * 0.5f, dst.h * 0.5f };
+    SDL_RenderCopyExF(r, selectionTexture, nullptr, &dstF, angleDeg, &centerF, flip);
+}
+
 void SelectTool::onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) {
     if (active && handleMouseDown(cX, cY)) return;
     AbstractTool::onMouseDown(cX, cY, r, brushSize, color); // start rubber-band draw
@@ -16,7 +31,7 @@ void SelectTool::onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL
 }
 
 bool SelectTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) {
-    if (resizing != Handle::NONE || isMoving) { handleMouseUp(); return false; }
+    if (resizing != Handle::NONE || isMoving || isRotating) { handleMouseUp(); return false; }
     if (!isDrawing || (cX == startX && cY == startY)) { isDrawing = false; return false; }
 
     // Logical selection bounds (may extend outside canvas)
@@ -33,7 +48,6 @@ bool SelectTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_C
     if (rw <= 0 || rh <= 0) { isDrawing = false; return false; }
 
     if (selectionTexture) SDL_DestroyTexture(selectionTexture);
-    // Texture is sized to the canvas-clipped region; we'll render it offset within currentBounds
     selectionTexture = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888,
                                          SDL_TEXTUREACCESS_TARGET, rw, rh);
     SDL_SetTextureBlendMode(selectionTexture, SDL_BLENDMODE_BLEND);
@@ -48,8 +62,8 @@ bool SelectTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_C
     SDL_RenderFillRect(r, &readRect);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
 
-    // Adjust currentBounds to the canvas-clipped rect so texture and bounds stay in sync
     currentBounds = { rx, ry, rw, rh };
+    rotation = 0.f;  // fresh selection always starts unrotated
 
     active = true;
     isDrawing = false;
@@ -58,16 +72,12 @@ bool SelectTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_C
 
 void SelectTool::onOverlayRender(SDL_Renderer* r) {
     if (!active || !selectionTexture) return;
-    SDL_RendererFlip flip = (SDL_RendererFlip)(
-        (flipX ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE) |
-        (flipY ? SDL_FLIP_VERTICAL   : SDL_FLIP_NONE));
-    SDL_RenderCopyEx(r, selectionTexture, nullptr, &currentBounds, 0.0, nullptr, flip);
+    renderWithTransform(r, currentBounds);
 }
 
 void SelectTool::onPreviewRender(SDL_Renderer* r, int /*brushSize*/, SDL_Color /*color*/) {
     if (isDrawing) {
         int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
-        // Unclamped mapping so rubber-band follows cursor outside the canvas edge
         int curX, curY;
         {
             int wx1, wy1, wx2, wy2;
@@ -90,10 +100,7 @@ void SelectTool::onPreviewRender(SDL_Renderer* r, int /*brushSize*/, SDL_Color /
 void SelectTool::deactivate(SDL_Renderer* r) {
     if (!active) return;
     if (selectionTexture) {
-        SDL_RendererFlip flip = (SDL_RendererFlip)(
-            (flipX ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE) |
-            (flipY ? SDL_FLIP_VERTICAL   : SDL_FLIP_NONE));
-        SDL_RenderCopyEx(r, selectionTexture, nullptr, &currentBounds, 0.0, nullptr, flip);
+        renderWithTransform(r, currentBounds);
         SDL_DestroyTexture(selectionTexture);
         selectionTexture = nullptr;
     }
@@ -108,21 +115,24 @@ void SelectTool::activateWithTexture(SDL_Texture* tex, SDL_Rect area) {
     if (selectionTexture) SDL_DestroyTexture(selectionTexture);
     selectionTexture = tex;
     currentBounds = area;
+    rotation = 0.f;
     active = true;
-    dirty  = true;   // pasted content always modifies the canvas on commit
-    isMoving = false;
-    resizing = Handle::NONE;
-    isDrawing = false;
+    dirty  = true;
+    isMoving   = false;
+    isRotating = false;
+    resizing   = Handle::NONE;
+    isDrawing  = false;
 }
 
 std::vector<uint32_t> SelectTool::getFloatingPixels(SDL_Renderer* r) const {
     if (!selectionTexture || currentBounds.w <= 0 || currentBounds.h <= 0)
         return {};
     int w = currentBounds.w, h = currentBounds.h;
-    std::vector<uint32_t> pixels(w * h, 0);
 
-    // selectionTexture is SDL_TEXTUREACCESS_TARGET so LockTexture won't work.
-    // Read via a temporary streaming texture rendered into a target texture.
+    // We need to render with the current rotation into a texture sized to hold
+    // the rotated result. For simplicity we render into the bounds size — the
+    // caller (copySelectionToClipboard) already uses the bounds rect.
+    std::vector<uint32_t> pixels(w * h, 0);
     SDL_Texture* tmp = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888,
                                           SDL_TEXTUREACCESS_TARGET, w, h);
     if (!tmp) return pixels;
@@ -130,7 +140,8 @@ std::vector<uint32_t> SelectTool::getFloatingPixels(SDL_Renderer* r) const {
     SDL_SetRenderTarget(r, tmp);
     SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
     SDL_RenderClear(r);
-    SDL_RenderCopy(r, selectionTexture, nullptr, nullptr);
+    SDL_Rect dst = { 0, 0, w, h };
+    renderWithTransform(r, dst);
     SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), w * 4);
     SDL_SetRenderTarget(r, prev);
     SDL_DestroyTexture(tmp);

@@ -51,34 +51,54 @@ class AbstractTool {
 class TransformTool : public AbstractTool {
   public:
     // Handle is public so CursorManager can switch on it directly.
-    enum class Handle { NONE, N, S, E, W, NE, NW, SE, SW };
+    enum class Handle { NONE, N, S, E, W, NE, NW, SE, SW, ROTATE };
 
   protected:
-    static const int GRAB_WIN = 4;  // hit radius in window pixels (zoom-independent)
+    static const int GRAB_WIN    = 4;   // hit radius in window pixels for square handles
+    static const int ROT_OFFSET  = 28;  // distance above N handle in window pixels
 
     SDL_Rect currentBounds = {0, 0, 0, 0};
+    float    rotation      = 0.f;  // radians, clockwise positive
 
-    Handle resizing = Handle::NONE;
-    bool   isMoving = false;
-    bool   moved    = false;
-    int    anchorX  = 0, anchorY  = 0;
-    int    dragOffX = 0, dragOffY = 0;
-    float  dragAspect = 1.f;  // w/h of currentBounds captured at handleMouseDown
-    bool   flipX    = false;   // toggled each time a horizontal handle crosses anchor
-    bool   flipY    = false;   // toggled each time a vertical handle crosses anchor
+    Handle resizing    = Handle::NONE;
+    bool   isRotating  = false;
+    bool   isMoving    = false;
+    bool   moved       = false;
+    int    anchorX     = 0, anchorY  = 0;
+    int    dragOffX    = 0, dragOffY = 0;
+    float  dragAspect  = 1.f;  // w/h of currentBounds captured at handleMouseDown
+    bool   flipX       = false;
+    bool   flipY       = false;
+    float  rotPivotCX  = 0.f;  // canvas-space center at rotation drag start
+    float  rotPivotCY  = 0.f;
+    float  rotStartAngle = 0.f; // angle from pivot to mouse at drag start
+    float  rotBaseAngle  = 0.f; // rotation value at drag start
+    float  rotLastAngle  = 0.f; // raw atan2 angle from previous frame (for wraparound)
+    float  anchorWorldX  = 0.f; // world-space position of resize anchor (set at mousedown)
+    float  anchorWorldY  = 0.f;
 
+    // Returns window-space position of the rotate handle circle center.
+    void   getRotateHandleWin(int& wx, int& wy) const;
     Handle getHandle(int cX, int cY) const;
     void   drawHandles(SDL_Renderer* r) const;
     bool   handleMouseDown(int cX, int cY);
     bool   handleMouseMove(int cX, int cY, bool aspectLock = false);
     void   handleMouseUp();
 
+    // Transform a canvas point through the current rotation about the bounds center.
+    // Returns rotated canvas coordinates.
+    void rotatePt(float inX, float inY, float pivX, float pivY,
+                  float angle, float& outX, float& outY) const;
+    // Test whether a canvas point lies inside the (possibly rotated) bounds.
+    bool pointInRotatedBounds(int cX, int cY) const;
+
   public:
     using AbstractTool::AbstractTool;
     bool isHit              (int cX, int cY) const;
     bool hasMoved           () const { return moved; }
-    bool isMutating         () const { return isMoving || resizing != Handle::NONE; }
+    bool isMutating         () const { return isMoving || isRotating || resizing != Handle::NONE; }
     SDL_Rect getFloatingBounds() const { return currentBounds; }
+    float    getRotation()      const { return rotation; }
     // Used by CursorManager to pick the right resize-arrow cursor.
     Handle getHandleForCursor(int cX, int cY) const { return getHandle(cX, cY); }
 };
@@ -100,11 +120,15 @@ class SelectTool : public TransformTool {
     void deactivate (SDL_Renderer* r) override;
     bool hasOverlayContent() override { return active; }
     bool isSelectionActive() const    { return active; }
-    bool isDirty()           const    { return dirty || hasMoved(); }
+    bool isDirty()           const    { return dirty || hasMoved() || rotation != 0.f; }
     bool isHit(int cX, int cY) const;
     void activateWithTexture(SDL_Texture* tex, SDL_Rect area);
     void setBounds(SDL_Rect area) { currentBounds = area; }
     std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;
+  private:
+    // Render the selection texture into renderer r with the current rotation,
+    // flip, and bounds. dst is in the coordinate space of r (canvas or window).
+    void renderWithTransform(SDL_Renderer* r, const SDL_Rect& dst) const;
 };
 
 // ── ResizeTool ────────────────────────────────────────────────────────────────
@@ -117,6 +141,7 @@ class ResizeTool : public TransformTool {
 
     void renderShape(SDL_Renderer* r, const SDL_Rect& bounds,
                      int bs, SDL_Color col, int clipW = 0, int clipH = 0) const;
+    void renderShapeRotated(SDL_Renderer* r, SDL_Color col, int clipW, int clipH) const;
   public:
     int*      liveBrushSize;  // points to toolbar.brushSize — always current
     bool      shapeFilled;
