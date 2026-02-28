@@ -48,6 +48,10 @@ class Toolbar {
     int selectedCustomSlot = -1;
     int selectedPresetSlot = -1;
 
+    // Fired whenever the user changes brush color via wheel, brightness bar, or swatch.
+    // kPen uses this to fill an active selection with the new color in real time.
+    std::function<void(SDL_Color)> onColorChanged;
+
     Toolbar(SDL_Renderer* renderer, kPen* app);
 
     // Draw the entire toolbar panel
@@ -110,7 +114,7 @@ class Toolbar {
 
     // Brush size text input
     bool brushSizeFocused   = false;
-    char brushSizeBuf[3]    = {'2', 0, 0};  // up to 2 digits (1–20)
+    char brushSizeBuf[3]    = {'8', 0, 0};  // must match default brushSize above
     int  brushSizeLen       = 1;
     mutable SDL_Rect brushSizeFieldRect = {0, 0, 0, 0};  // cached in screen space by draw()
 

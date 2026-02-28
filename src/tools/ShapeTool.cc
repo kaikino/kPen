@@ -5,8 +5,48 @@
 ShapeTool::ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb, bool fill)
     : AbstractTool(m), type(t), onShapeReady(std::move(cb)), filled(fill) {}
 
+// Apply shift-key constraint to the drag endpoint (curX, curY) relative to
+// (startX, startY).  For LINE: snap to nearest 45° axis.  For RECT/CIRCLE:
+// constrain to square by taking the smaller dimension on each axis.
+// Only called when shift is held.
+static void applyShiftConstraint(ToolType type, int startX, int startY,
+                                  int& curX, int& curY) {
+    int dx = curX - startX;
+    int dy = curY - startY;
+    if (dx == 0 && dy == 0) return;
+
+    if (type == ToolType::LINE) {
+        // Snap to the nearest 45° multiple: H, V, or one of two diagonals.
+        // Find which octant the drag is in and clamp to its axis.
+        int adx = std::abs(dx), ady = std::abs(dy);
+        if (adx > ady * 2) {
+            // Closer to horizontal — lock Y
+            curY = startY;
+        } else if (ady > adx * 2) {
+            // Closer to vertical — lock X
+            curX = startX;
+        } else {
+            // Diagonal — make dx and dy equal magnitude
+            int d = std::min(adx, ady);
+            curX = startX + (dx >= 0 ? d : -d);
+            curY = startY + (dy >= 0 ? d : -d);
+        }
+    } else {
+        // RECT / CIRCLE — constrain to square: use the smaller extent on both axes.
+        int adx = std::abs(dx), ady = std::abs(dy);
+        int d = std::min(adx, ady);
+        curX = startX + (dx >= 0 ? d : -d);
+        curY = startY + (dy >= 0 ? d : -d);
+    }
+}
+
 bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
     if (!isDrawing) return false;
+    if (cX == startX && cY == startY) { isDrawing = false; return false; }
+
+    if (SDL_GetModState() & KMOD_SHIFT)
+        applyShiftConstraint(type, startX, startY, cX, cY);
+
     if (cX == startX && cY == startY) { isDrawing = false; return false; }
 
     int li = (brushSize - 1) / 2;
@@ -136,6 +176,9 @@ void ShapeTool::onOverlayRender(SDL_Renderer* r) {
     mapper->getCanvasCoords(mouseX, mouseY, &curX, &curY);
     if (curX == startX && curY == startY) return;
 
+    if (SDL_GetModState() & KMOD_SHIFT)
+        applyShiftConstraint(type, startX, startY, curX, curY);
+
     int cw, ch; mapper->getCanvasSize(&cw, &ch);
     SDL_Color drawColor = cachedColor;
     if (drawColor.a == 0) {
@@ -156,6 +199,9 @@ void ShapeTool::onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color)
     int curX, curY;
     mapper->getCanvasCoords(mouseX, mouseY, &curX, &curY);
     if (curX == startX && curY == startY) return;
+
+    if (SDL_GetModState() & KMOD_SHIFT)
+        applyShiftConstraint(type, startX, startY, curX, curY);
 
     if (type == ToolType::LINE) return;  // line shows the stroke itself, no bounding box while drawing
 

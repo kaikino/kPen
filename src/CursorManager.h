@@ -40,7 +40,7 @@ public:
 private:
     // System cursors
     SDL_Cursor* curArrow    = nullptr;
-    SDL_Cursor* curCross    = nullptr;
+    SDL_Cursor* curCross    = nullptr;  // custom large crosshair (replaces system cursor)
     SDL_Cursor* curHand     = nullptr;
     SDL_Cursor* curSizeAll  = nullptr;
     SDL_Cursor* curSizeNS   = nullptr;
@@ -49,10 +49,19 @@ private:
     SDL_Cursor* curSizeNESW = nullptr;
 
     // Custom bitmap cursors
-    SDL_Cursor* curBucket   = nullptr;  // fill tool — rebuilt on color change
-    SDL_Cursor* curBrush    = nullptr;  // rebuilt on change
-    SDL_Cursor* curEraser   = nullptr;  // rebuilt on change
-    SDL_Cursor* curPick     = nullptr;  // eyedropper — built once in init()
+    SDL_Cursor* curBucket    = nullptr;  // fill tool — rebuilt on color change
+    SDL_Cursor* curBrush     = nullptr;  // rebuilt on change
+    SDL_Cursor* curEraser    = nullptr;  // rebuilt on change
+    SDL_Cursor* curPick      = nullptr;  // eyedropper — built once in init()
+    SDL_Cursor* curCrossHairBrush  = nullptr;  // tiny-brush crosshair (brush color dot)
+    SDL_Cursor* curCrossHairEraser = nullptr;  // tiny-brush crosshair (eraser color dot)
+    int         lastCrossHairWinSz  = -1;
+    bool        lastCrossHairSquare = false;
+    SDL_Color   lastCrossHairColor  = {255, 255, 255, 0};  // invalid sentinel
+
+    // Window-pixel threshold: if the brush would render smaller than this, show the
+    // crosshair cursor instead of the brush/eraser shape so the hotspot stays precise.
+    static constexpr int TINY_BRUSH_WIN_PX = 14;
 
     // 8 rotated resize-arrow cursors (slots 0–7 = 0°, 45°, 90°, … 315°).
     // Slot i points in direction i*45° clockwise from North (up).
@@ -60,10 +69,14 @@ private:
     static constexpr int NUM_RESIZE_SLOTS = 8;
     SDL_Cursor* curResize[NUM_RESIZE_SLOTS] = {};
     float       lastResizeRotationDeg = -9999.f;  // sentinel — forces first build
+    bool        lastResizeFlipX       = false;
+    bool        lastResizeFlipY       = false;
 
     // Rotate-handle cursor: a curved arc arrow, rebuilt on rotation change.
     SDL_Cursor* curRotate            = nullptr;
-    float       lastRotateCursorDeg  = -9999.f;
+    float       lastRotateCursorDeg   = -9999.f;
+    bool        lastRotateFlipX       = false;
+    bool        lastRotateFlipY       = false;
 
     // Cursor lock during active drags — keeps the cursor stable even when the
     // mouse wanders off the shape (e.g. rotating with the mouse far from centre).
@@ -85,16 +98,14 @@ private:
     void buildBrushCursors(ICoordinateMapper* mapper, int brushSize,
                            bool squareBrush, SDL_Color color);
 
-    // Build/rebuild the 8 directional resize cursors for a given base rotation.
-    // rotationRad: the shape's current rotation in radians (clockwise positive).
-    void buildResizeCursors(float rotationRad);
+    // Build/rebuild the 8 directional resize cursors (rotation + optional flip for during-drag).
+    void buildResizeCursors(float rotationRad, bool flipX, bool flipY);
 
-    // Build/rebuild the rotate cursor for a given shape rotation.
-    void buildRotateCursor(float rotationRad);
+    // Build/rebuild the rotate cursor (rotation + optional flip for during-drag).
+    void buildRotateCursor(float rotationRad, bool flipX, bool flipY);
 
-    // Return the resize cursor for a given handle, accounting for shape rotation.
-    // rotationRad: shape's current rotation in radians.
-    SDL_Cursor* getResizeCursor(TransformTool::Handle h, float rotationRad);
+    // Return the resize cursor for a given handle (pass flip only when isMutating() so post-resize stays correct).
+    SDL_Cursor* getResizeCursor(TransformTool::Handle h, float rotationRad, bool flipX, bool flipY);
 
     // Draw a double-headed arrow into a Bitmap, pointing at angleDeg clockwise
     // from north (up), then rotate the bitmap. Returns a new SDL_Cursor.
@@ -102,6 +113,11 @@ private:
 
     // Draw a curved arc-arrow cursor rotated to angleDeg. Returns a new SDL_Cursor.
     static SDL_Cursor* makeRotateCursor(float angleDeg);
+
+    // Crosshair: XOR center dot (sized to current brush window pixels) + thin arms.
+    // Rebuilt whenever the effective dot size changes.
+    static SDL_Cursor* makeCrossHairCursor(int dotRadius, bool squareDot = false, Uint32 dotColor = 0xFF000000);
+    void buildCrossHairCursor(int winSz, bool squareBrush, SDL_Color brushColor);
 
     SDL_Cursor* makeColorCursor(const Uint32* argb, int w, int h, int hotX, int hotY);
 

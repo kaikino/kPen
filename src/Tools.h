@@ -99,6 +99,8 @@ class TransformTool : public AbstractTool {
     bool isMutating         () const { return isMoving || isRotating || resizing != Handle::NONE; }
     SDL_Rect getFloatingBounds() const { return currentBounds; }
     float    getRotation()      const { return rotation; }
+    bool     getFlipX()         const { return flipX; }
+    bool     getFlipY()         const { return flipY; }
     // Used by CursorManager to pick the right resize-arrow cursor.
     Handle getHandleForCursor(int cX, int cY) const { return getHandle(cX, cY); }
 
@@ -132,6 +134,8 @@ class SelectTool : public TransformTool {
     void activateWithTexture(SDL_Texture* tex, SDL_Rect area);
     void setBounds(SDL_Rect area) { currentBounds = area; }
     std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;
+    // Fill the floating selection with a solid color (used when a color is picked while selected).
+    void fillWithColor(SDL_Renderer* r, SDL_Color color);
   private:
     // Render the selection texture into renderer r with the current rotation,
     // flip, and bounds. dst is in the coordinate space of r (canvas or window).

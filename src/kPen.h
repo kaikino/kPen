@@ -81,10 +81,12 @@ class kPen : public ICoordinateMapper {
     float viewScrollRawZoom  = 0.f;   // accumulated raw zoom input since gesture start
 
     // Two-finger pan gesture tracking
-    bool  multiGestureActive = false;
-    float lastGestureCX      = 0.f;
-    float lastGestureCY      = 0.f;
-    int   activeFingers      = 0;    // live count via FINGERDOWN/FINGERUP
+    bool  multiGestureActive   = false;
+    float lastGestureCX        = 0.f;
+    float lastGestureCY        = 0.f;
+    int   activeFingers        = 0;    // live count via FINGERDOWN/FINGERUP
+    bool  gestureNeedsRecenter = false; // skip pan delta on next MULTIGESTURE, just recapture centroid
+    int   zoomPriorityEvents   = 0;    // after 1→2 fingers: skip pan for this many MULTIGESTUREs so pinch can arm
 
     // Second-finger tap detection — synthesizes a click when a quick tap lands
     // while one finger is already moving (macOS delays/drops the MOUSEBUTTONDOWN).
@@ -101,9 +103,13 @@ class kPen : public ICoordinateMapper {
     float zoomTarget = 1.f;
 
     // Per-gesture pinch state — reset each time fingers lift so accumulation is clean
-    bool  pinchActive   = false;
-    float pinchBaseZoom = 1.f;
-    float pinchRawDist  = 0.f;
+    bool  pinchActive     = false;
+    float pinchBaseZoom   = 1.f;
+    float pinchRawDist    = 0.f;
+    // Pivot when 2nd finger lands: midpoint of both fingers in window coords; used for zoom so pan→lift→zoom works.
+    float twoFingerPivotX   = 0.f;
+    float twoFingerPivotY   = 0.f;
+    bool  twoFingerPivotSet = false;
 
     SDL_Rect  getFitViewport();   // canvas fitted to window, centered — no zoom/pan
     SDL_Rect  getViewport();      // getFitViewport() + zoom + pan applied (integer, for hit-testing)

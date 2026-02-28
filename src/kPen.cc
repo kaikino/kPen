@@ -42,6 +42,17 @@ kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
 
     toolbar.syncCanvasSize(canvasW, canvasH);
     setTool(ToolType::SELECT);
+
+    // When the user picks a color while a selection is floating, fill it immediately.
+    // The selection texture is updated in-place; undo is handled naturally when the
+    // selection is committed (deactivate saves state just like any other move/resize).
+    toolbar.onColorChanged = [this](SDL_Color color) {
+        if (currentType != ToolType::SELECT) return;
+        auto* st = static_cast<SelectTool*>(currentTool.get());
+        if (!st || !st->isSelectionActive()) return;
+        st->fillWithColor(renderer, color);
+    };
+
     savedStateId = nextStateSerial;  // pre-mark: saveState will assign this serial, so title shows clean
     saveState(undoStack);
     zoomTarget = zoom;
@@ -133,18 +144,23 @@ bool kPen::tickView() {
     bool animating = false;
     const float k = 0.18f;
 
-    // Always lerp zoom toward zoomTarget using the live mouse position as pivot.
-    // This runs even during viewScrolling so ctrl+scroll feels smooth, not jumpy.
+    // Lerp zoom toward zoomTarget. When pinching use the pivot stored when 2nd finger landed
+    // (twoFingerPivot); else use mouse. That way pan→lift→zoom uses a stable reset pivot.
     {
         float clamped = std::max(MIN_ZOOM, std::min(MAX_ZOOM, zoomTarget));
         float diff = clamped - zoom;
+        int pivotX, pivotY;
+        if (pinchActive && twoFingerPivotSet) {
+            pivotX = (int)twoFingerPivotX;
+            pivotY = (int)twoFingerPivotY;
+        } else {
+            SDL_GetMouseState(&pivotX, &pivotY);
+        }
         if (std::abs(diff) > 0.0002f) {
-            int mx, my; SDL_GetMouseState(&mx, &my);
-            zoomAround(zoom + diff * k, mx, my);
+            zoomAround(zoom + diff * k, pivotX, pivotY);
             animating = true;
         } else if (zoom != clamped) {
-            int mx, my; SDL_GetMouseState(&mx, &my);
-            zoomAround(clamped, mx, my);
+            zoomAround(clamped, pivotX, pivotY);
         }
     }
 
@@ -1036,6 +1052,7 @@ void kPen::run() {
                     multiGestureActive = false;  // re-capture centroid on next MULTIGESTURE to avoid jump
                     pinchActive        = false;
                 }
+
             }
             if (e.type == SDL_FINGERUP) {
                 int prevFingers = activeFingers;
@@ -1046,6 +1063,15 @@ void kPen::run() {
                 if (prevFingers >= 3 && activeFingers == 2) {
                     multiGestureActive = false;  // will be re-armed by next MULTIGESTURE
                     pinchActive        = false;
+                }
+                // Dropping 2→1 while a gesture was active: reset so when the second finger
+                // returns we treat it as a fresh gesture. This makes pan→lift→zoom reliable
+                // regardless of finger position (no stale centroid or pan applied on first move).
+                if (prevFingers == 2 && activeFingers == 1 && multiGestureActive) {
+                    multiGestureActive   = false;   // next 2-finger gesture starts clean
+                    gestureNeedsRecenter = true;
+                    pinchActive          = false;
+                    zoomPriorityEvents   = 3;     // when 2nd finger returns, skip pan for 3 events so pinch can arm
                 }
                 // Clear threeFingerPanMode only when all fingers lift
                 if (activeFingers == 0) {
@@ -1067,7 +1093,17 @@ void kPen::run() {
                 tapDownY       = e.tfinger.y * winH;
                 tapDownTime    = e.tfinger.timestamp;
                 tapPending     = true;
-                tapSawGesture  = false;
+                tapSawGesture  = multiGestureActive;
+                gestureNeedsRecenter = true;
+                pinchActive          = false;
+                zoomPriorityEvents   = 3;
+                // Store the new 2-finger positions as the zoom pivot (reset for this gesture).
+                // Clamp to window bounds so zoomAround() doesn't produce huge pan deltas that get
+                // snapped back and make zoom feel capped.
+                int mx, my; SDL_GetMouseState(&mx, &my);
+                twoFingerPivotX   = std::max(0.f, std::min((float)winW, (mx + e.tfinger.x * winW) * 0.5f));
+                twoFingerPivotY   = std::max(0.f, std::min((float)winH, (my + e.tfinger.y * winH) * 0.5f));
+                twoFingerPivotSet = true;
                 } else {
                     // 3rd+ finger: cancel any pending tap to avoid a false draw-click
                     tapPending = false;
@@ -1080,9 +1116,9 @@ void kPen::run() {
                 float upY = e.tfinger.y * winH;
                 float dx = upX - tapDownX, dy = upY - tapDownY;
                 Uint32 dt = e.tfinger.timestamp - tapDownTime;
-                // Tap = short duration (<300ms), little movement (<10px), and
-                // cursor was moving (confirms a drag+tap, not a plain press+release)
-                if (dt < 300 && dx*dx + dy*dy < 100.f && tapSawGesture) {
+                // Tap = short duration (<300ms), little movement (<10px),
+                // cursor was moving (confirms drag+tap), and we didn't zoom (pinch).
+                if (dt < 300 && dx*dx + dy*dy < 100.f && tapSawGesture && !pinchActive) {
                     int tx = (int)upX, ty = (int)upY;
 
                     // Toolbar tap — route through normal toolbar click path.
@@ -1125,7 +1161,10 @@ void kPen::run() {
 
                         withCanvas([&]{ currentTool->onMouseDown(tapCX, tapCY, renderer, toolbar.brushSize, toolbar.brushColor); });
                         if (currentType == ToolType::FILL) saveState(undoStack);
-                        withCanvas([&]{ currentTool->onMouseUp  (tapCX, tapCY, renderer, toolbar.brushSize, toolbar.brushColor); });
+                        bool tapChanged = false;
+                        withCanvas([&]{ tapChanged = currentTool->onMouseUp(tapCX, tapCY, renderer, toolbar.brushSize, toolbar.brushColor); });
+                        if (tapChanged && currentType != ToolType::SELECT && currentType != ToolType::RESIZE)
+                            saveState(undoStack);
                         needsRedraw = true; overlayDirty = true;
                     }
                 }
@@ -1141,6 +1180,14 @@ void kPen::run() {
             // ── Pinch-to-zoom + two-finger pan ──
             if (e.type == SDL_MULTIGESTURE && tapPending) { tapSawGesture = true; }
             if (e.type == SDL_MULTIGESTURE) {
+                // MULTIGESTURE implies 2+ fingers; sync count if we got this before FINGERDOWN
+                // (e.g. after a tap, event order can leave activeFingers stale).
+                if (activeFingers < 2) {
+                    activeFingers        = 2;
+                    gestureNeedsRecenter = true;
+                    zoomPriorityEvents   = 3;
+                    pinchActive          = false;
+                }
                 // 3-finger gesture started fresh: suppress pan/zoom so mouse events
                 // drive drawing normally. But if we got here via 2->3 finger transition
                 // (threeFingerPanMode), continue pan/zoom instead.
@@ -1157,41 +1204,65 @@ void kPen::run() {
                 bool overToolbar = toolbar.inToolbar(mx, my);
                 bool ctrlHeld    = (SDL_GetModState() & (KMOD_GUI | KMOD_CTRL)) != 0;
 
-                // ① Zoom first — skip if over toolbar or ctrl held (ctrl+scroll owns zoom)
-                if (std::abs(e.mgesture.dDist) > 0.0002f && !overToolbar && !ctrlHeld) {
+                // ① Zoom — skip if over toolbar or ctrl held.
+                // Arm pinch when we see pinch (dDist) OR when we're in zoom-priority window
+                // (second finger just landed) so zoom has a valid pivot and can start on next move.
+                bool zoomEligible = !overToolbar && !ctrlHeld;
+                bool pinchDetected = std::abs(e.mgesture.dDist) > 0.00008f;
+                bool inZoomPriority = (zoomPriorityEvents > 0);
+                if (zoomEligible && (pinchDetected || inZoomPriority)) {
                     if (!pinchActive) {
                         pinchBaseZoom = zoom;
                         pinchRawDist  = 0.f;
                         pinchActive   = true;
                         viewScrolling = true;
+                        if (pinchDetected) tapPending = false;  // only cancel tap on real pinch
                     }
                     pinchRawDist += e.mgesture.dDist * 6.f;
                     float rawZoom = pinchBaseZoom * expf(pinchRawDist);
                     zoomTarget = std::max(MIN_ZOOM, std::min(MAX_ZOOM, rawZoom));
                 }
 
-                // ② Pan second — skip if over toolbar or ctrl held
-                if (multiGestureActive && !overToolbar && !ctrlHeld) {
+                // ② Pan second — skip if over toolbar or ctrl held.
+                // Skip if centroid needs recapture or we're in the zoom-priority window
+                // (after 1→2 fingers so pinch can arm).
+                if (multiGestureActive && !gestureNeedsRecenter && zoomPriorityEvents == 0 && !overToolbar && !ctrlHeld) {
                     panX += cx - lastGestureCX;
                     panY += cy - lastGestureCY;
                     viewScrolling = true;
                 }
+                if (zoomPriorityEvents > 0) zoomPriorityEvents--;
+                gestureNeedsRecenter = false;
                 lastGestureCX      = cx;
                 lastGestureCY      = cy;
+                // First MULTIGESTURE event confirms a pan/zoom gesture. If a draw
+                // stroke is in progress, commit it now — MOUSEBUTTONUP is suppressed
+                // while multiGestureActive, so this is the last safe opportunity.
+                if (!multiGestureActive && currentTool && currentTool->isActive()) {
+                    int mx, my; SDL_GetMouseState(&mx, &my);
+                    int fx, fy; getCanvasCoords(mx, my, &fx, &fy);
+                    bool strokeChanged = false;
+                    withCanvas([&]{ strokeChanged = currentTool->onMouseUp(fx, fy, renderer, toolbar.brushSize, toolbar.brushColor); });
+                    if (strokeChanged && currentType != ToolType::SELECT && currentType != ToolType::RESIZE)
+                        saveState(undoStack);
+                }
                 multiGestureActive = true;
 
                 needsRedraw = true;
                 } // end pan/zoom branch
             }
 
-            // Reset gesture tracking when fingers lift
-            if (e.type == SDL_FINGERUP && activeFingers <= 1) {
-                multiGestureActive = false;
-                pinchActive        = false;
-                if (activeFingers == 0) {
-                    viewScrolling   = false;
-                    tapConsumed     = false;  // ensure stale tapConsumed never blocks a real click
-                }
+            // Reset all gesture tracking when all fingers lift.
+            if (e.type == SDL_FINGERUP && activeFingers == 0) {
+                multiGestureActive   = false;
+                pinchActive          = false;
+                gestureNeedsRecenter = false;
+                zoomPriorityEvents   = 0;
+                twoFingerPivotX      = 0.f;
+                twoFingerPivotY      = 0.f;
+                twoFingerPivotSet    = false;
+                viewScrolling        = false;
+                tapConsumed          = false;
             }
 
             int cX, cY;

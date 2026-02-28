@@ -166,15 +166,15 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
             break;
         }
         case ToolType::FILL: {
-            int ox = cx - 2;
+            int ox = cx + 2;   // shift diamond center slightly right (mirror of old cx-2)
             int oy = cy + 2;
             s -= 2;
 
-            // Diamond outline
-            SDL_RenderDrawLine(renderer, ox,    oy-s, ox+s, oy  ); // top-right
-            SDL_RenderDrawLine(renderer, ox+s,  oy,   ox,   oy+s); // bottom-right
-            SDL_RenderDrawLine(renderer, ox,    oy+s, ox-s, oy  ); // bottom-left
-            SDL_RenderDrawLine(renderer, ox-s,  oy,   ox,   oy-s); // top-left
+            // Diamond outline (symmetric about ox — unchanged)
+            SDL_RenderDrawLine(renderer, ox,    oy-s, ox+s, oy  );
+            SDL_RenderDrawLine(renderer, ox+s,  oy,   ox,   oy+s);
+            SDL_RenderDrawLine(renderer, ox,    oy+s, ox-s, oy  );
+            SDL_RenderDrawLine(renderer, ox-s,  oy,   ox,   oy-s);
 
             // Fill bottom half: triangle with wide base at middle, narrows to point at bottom
             for (int row = 2; row <= s; row++) {
@@ -182,13 +182,13 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
                 SDL_RenderDrawLine(renderer, ox - halfW, oy + row, ox + halfW, oy + row);
             }
 
-            // Handle: angled same direction as top-right edge (slope +1, going up-right from top corner)
-            int hLen = 3; // stay within icon box
-            SDL_RenderDrawLine(renderer, ox,      oy-s,      ox-hLen,   oy-s-hLen);
-            SDL_RenderDrawLine(renderer, ox-1,    oy-s,      ox-hLen-1, oy-s-hLen);
+            // Handle: now goes UP-RIGHT (was up-left)
+            int hLen = 3;
+            SDL_RenderDrawLine(renderer, ox,      oy-s,      ox+hLen,   oy-s-hLen);
+            SDL_RenderDrawLine(renderer, ox+1,    oy-s,      ox+hLen+1, oy-s-hLen);
 
-            // Drip below bottom-right
-            int dx = ox + s + 2, dy = cy + 2;
+            // Drip: now BOTTOM-LEFT (was bottom-right)
+            int dx = ox - s - 2, dy = cy + 2;
             SDL_RenderDrawPoint(renderer, dx,   dy  );
             SDL_RenderDrawLine(renderer, dx-1, dy+1, dx+1, dy+1);
             SDL_RenderDrawLine(renderer, dx-2, dy+2, dx+2, dy+2);
@@ -479,6 +479,7 @@ void Toolbar::updateWheelFromMouse(int x, int y) {
     brushColor = hsvToRgb(hue, sat, val);
     selectedPresetSlot = -1;
     if (selectedCustomSlot >= 0) customColors[selectedCustomSlot] = brushColor;
+    if (onColorChanged) onColorChanged(brushColor);
 }
 
 void Toolbar::updateBrightnessFromMouse(int x) {
@@ -487,6 +488,7 @@ void Toolbar::updateBrightnessFromMouse(int x) {
     brushColor = hsvToRgb(hue, sat, val);
     selectedPresetSlot = -1;
     if (selectedCustomSlot >= 0) customColors[selectedCustomSlot] = brushColor;
+    if (onColorChanged) onColorChanged(brushColor);
 }
 
 // ── Event handling ────────────────────────────────────────────────────────────
@@ -716,6 +718,7 @@ bool Toolbar::onMouseDown(int x, int y) {
                 selectedPresetSlot = -1;
                 brushColor = customColors[i];
                 rgbToHsv(brushColor, hue, sat, val);
+                if (onColorChanged) onColorChanged(brushColor);
             }
             draggingSwatch    = true;
             draggingSwatchIdx = i;
@@ -734,6 +737,7 @@ bool Toolbar::onMouseDown(int x, int y) {
                 selectedCustomSlot = -1;
                 brushColor = PRESETS[i];
                 rgbToHsv(brushColor, hue, sat, val);
+                if (onColorChanged) onColorChanged(brushColor);
             }
             if (i != 0) {
                 draggingSwatch    = true;

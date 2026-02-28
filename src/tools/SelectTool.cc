@@ -147,3 +147,17 @@ std::vector<uint32_t> SelectTool::getFloatingPixels(SDL_Renderer* r) const {
     SDL_DestroyTexture(tmp);
     return pixels;
 }
+
+void SelectTool::fillWithColor(SDL_Renderer* r, SDL_Color color) {
+    if (!selectionTexture || !active) return;
+    // Render a solid color fill into the selection texture, replacing its pixels.
+    // BLENDMODE_NONE so even transparent color fully overwrites existing content.
+    SDL_Texture* prev = SDL_GetRenderTarget(r);
+    SDL_SetRenderTarget(r, selectionTexture);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(r, color.r, color.g, color.b, color.a);
+    SDL_RenderClear(r);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderTarget(r, prev);
+    dirty = true;
+}
