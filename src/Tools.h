@@ -101,6 +101,13 @@ class TransformTool : public AbstractTool {
     float    getRotation()      const { return rotation; }
     // Used by CursorManager to pick the right resize-arrow cursor.
     Handle getHandleForCursor(int cX, int cY) const { return getHandle(cX, cY); }
+
+  protected:
+    // Called by handleMouseMove just before applying a resize to currentBounds.
+    // Subclasses can override to snap newW/newH to shape-specific constraints
+    // (e.g. ensuring even center-point span for unfilled ovals so both edges
+    // of the stroke exactly reach the handle box). Default: no-op.
+    virtual void snapBounds(int& /*newX*/, int& /*newY*/, int& /*newW*/, int& /*newH*/) {}
 };
 
 // ── SelectTool ────────────────────────────────────────────────────────────────
@@ -159,6 +166,10 @@ class ResizeTool : public TransformTool {
     SDL_Rect getBounds() const        { return currentBounds; }
     bool willRender() const;  // true if the shape will produce visible pixels at current bounds/brushSize
     std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;
+  protected:
+    // Snap currentBounds so that unfilled oval center spans are always even,
+    // guaranteeing the Bresenham algorithm reaches both edges exactly.
+    void snapBounds(int& newX, int& newY, int& newW, int& newH) override;
 };
 
 // ── Other tools ───────────────────────────────────────────────────────────────

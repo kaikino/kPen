@@ -173,8 +173,14 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
         rotLastAngle = angle;
         rotation += delta;
         if (aspectLock) {
-            const float snap = (float)M_PI / 12.f;
-            rotation = std::round(rotation / snap) * snap;
+            const float snap = (float)M_PI / 12.f;  // 15°
+            float snapped = std::round(rotation / snap) * snap;
+            // Force exact multiples of π/2 (90°) to avoid floating-point drift
+            // that makes it impossible to land precisely on 0, 90, 180, 270°.
+            float quarterTurns = std::round(rotation / ((float)M_PI * 0.5f));
+            float quarter = quarterTurns * (float)M_PI * 0.5f;
+            if (std::abs(snapped - quarter) < snap * 0.1f) snapped = quarter;
+            rotation = snapped;
         }
         return true;
     }
@@ -389,6 +395,7 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
             }
         }
 
+        snapBounds(newX, newY, newW, newH);
         currentBounds = { newX, newY, newW, newH };
         return true;
     }

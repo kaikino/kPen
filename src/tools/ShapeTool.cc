@@ -46,19 +46,27 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
         int minX = std::min(startX, cX), minY = std::min(startY, cY);
         if (type == ToolType::CIRCLE) {
             if (filled) {
-                SDL_Rect cb = DrawingUtils::getOvalCenterBounds(minX, minY, minX + dw - 1, minY + dh - 1);
-                if (cb.w == 0 && cb.h == 0) { isDrawing = false; return false; }
-                bounds = origBounds = { cb.x, cb.y, cb.w + 1, cb.h + 1 };
+                if (dw < 1 || dh < 1) { isDrawing = false; return false; }
+                // For a filled oval the pixel footprint equals the draw extent:
+                // every pixel inside the ellipse defined by {minX,minY,maxX,maxY}
+                // is filled, so currentBounds (= bounds) can sit exactly there.
+                // origBounds == bounds for scale-invariant re-rendering.
+                bounds = origBounds = { minX, minY, dw, dh };
             } else {
                 int cx0 = minX + li, cy0 = minY + li;
                 int cx1 = minX + dw - 1 - ri, cy1 = minY + dh - 1 - ri;
                 if (cx1 < cx0 || cy1 < cy0) { isDrawing = false; return false; }
+                // Compute the tight center-point box the oval algorithm actually plots,
+                // then expand by the brush half-sizes to get the true pixel footprint.
+                // This ensures handles sit on actual pixels, not on the raw mouse rect.
+                // origBounds stores the draw coords {cx0,cy0,w,h} for re-rendering.
                 SDL_Rect cb = DrawingUtils::getOvalCenterBounds(cx0, cy0, cx1, cy1);
                 if (cb.w == 0 && cb.h == 0) { isDrawing = false; return false; }
-                bounds = origBounds = {
-                    cb.x - li, cb.y - li,
-                    cb.w + brushSize, cb.h + brushSize
-                };
+                origBounds = { cx0, cy0, cx1 - cx0 + 1, cy1 - cy0 + 1 };
+                // Handle-space: expand tight center bounds by brush insets on each side.
+                bounds = { cb.x - li, cb.y - li,
+                           cb.w + 1 + li + ri,
+                           cb.h + 1 + li + ri };
             }
         } else {
             bounds = origBounds = { minX, minY, dw, dh };

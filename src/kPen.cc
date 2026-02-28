@@ -42,8 +42,8 @@ kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
 
     toolbar.syncCanvasSize(canvasW, canvasH);
     setTool(ToolType::SELECT);
+    savedStateId = nextStateSerial;  // pre-mark: saveState will assign this serial, so title shows clean
     saveState(undoStack);
-    savedStateId = undoStack.back().serial;  // treat initial blank as "saved"
     zoomTarget = zoom;
 }
 
@@ -755,6 +755,12 @@ void kPen::doOpen() {
     savedStateId = undoStack.back().serial;
     updateWindowTitle();
     zoom = 1.f; zoomTarget = 1.f; panX = 0.f; panY = 0.f;
+    viewScrolling      = false;
+    viewScrollRawX     = 0.f; viewScrollRawY = 0.f; viewScrollRawZoom = 0.f;
+    multiGestureActive = false;
+    pinchActive        = false;
+    activeFingers      = 0;
+    tapPending         = false;
 }
 
 // ── Run loop ──────────────────────────────────────────────────────────────────
@@ -782,6 +788,13 @@ void kPen::dispatchCommand(int code, bool& running, bool& needsRedraw, bool& ove
                 savedStateId = undoStack.back().serial;
                 updateWindowTitle();
                 zoom = 1.f; zoomTarget = 1.f; panX = 0.f; panY = 0.f;
+                // Reset all scroll/gesture state so zoom and pan work immediately
+                viewScrolling      = false;
+                viewScrollRawX     = 0.f; viewScrollRawY = 0.f; viewScrollRawZoom = 0.f;
+                multiGestureActive = false;
+                pinchActive        = false;
+                activeFingers      = 0;
+                tapPending         = false;
                 needsRedraw = true;
             }
             break;

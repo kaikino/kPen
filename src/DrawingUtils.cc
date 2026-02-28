@@ -131,6 +131,15 @@ namespace DrawingUtils {
         int left = std::min(x0,x1), top = std::min(y0,y1);
         int right = std::max(x0,x1), bottom = std::max(y0,y1);
         if (left == right || top == bottom) return;
+        // Normalize to even-span so cx/cy land exactly on the pixel grid and
+        // the algorithm reaches both left and right (top and bottom) edges.
+        // An odd span means cx = (left+right)/2 truncates toward left, so the
+        // Bresenham step cx+rx only reaches right-1, leaving a 1-pixel gap on
+        // the right (and bottom). Dropping 1 from right/bottom when odd makes
+        // the span even, cx exact, and both edges reachable.
+        if ((right - left) % 2 == 1) right--;
+        if ((bottom - top) % 2 == 1) bottom--;
+        if (left == right || top == bottom) return;
         int cx = (left+right)/2, cy = (top+bottom)/2;
         int rx = cx-left, ry = cy-top;
         long rx2 = (long)rx*rx, ry2 = (long)ry*ry;
@@ -166,6 +175,10 @@ namespace DrawingUtils {
         int left = std::min(x0,x1), top = std::min(y0,y1);
         int right = std::max(x0,x1), bottom = std::max(y0,y1);
         if (left == right || top == bottom) return {x0, y0, 0, 0};
+        // Apply the same even-span normalization as drawOval.
+        if ((right - left) % 2 == 1) right--;
+        if ((bottom - top) % 2 == 1) bottom--;
+        if (left == right || top == bottom) return {x0, y0, 0, 0};
         int cx = (left+right)/2, cy = (top+bottom)/2;
         int rx = cx-left, ry = cy-top;
         long rx2 = (long)rx*rx, ry2 = (long)ry*ry;
@@ -192,6 +205,9 @@ namespace DrawingUtils {
             if (d2 > 0) { d2 += rx2 - ddy; }
             else { x++; ddx += 2*ry2; d2 += ddx - ddy + rx2; }
         }
+        // Return inclusive extents: w = maxCX - minCX (not +1), matching the
+        // convention used by all callers which add their own +1 when converting
+        // to exclusive-end coordinates.
         return { minCX, minCY, maxCX - minCX, maxCY - minCY };
     }
 

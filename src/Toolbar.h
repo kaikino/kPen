@@ -33,7 +33,7 @@ class Toolbar {
     // Color state (owned here, read by kPen for drawing)
     float       hue = 0.f, sat = 0.f, val = 0.f;
     SDL_Color   brushColor  = {0, 0, 0, 255};
-    int         brushSize   = 2;
+    int         brushSize   = 8;
     ToolType    currentType  = ToolType::BRUSH;
     bool        fillRect     = false;  // toggled by clicking RECT while already active
     bool        fillCircle   = false;  // toggled by clicking CIRCLE while already active

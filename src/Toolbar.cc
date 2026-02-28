@@ -735,8 +735,10 @@ bool Toolbar::onMouseDown(int x, int y) {
                 brushColor = PRESETS[i];
                 rgbToHsv(brushColor, hue, sat, val);
             }
-            draggingSwatch    = true;
-            draggingSwatchIdx = i + NUM_CUSTOM;
+            if (i != 0) {
+                draggingSwatch    = true;
+                draggingSwatchIdx = i + NUM_CUSTOM;
+            }
             return true;
         }
     }
