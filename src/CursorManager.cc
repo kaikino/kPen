@@ -24,7 +24,6 @@ struct Bitmap {
     void set(int x, int y, Uint32 c) { if (x>=0&&x<w&&y>=0&&y<h) d[y*w+x]=c; }
     Uint32 get(int x, int y) const   { return (x>=0&&x<w&&y>=0&&y<h) ? d[y*w+x] : C_TRANSP; }
     void hline(int x0, int x1, int y, Uint32 c) { for(int x=x0;x<=x1;x++) set(x,y,c); }
-    void vline(int x, int y0, int y1, Uint32 c) { for(int y=y0;y<=y1;y++) set(x,y,c); }
     void line(int x0, int y0, int x1, int y1, Uint32 c) {
         int dx=std::abs(x1-x0), dy=std::abs(y1-y0);
         int sx=x0<x1?1:-1, sy=y0<y1?1:-1, err=dx-dy;

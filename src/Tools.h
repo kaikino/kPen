@@ -15,6 +15,12 @@ class ICoordinateMapper {
     virtual void getCanvasSize(int* w, int* h) = 0;  // runtime canvas dimensions
 };
 
+inline bool isPointOnCanvas(ICoordinateMapper* m, int cX, int cY) {
+    int cw, ch;
+    m->getCanvasSize(&cw, &ch);
+    return cX >= 0 && cX < cw && cY >= 0 && cY < ch;
+}
+
 class AbstractTool {
   protected:
     ICoordinateMapper* mapper;
@@ -24,7 +30,6 @@ class AbstractTool {
     AbstractTool(ICoordinateMapper* m) : mapper(m) {}
     virtual ~AbstractTool() {}
     bool isActive()  const { return isDrawing; }
-    void getStart(int* sx, int* sy) const { *sx = startX; *sy = startY; }
     virtual void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color);
     virtual void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color);
     virtual bool onMouseUp  (int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color);

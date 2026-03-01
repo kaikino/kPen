@@ -283,19 +283,14 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
                 // The world anchor stays fixed. Update local anchor to new left side.
                 // After the swap the anchor is on the LEFT, so anchorX = old anchorX
                 // (the right side that was fixed) is now the new left edge anchor.
-                // But we recompute via the world anchor unrotated:
+                // But we recompute via the world anchor unrotated (only need local X):
                 {
-                    float ua, dummy;
                     float co2 = std::cos(-rotation), si2 = std::sin(-rotation);
-                    // Un-rotate world anchor back to local (using current newX/newY/newW/newH center — 
-                    // they haven't been set yet so use currentBounds center)
                     float ccx2 = currentBounds.x + currentBounds.w * 0.5f;
                     float ccy2 = currentBounds.y + currentBounds.h * 0.5f;
                     float dxA = anchorWorldX - ccx2, dyA = anchorWorldY - ccy2;
-                    ua = ccx2 + dxA * co2 - dyA * si2;
-                    dummy = ccy2 + dxA * si2 + dyA * co2;
+                    float ua = ccx2 + dxA * co2 - dyA * si2;
                     anchorX = (int)std::round(ua);
-                    (void)dummy;
                 }
                 dragFromRight = false;
                 unrotMouse(cXl, cYl);  // re-derive with updated anchorX
@@ -306,15 +301,12 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
                 resizing = (resizing == Handle::E)  ? Handle::W  :
                            (resizing == Handle::NE) ? Handle::NW : Handle::SW;
                 {
-                    float ua, dummy;
                     float co2 = std::cos(-rotation), si2 = std::sin(-rotation);
                     float ccx2 = currentBounds.x + currentBounds.w * 0.5f;
                     float ccy2 = currentBounds.y + currentBounds.h * 0.5f;
                     float dxA = anchorWorldX - ccx2, dyA = anchorWorldY - ccy2;
-                    ua = ccx2 + dxA * co2 - dyA * si2;
-                    dummy = ccy2 + dxA * si2 + dyA * co2;
+                    float ua = ccx2 + dxA * co2 - dyA * si2;
                     anchorX = (int)std::round(ua);
-                    (void)dummy;
                 }
                 dragFromRight = true;
                 unrotMouse(cXl, cYl);  // re-derive with updated anchorX
@@ -340,15 +332,12 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
                 resizing = (resizing == Handle::N)  ? Handle::S  :
                            (resizing == Handle::NW) ? Handle::SW : Handle::SE;
                 {
-                    float dummy, ua;
                     float co2 = std::cos(-rotation), si2 = std::sin(-rotation);
                     float ccx2 = currentBounds.x + currentBounds.w * 0.5f;
                     float ccy2 = currentBounds.y + currentBounds.h * 0.5f;
                     float dxA = anchorWorldX - ccx2, dyA = anchorWorldY - ccy2;
-                    dummy = ccx2 + dxA * co2 - dyA * si2;
-                    ua    = ccy2 + dxA * si2 + dyA * co2;
+                    float ua = ccy2 + dxA * si2 + dyA * co2;
                     anchorY = (int)std::round(ua);
-                    (void)dummy;
                 }
                 dragFromBottom = false;
                 unrotMouse(cXl, cYl);  // re-derive with updated anchorY
@@ -358,15 +347,12 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
                 resizing = (resizing == Handle::S)  ? Handle::N  :
                            (resizing == Handle::SW) ? Handle::NW : Handle::NE;
                 {
-                    float dummy, ua;
                     float co2 = std::cos(-rotation), si2 = std::sin(-rotation);
                     float ccx2 = currentBounds.x + currentBounds.w * 0.5f;
                     float ccy2 = currentBounds.y + currentBounds.h * 0.5f;
                     float dxA = anchorWorldX - ccx2, dyA = anchorWorldY - ccy2;
-                    dummy = ccx2 + dxA * co2 - dyA * si2;
-                    ua    = ccy2 + dxA * si2 + dyA * co2;
+                    float ua = ccy2 + dxA * si2 + dyA * co2;
                     anchorY = (int)std::round(ua);
-                    (void)dummy;
                 }
                 dragFromBottom = true;
                 unrotMouse(cXl, cYl);  // re-derive with updated anchorY

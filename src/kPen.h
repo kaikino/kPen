@@ -73,6 +73,9 @@ class kPen : public ICoordinateMapper {
 
     void addPanDelta(float winDx, float winDy);  // apply pan delta and clamp (used by hand tool)
 
+    void commitActiveTool();       // deactivate current tool and set to originalType
+    void resetViewAndGestureState(); // zoom/pan to 1,0,0 and clear scroll/gesture flags
+
     // Hand pan: handActive = Space held or H toggled; does not deactivate other tools (e.g. selection stays).
     bool spaceHeld      = false;
     bool handToggledOn  = false;   // H toggles this; handActive = spaceHeld || handToggledOn
@@ -172,4 +175,28 @@ class kPen : public ICoordinateMapper {
     // Called from SDL_USEREVENT (macOS native menu) and synthesised from
     // SDL_KEYDOWN on Windows/Linux.
     void dispatchCommand(int code, bool& running, bool& needsRedraw, bool& overlayDirty);
+
+    // Event loop: one dispatcher and per-type handlers (run() calls processEvent for each polled event).
+    void processEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty);
+    void handleQuit(bool& running);
+    void handleUserEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty);
+    void handleTextInput(SDL_Event& e, bool& needsRedraw);
+    void handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty);
+    void handleKeyUp(SDL_Event& e, bool& needsRedraw);
+    void handleWindowEvent(SDL_Event& e, bool& needsRedraw);
+    void handleMouseWheel(SDL_Event& e, bool& needsRedraw, bool& overlayDirty);
+    void handleFingerDown(SDL_Event& e);
+    void handleFingerUp(SDL_Event& e, bool& needsRedraw, bool& overlayDirty);
+    void handleFingerMotion(SDL_Event& e);
+    void handleMultiGesture(SDL_Event& e, bool& needsRedraw);
+    void handleMouseButtonDown(SDL_Event& e, bool& needsRedraw, bool& overlayDirty);
+    void handleMouseButtonUp(SDL_Event& e, bool& needsRedraw, bool& overlayDirty);
+    void handleMouseMotion(SDL_Event& e, bool& needsRedraw, bool& overlayDirty);
+
+    // Per-frame updates (called from run() after polling events).
+    void tickScrollbarFade(bool& needsRedraw);
+    void updateCursor(bool& needsRedraw, bool& overlayDirty);
+
+    // Full render pass: overlay, composite, scrollbars, toolbar, present.
+    void renderFrame(bool& overlayDirty);
 };

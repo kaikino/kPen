@@ -4601,12 +4601,12 @@ int tinyfd_messageBox(
 		}
 		else if ( aDialogType && ! strcmp( "yesnocancel" , aDialogType ) )
 		{
-				strcat( lDialogString ,"buttons {\"No\", \"Yes\", \"Cancel\"} " ) ;
+				strcat( lDialogString ,"buttons {\"Cancel\", \"No\", \"Yes\"} " ) ;
 				switch (aDefaultButton)
 				{
+						case 0: strcat( lDialogString ,"default button \"Cancel\" " ) ; break;
 						case 1: strcat( lDialogString ,"default button \"Yes\" " ) ; break;
 						case 2: strcat( lDialogString ,"default button \"No\" " ) ; break;
-						case 0: strcat( lDialogString ,"default button \"Cancel\" " ) ; break;
 				}
 				strcat( lDialogString ,"cancel button \"Cancel\"" ) ;
 		}

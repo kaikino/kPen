@@ -2,11 +2,6 @@
 #include "DrawingUtils.h"
 #include <algorithm>
 
-static bool onCanvas(ICoordinateMapper* m, int cX, int cY) {
-    int cw, ch; m->getCanvasSize(&cw, &ch);
-    return cX >= 0 && cX < cw && cY >= 0 && cY < ch;
-}
-
 // Eraser draws fully transparent pixels by temporarily switching blend mode to NONE.
 static void eraserDraw(SDL_Renderer* r, int x0, int y0, int x1, int y1, int brushSize, int cw, int ch) {
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
@@ -45,7 +40,7 @@ static void eraserSquareLine(SDL_Renderer* r, int x0, int y0, int x1, int y1,
 
 void EraserTool::onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color /*color*/) {
     AbstractTool::onMouseDown(cX, cY, r, brushSize, {0,0,0,0});
-    if (onCanvas(mapper, cX, cY)) {
+    if (isPointOnCanvas(mapper, cX, cY)) {
         int cw, ch; mapper->getCanvasSize(&cw, &ch);
         if (squareBrush) eraserSquareStamp(r, cX, cY, brushSize, cw, ch);
         else             eraserDraw(r, cX, cY, cX, cY, brushSize, cw, ch);
@@ -54,7 +49,7 @@ void EraserTool::onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL
 
 void EraserTool::onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color /*color*/) {
     if (isDrawing) {
-        if (onCanvas(mapper, cX, cY) || onCanvas(mapper, lastX, lastY)) {
+        if (isPointOnCanvas(mapper, cX, cY) || isPointOnCanvas(mapper, lastX, lastY)) {
             int cw, ch; mapper->getCanvasSize(&cw, &ch);
             if (squareBrush) eraserSquareLine(r, lastX, lastY, cX, cY, brushSize, cw, ch);
             else             eraserDraw(r, lastX, lastY, cX, cY, brushSize, cw, ch);

@@ -129,6 +129,28 @@ int kPen::getWindowSize(int canSize) {
 
 // ── Pan / Zoom ────────────────────────────────────────────────────────────────
 
+void kPen::commitActiveTool() {
+    if (currentTool) {
+        withCanvas([&]{ currentTool->deactivate(renderer); });
+        setTool(originalType);
+    }
+}
+
+void kPen::resetViewAndGestureState() {
+    zoom = 1.f;
+    zoomTarget = 1.f;
+    panX = 0.f;
+    panY = 0.f;
+    viewScrolling      = false;
+    viewScrollRawX     = 0.f;
+    viewScrollRawY     = 0.f;
+    viewScrollRawZoom  = 0.f;
+    multiGestureActive = false;
+    pinchActive        = false;
+    activeFingers      = 0;
+    tapPending         = false;
+}
+
 void kPen::zoomAround(float newZoom, int pivotWinX, int pivotWinY) {
     SDL_Rect fit = getFitViewport();
     float dz = newZoom / zoom;
@@ -500,10 +522,7 @@ void kPen::resizeCanvas(int newW, int newH, bool scaleContent, int originX, int 
     // Commit any active tool so its pixels are stamped onto the canvas before
     // we snapshot it. We do NOT call saveState — the top-of-stack refresh below
     // captures any committed tool pixels without adding an extra undo entry.
-    if (currentTool) {
-        withCanvas([&]{ currentTool->deactivate(renderer); });
-        setTool(originalType);
-    }
+    commitActiveTool();
 
     // Read the current canvas pixels for building the new buffer.
     // We do NOT push a pre-resize state — undoStack.back() already IS the current
@@ -757,11 +776,7 @@ bool kPen::promptSaveIfNeeded() {
 }
 
 void kPen::doSave(bool forceSaveAs) {
-    // Commit any active tool so all pixels are on the canvas
-    if (currentTool) {
-        withCanvas([&]{ currentTool->deactivate(renderer); });
-        setTool(originalType);
-    }
+    commitActiveTool();
 
     std::string path = (!forceSaveAs && !currentFilePath.empty()) ? currentFilePath : "";
     if (path.empty()) {
@@ -829,11 +844,7 @@ void kPen::doOpen() {
         return;
     }
 
-    // Commit any active tool
-    if (currentTool) {
-        withCanvas([&]{ currentTool->deactivate(renderer); });
-        setTool(originalType);
-    }
+    commitActiveTool();
 
     // Reset history and replace canvas
     undoStack.clear(); redoStack.clear();
@@ -847,13 +858,7 @@ void kPen::doOpen() {
     currentFilePath = path;
     savedStateId = undoStack.back().serial;
     updateWindowTitle();
-    zoom = 1.f; zoomTarget = 1.f; panX = 0.f; panY = 0.f;
-    viewScrolling      = false;
-    viewScrollRawX     = 0.f; viewScrollRawY = 0.f; viewScrollRawZoom = 0.f;
-    multiGestureActive = false;
-    pinchActive        = false;
-    activeFingers      = 0;
-    tapPending         = false;
+    resetViewAndGestureState();
 }
 
 // ── Run loop ──────────────────────────────────────────────────────────────────
@@ -867,7 +872,7 @@ void kPen::dispatchCommand(int code, bool& running, bool& needsRedraw, bool& ove
     switch (code) {
         case MacMenu::FILE_NEW:
             if (promptSaveIfNeeded()) {
-                if (currentTool) { withCanvas([&]{ currentTool->deactivate(renderer); }); setTool(originalType); }
+                commitActiveTool();
                 undoStack.clear(); redoStack.clear();
                 currentFilePath.clear();
                 withCanvas([&]{
@@ -880,14 +885,7 @@ void kPen::dispatchCommand(int code, bool& running, bool& needsRedraw, bool& ove
                 if (undoStack.empty()) saveState(undoStack);  // same-size: resizeCanvas returned early
                 savedStateId = undoStack.back().serial;
                 updateWindowTitle();
-                zoom = 1.f; zoomTarget = 1.f; panX = 0.f; panY = 0.f;
-                // Reset all scroll/gesture state so zoom and pan work immediately
-                viewScrolling      = false;
-                viewScrollRawX     = 0.f; viewScrollRawY = 0.f; viewScrollRawZoom = 0.f;
-                multiGestureActive = false;
-                pinchActive        = false;
-                activeFingers      = 0;
-                tapPending         = false;
+                resetViewAndGestureState();
                 needsRedraw = true;
             }
             break;
@@ -934,6 +932,852 @@ void kPen::dispatchCommand(int code, bool& running, bool& needsRedraw, bool& ove
     }
 }
 
+void kPen::processEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty) {
+    if (e.type == SDL_QUIT) { handleQuit(running); return; }
+    if (e.type == SDL_USEREVENT) { handleUserEvent(e, running, needsRedraw, overlayDirty); return; }
+    if (e.type == SDL_TEXTINPUT) { handleTextInput(e, needsRedraw); return; }
+    if (e.type == SDL_KEYDOWN) { handleKeyDown(e, running, needsRedraw, overlayDirty); return; }
+    if (e.type == SDL_KEYUP) { handleKeyUp(e, needsRedraw); return; }
+    if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_RESIZED) { handleWindowEvent(e, needsRedraw); return; }
+    if (e.type == SDL_MOUSEWHEEL) { handleMouseWheel(e, needsRedraw, overlayDirty); return; }
+    if (e.type == SDL_FINGERDOWN) { handleFingerDown(e); return; }
+    if (e.type == SDL_FINGERUP) { handleFingerUp(e, needsRedraw, overlayDirty); return; }
+    if (e.type == SDL_FINGERMOTION) { handleFingerMotion(e); return; }
+    if (e.type == SDL_MULTIGESTURE) { handleMultiGesture(e, needsRedraw); return; }
+    if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT && !multiGestureActive) { handleMouseButtonDown(e, needsRedraw, overlayDirty); return; }
+    if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT && !multiGestureActive) { handleMouseButtonUp(e, needsRedraw, overlayDirty); return; }
+    if (e.type == SDL_MOUSEMOTION && !multiGestureActive) { handleMouseMotion(e, needsRedraw, overlayDirty); return; }
+}
+
+void kPen::handleQuit(bool& running) {
+    if (promptSaveIfNeeded()) { running = false; }
+}
+
+void kPen::handleUserEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty) {
+    dispatchCommand(e.user.code, running, needsRedraw, overlayDirty);
+}
+
+void kPen::handleTextInput(SDL_Event& e, bool& needsRedraw) {
+    if (toolbar.onTextInput(e.text.text)) { needsRedraw = true; }
+}
+
+void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty) {
+    // Track shift for aspect-lock override
+    if (e.key.keysym.sym == SDLK_LSHIFT || e.key.keysym.sym == SDLK_RSHIFT) {
+        shiftHeld = true;
+        if (canvasResizer.isDragging()) {
+            toolbar.setShiftLockAspect(true);
+            needsRedraw = true;
+        }
+    }
+
+    // Let toolbar consume resize field keys first
+    if (toolbar.onResizeKey(e.key.keysym.sym)) { needsRedraw = true; return; }
+
+    // First tool-key press while hand is toggled on only disables hand (no tool switch)
+    bool handKeyConsumed = false;
+    if (handToggledOn && !(e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))) {
+        switch (e.key.keysym.sym) {
+            case SDLK_b: case SDLK_l: case SDLK_r: case SDLK_e: case SDLK_f: case SDLK_i:
+            case SDLK_s: case SDLK_o: case SDLK_h:
+                handToggledOn = false;
+                needsRedraw = true;
+                handKeyConsumed = true;
+                break;
+            default: break;
+        }
+    }
+    if (handKeyConsumed) return;
+
+    switch (e.key.keysym.sym) {
+        case SDLK_b:
+            if (originalType == ToolType::BRUSH)  toolbar.squareBrush = !toolbar.squareBrush;
+            setTool(ToolType::BRUSH);  needsRedraw = true; break;
+        case SDLK_l: setTool(ToolType::LINE);   needsRedraw = true; break;
+        case SDLK_r:
+            if (originalType == ToolType::RECT)   toolbar.fillRect     = !toolbar.fillRect;
+            setTool(ToolType::RECT);   needsRedraw = true; break;
+        case SDLK_e:
+            if (originalType == ToolType::ERASER) toolbar.squareEraser = !toolbar.squareEraser;
+            setTool(ToolType::ERASER); needsRedraw = true; break;
+        case SDLK_f: setTool(ToolType::FILL);   needsRedraw = true; break;
+        case SDLK_i: setTool(ToolType::PICK);   needsRedraw = true; break;
+        case SDLK_h:
+            if (!(e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))) {
+                handToggledOn = !handToggledOn;
+                needsRedraw = true;
+            }
+            break;
+        case SDLK_SPACE: spaceHeld = true; break;
+        case SDLK_BACKSPACE:
+        case SDLK_DELETE:
+            deleteSelection();
+            needsRedraw = true;
+            break;
+        case SDLK_UP:
+            toolbar.brushSize = std::min(99, toolbar.brushSize + 1);
+            toolbar.syncBrushSize();
+            needsRedraw = true;
+            if (currentTool->hasOverlayContent()) overlayDirty = true;
+            break;
+        case SDLK_DOWN:
+            toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
+            toolbar.syncBrushSize();
+            needsRedraw = true;
+            if (currentTool->hasOverlayContent()) overlayDirty = true;
+            break;
+        case SDLK_s:
+            if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
+#ifndef __APPLE__
+                bool saveAs = (e.key.keysym.mod & KMOD_SHIFT) != 0 || currentFilePath.empty();
+                dispatchCommand(saveAs ? MacMenu::FILE_SAVE_AS : MacMenu::FILE_SAVE,
+                                running, needsRedraw, overlayDirty);
+#endif
+                break;
+            }
+            setTool(ToolType::SELECT); needsRedraw = true; break;
+        case SDLK_o:
+            if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
+#ifndef __APPLE__
+                dispatchCommand(MacMenu::FILE_OPEN, running, needsRedraw, overlayDirty);
+#endif
+                break;
+            }
+            if (originalType == ToolType::CIRCLE) toolbar.fillCircle = !toolbar.fillCircle;
+            setTool(ToolType::CIRCLE); needsRedraw = true; break;
+        case SDLK_n:
+#ifndef __APPLE__
+            if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))
+                dispatchCommand(MacMenu::FILE_NEW, running, needsRedraw, overlayDirty);
+#endif
+            break;
+        case SDLK_z:
+#ifndef __APPLE__
+            if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
+                bool isRedo = (e.key.keysym.mod & KMOD_SHIFT) != 0;
+                dispatchCommand(isRedo ? MacMenu::EDIT_REDO : MacMenu::EDIT_UNDO,
+                                running, needsRedraw, overlayDirty);
+            }
+#endif
+            break;
+        case SDLK_y:
+#ifndef __APPLE__
+            if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))
+                dispatchCommand(MacMenu::EDIT_REDO, running, needsRedraw, overlayDirty);
+#endif
+            break;
+        case SDLK_c:
+        case SDLK_x:
+#ifndef __APPLE__
+            if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
+                dispatchCommand(e.key.keysym.sym == SDLK_x
+                                ? MacMenu::EDIT_CUT : MacMenu::EDIT_COPY,
+                                running, needsRedraw, overlayDirty);
+            }
+#endif
+            break;
+        case SDLK_v:
+#ifndef __APPLE__
+            if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))
+                dispatchCommand(MacMenu::EDIT_PASTE, running, needsRedraw, overlayDirty);
+#endif
+            break;
+        case SDLK_a:
+#ifndef __APPLE__
+            if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))
+                dispatchCommand(MacMenu::EDIT_SELECT_ALL, running, needsRedraw, overlayDirty);
+#endif
+            break;
+        case SDLK_0:
+            if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
+                zoom = 1.f; zoomTarget = 1.f; panX = 0.f; panY = 0.f;
+                needsRedraw = true;
+            }
+            break;
+    }
+}
+
+void kPen::handleKeyUp(SDL_Event& e, bool& needsRedraw) {
+    if (e.key.keysym.sym == SDLK_LSHIFT || e.key.keysym.sym == SDLK_RSHIFT) {
+        shiftHeld = false;
+        toolbar.setShiftLockAspect(false);
+        if (canvasResizer.isDragging()) needsRedraw = true;
+    }
+    if (e.key.keysym.sym == SDLK_SPACE) {
+        spaceHeld = false;
+        handToggledOn = false;
+    }
+}
+
+void kPen::handleWindowEvent(SDL_Event& /* e */, bool& needsRedraw) {
+    needsRedraw = true;
+}
+
+void kPen::handleMouseWheel(SDL_Event& e, bool& needsRedraw, bool& overlayDirty) {
+    int mx, my; SDL_GetMouseState(&mx, &my);
+    #if SDL_VERSION_ATLEAST(2, 0, 18)
+        float precX = e.wheel.preciseX;
+        float precY = e.wheel.preciseY;
+    #else
+        float precX = (float)e.wheel.x;
+        float precY = (float)e.wheel.y;
+    #endif
+
+    if (toolbar.onMouseWheel(mx, my, precY)) {
+        needsRedraw = true;
+        if (currentTool->hasOverlayContent()) overlayDirty = true;
+    } else if (toolbar.inToolbar(mx, my)) {
+    } else if (SDL_GetModState() & (KMOD_GUI | KMOD_CTRL)) {
+        onCanvasScroll(mx, my, 0.f, precY, true);
+        needsRedraw = true;
+    } else if (multiGestureActive) {
+    } else {
+        float dx, dy;
+        if (SDL_GetModState() & KMOD_SHIFT) {
+            float scrollAmount = (std::abs(precY) > std::abs(precX)) ? precY : (-precX);
+            dx = scrollAmount * 4.2f;
+            dy = 0.f;
+        } else {
+            dx = -precX * 4.2f;
+            dy = precY * 4.2f;
+        }
+        wheelAccumX += dx;
+        wheelAccumY += dy;
+        const float cap = 400.f;
+        wheelAccumX = std::max(-cap, std::min(cap, wheelAccumX));
+        wheelAccumY = std::max(-cap, std::min(cap, wheelAccumY));
+        viewScrolling = true;
+        if (SDL_GetModState() & KMOD_SHIFT)
+            scrollWheelWasVertical = false;
+        else
+            scrollWheelWasVertical = std::abs(precY) >= std::abs(precX);
+        needsRedraw = true;
+    }
+}
+
+void kPen::handleFingerDown(SDL_Event& e) {
+    activeFingers++;
+    if (activeFingers == 3 && multiGestureActive) {
+        threeFingerPanMode = true;
+        multiGestureActive = false;
+        pinchActive        = false;
+    }
+
+    int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
+    if (activeFingers == 2) {
+        tapFingerId    = e.tfinger.fingerId;
+        tapDownX       = e.tfinger.x * winW;
+        tapDownY       = e.tfinger.y * winH;
+        tapDownTime    = e.tfinger.timestamp;
+        tapPending     = true;
+        tapSawGesture  = multiGestureActive;
+        gestureNeedsRecenter = true;
+        pinchActive          = false;
+        zoomPriorityEvents   = 3;
+        int mx, my; SDL_GetMouseState(&mx, &my);
+        twoFingerPivotX   = std::max(0.f, std::min((float)winW, (mx + e.tfinger.x * winW) * 0.5f));
+        twoFingerPivotY   = std::max(0.f, std::min((float)winH, (my + e.tfinger.y * winH) * 0.5f));
+        twoFingerPivotSet = true;
+    } else {
+        tapPending = false;
+    }
+}
+
+void kPen::handleFingerUp(SDL_Event& e, bool& needsRedraw, bool& overlayDirty) {
+    int prevFingers = activeFingers;
+    activeFingers = std::max(0, activeFingers - 1);
+    if (prevFingers >= 3 && activeFingers == 2) {
+        multiGestureActive = false;
+        pinchActive        = false;
+    }
+    if (prevFingers == 2 && activeFingers == 1 && multiGestureActive) {
+        multiGestureActive   = false;
+        gestureNeedsRecenter = true;
+        pinchActive          = false;
+        zoomPriorityEvents   = 3;
+    }
+    if (activeFingers == 0) {
+        threeFingerPanMode = false;
+    }
+
+    if (tapPending && e.tfinger.fingerId == tapFingerId) {
+        tapPending = false;
+        int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
+        float upX = e.tfinger.x * winW;
+        float upY = e.tfinger.y * winH;
+        float dx = upX - tapDownX, dy = upY - tapDownY;
+        Uint32 dt = e.tfinger.timestamp - tapDownTime;
+        if (dt < 300 && dx*dx + dy*dy < 100.f && tapSawGesture && !pinchActive) {
+            int tx = (int)upX, ty = (int)upY;
+
+            if (toolbar.inToolbar(tx, ty)) {
+                if (toolbar.onMouseDown(tx, ty)) {
+                    toolbar.onMouseUp(tx, ty);
+                    tapConsumed = true;
+                    needsRedraw = true;
+                }
+            } else {
+                toolbar.notifyClickOutside();
+                tapConsumed = true;
+                int mx, my; SDL_GetMouseState(&mx, &my);
+                int tapCX, tapCY; getCanvasCoords(mx, my, &tapCX, &tapCY);
+
+                if (currentType == ToolType::RESIZE) {
+                    auto* rt = static_cast<ResizeTool*>(currentTool.get());
+                    if (!rt->isHit(tapCX, tapCY)) {
+                        bool renders = rt->willRender();
+                        withCanvas([&]{ rt->deactivate(renderer); });
+                        if (renders) saveState(undoStack);
+                        currentTool.reset();
+                        setTool(originalType);
+                    }
+                }
+                if (currentType == ToolType::SELECT) {
+                    auto* st = static_cast<SelectTool*>(currentTool.get());
+                    if (st->isSelectionActive() && !st->isHit(tapCX, tapCY)) {
+                        bool dirty = st->isDirty();
+                        withCanvas([&]{ st->deactivate(renderer); });
+                        if (dirty) saveState(undoStack);
+                    }
+                }
+
+                withCanvas([&]{ currentTool->onMouseDown(tapCX, tapCY, renderer, toolbar.brushSize, toolbar.brushColor); });
+                if (currentType == ToolType::FILL) saveState(undoStack);
+                bool tapChanged = false;
+                withCanvas([&]{ tapChanged = currentTool->onMouseUp(tapCX, tapCY, renderer, toolbar.brushSize, toolbar.brushColor); });
+                if (tapChanged && currentType != ToolType::SELECT && currentType != ToolType::RESIZE)
+                    saveState(undoStack);
+                needsRedraw = true; overlayDirty = true;
+            }
+        }
+    }
+
+    if (activeFingers == 0) {
+        multiGestureActive   = false;
+        pinchActive          = false;
+        gestureNeedsRecenter = false;
+        zoomPriorityEvents   = 0;
+        twoFingerPivotX      = 0.f;
+        twoFingerPivotY      = 0.f;
+        twoFingerPivotSet    = false;
+        viewScrolling        = false;
+        tapConsumed          = false;
+    }
+}
+
+void kPen::handleFingerMotion(SDL_Event& e) {
+    if (tapPending && e.tfinger.fingerId == tapFingerId) {
+        int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
+        float mx = e.tfinger.x * winW - tapDownX;
+        float my = e.tfinger.y * winH - tapDownY;
+        if (mx*mx + my*my > 100.f) tapPending = false;
+    }
+}
+
+void kPen::handleMultiGesture(SDL_Event& e, bool& needsRedraw) {
+    if (tapPending) { tapSawGesture = true; }
+    if (activeFingers < 2) {
+        activeFingers        = 2;
+        gestureNeedsRecenter = true;
+        zoomPriorityEvents   = 3;
+        pinchActive          = false;
+    }
+    if (activeFingers >= 3 && !threeFingerPanMode) {
+        needsRedraw = true;
+    } else {
+        int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
+        float cx = e.mgesture.x * winW;
+        float cy = e.mgesture.y * winH;
+
+        int mx, my; SDL_GetMouseState(&mx, &my);
+        bool overToolbar = toolbar.inToolbar(mx, my);
+        bool ctrlHeld    = (SDL_GetModState() & (KMOD_GUI | KMOD_CTRL)) != 0;
+
+        bool zoomEligible = !overToolbar && !ctrlHeld;
+        bool pinchDetected = std::abs(e.mgesture.dDist) > 0.00008f;
+        bool inZoomPriority = (zoomPriorityEvents > 0);
+        if (zoomEligible && (pinchDetected || inZoomPriority)) {
+            if (!pinchActive) {
+                pinchBaseZoom = zoom;
+                pinchRawDist  = 0.f;
+                pinchActive   = true;
+                viewScrolling = true;
+                if (pinchDetected) tapPending = false;
+            }
+            pinchRawDist += e.mgesture.dDist * 6.f;
+            float rawZoom = pinchBaseZoom * expf(pinchRawDist);
+            zoomTarget = std::max(MIN_ZOOM, std::min(MAX_ZOOM, rawZoom));
+        }
+
+        if (multiGestureActive && !gestureNeedsRecenter && zoomPriorityEvents == 0 && !overToolbar && !ctrlHeld) {
+            float dx = cx - lastGestureCX, dy = cy - lastGestureCY;
+            panX += dx;
+            panY += dy;
+            viewScrolling = true;
+            scrollWheelWasVertical = std::abs(dy) >= std::abs(dx);
+        }
+        if (zoomPriorityEvents > 0) zoomPriorityEvents--;
+        gestureNeedsRecenter = false;
+        lastGestureCX      = cx;
+        lastGestureCY      = cy;
+        if (!multiGestureActive && currentTool && currentTool->isActive()) {
+            int mx, my; SDL_GetMouseState(&mx, &my);
+            int fx, fy; getCanvasCoords(mx, my, &fx, &fy);
+            bool strokeChanged = false;
+            withCanvas([&]{ strokeChanged = currentTool->onMouseUp(fx, fy, renderer, toolbar.brushSize, toolbar.brushColor); });
+            if (strokeChanged && currentType != ToolType::SELECT && currentType != ToolType::RESIZE)
+                saveState(undoStack);
+        }
+        multiGestureActive = true;
+
+        needsRedraw = true;
+    }
+}
+
+void kPen::handleMouseButtonDown(SDL_Event& e, bool& needsRedraw, bool& overlayDirty) {
+    if (tapConsumed) { tapConsumed = false; return; }
+    viewScrolling = false;
+    if (!toolbar.inToolbar(e.button.x, e.button.y))
+        toolbar.notifyClickOutside();
+    {
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+        SDL_Rect trackV, thumbV, trackH, thumbH;
+        bool hasV, hasH;
+        if (getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH)) {
+            int mx = e.button.x, my = e.button.y;
+            SDL_Point pt = { mx, my };
+            if (hasV && SDL_PointInRect(&pt, &trackV)) {
+                SDL_Rect fit = getFitViewport();
+                float zH = fit.h * zoom;
+                float maxPanY = std::max(0.f, (zH - fit.h) / 2.f) + PAN_SLACK;
+                float range = (float)(fit.h - thumbV.h);
+                if (SDL_PointInRect(&pt, &thumbV)) {
+                    scrollbarDragOffsetY = my - thumbV.y;
+                    scrollbarDragV = true;
+                } else {
+                    int thumbY;
+                    if (my < thumbV.y) {
+                        thumbY = my;
+                        scrollbarDragOffsetY = 0;
+                    } else {
+                        thumbY = my - thumbV.h;
+                        scrollbarDragOffsetY = thumbV.h;
+                    }
+                    if (thumbY < fit.y) thumbY = fit.y;
+                    if (thumbY > fit.y + fit.h - thumbV.h) thumbY = fit.y + fit.h - thumbV.h;
+                    if (range > 0.f)
+                        panY = (float)(thumbY - fit.y) / range * 2.f * maxPanY - maxPanY;
+                    scrollbarDragV = true;
+                }
+                needsRedraw = true; return;
+            }
+            if (hasH && SDL_PointInRect(&pt, &trackH)) {
+                SDL_Rect fit = getFitViewport();
+                float zW = fit.w * zoom;
+                float maxPanX = std::max(0.f, (zW - fit.w) / 2.f) + PAN_SLACK;
+                float range = (float)(fit.w - thumbH.w);
+                if (SDL_PointInRect(&pt, &thumbH)) {
+                    scrollbarDragOffsetX = mx - thumbH.x;
+                    scrollbarDragH = true;
+                } else {
+                    int thumbX;
+                    if (mx < thumbH.x) {
+                        thumbX = mx;
+                        scrollbarDragOffsetX = 0;
+                    } else {
+                        thumbX = mx - thumbH.w;
+                        scrollbarDragOffsetX = thumbH.w;
+                    }
+                    if (thumbX < fit.x) thumbX = fit.x;
+                    if (thumbX > fit.x + fit.w - thumbH.w) thumbX = fit.x + fit.w - thumbH.w;
+                    if (range > 0.f)
+                        panX = (float)(thumbX - fit.x) / range * 2.f * maxPanX - maxPanX;
+                    scrollbarDragH = true;
+                }
+                needsRedraw = true; return;
+            }
+        }
+    }
+    if (canvasResizer.onMouseDown(e.button.x, e.button.y, canvasW, canvasH)) {
+        needsRedraw = true; return;
+    }
+    if (toolbar.onMouseDown(e.button.x, e.button.y)) { needsRedraw = true; return; }
+    if (toolbar.inToolbar(e.button.x, e.button.y)) { return; }
+    if (spaceHeld || handToggledOn) {
+        handPanning = true;
+        handPanStartWinX = e.button.x;
+        handPanStartWinY = e.button.y;
+        handPanStartPanX = panX;
+        handPanStartPanY = panY;
+        needsRedraw = true;
+        return;
+    }
+    int cX, cY;
+    getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
+
+    if (currentType == ToolType::SELECT) {
+        auto* st = static_cast<SelectTool*>(currentTool.get());
+        if (st->isSelectionActive() && !st->isHit(cX, cY)) {
+            bool dirty = st->isDirty();
+            withCanvas([&]{ st->deactivate(renderer); });
+            if (dirty) { saveState(undoStack); }
+        }
+    }
+
+    if (currentType == ToolType::RESIZE) {
+        auto* rt = static_cast<ResizeTool*>(currentTool.get());
+        if (!rt->isHit(cX, cY)) {
+            bool renders = rt->willRender();
+            withCanvas([&]{ rt->deactivate(renderer); });
+            if (renders) saveState(undoStack);
+            currentTool.reset();
+            setTool(originalType);
+        }
+    }
+
+    withCanvas([&]{ currentTool->onMouseDown(cX, cY, renderer, toolbar.brushSize, toolbar.brushColor); });
+    if (currentType == ToolType::FILL) saveState(undoStack);
+    needsRedraw = true; overlayDirty = true;
+}
+
+void kPen::handleMouseButtonUp(SDL_Event& e, bool& needsRedraw, bool& overlayDirty) {
+    if (scrollbarDragV || scrollbarDragH) {
+        scrollbarDragV = false;
+        scrollbarDragH = false;
+        needsRedraw = true;
+        return;
+    }
+    if (handPanning) {
+        handPanning = false;
+        needsRedraw = true;
+        return;
+    }
+    if (canvasResizer.isDragging()) {
+        int newW, newH, ox = 0, oy = 0;
+        bool lock = toolbar.getEffectiveLockAspect();
+        toolbar.setShiftLockAspect(false);
+        if (canvasResizer.onMouseUp(e.button.x, e.button.y, canvasW, canvasH, newW, newH, ox, oy, lock))
+            resizeCanvas(newW, newH, toolbar.getResizeScaleMode(), ox, oy);
+        else
+            toolbar.syncCanvasSize(canvasW, canvasH);
+        showResizePreview = false;
+        needsRedraw = true; return;
+    }
+    toolbar.onMouseUp(e.button.x, e.button.y);
+    int cX, cY;
+    getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
+    bool changed = false;
+    withCanvas([&]{ changed = currentTool->onMouseUp(cX, cY, renderer, toolbar.brushSize, toolbar.brushColor); });
+    if (changed && currentType != ToolType::SELECT && currentType != ToolType::RESIZE)
+        saveState(undoStack);
+    needsRedraw = true; overlayDirty = true;
+}
+
+void kPen::handleMouseMotion(SDL_Event& e, bool& needsRedraw, bool& overlayDirty) {
+    if (scrollbarDragV) {
+        SDL_Rect fit = getFitViewport();
+        float zH = fit.h * zoom;
+        float maxPanY = std::max(0.f, (zH - fit.h) / 2.f) + PAN_SLACK;
+        SDL_Rect trackV, thumbV, trackH, thumbH;
+        bool hasV, hasH;
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+        getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
+        int my = e.motion.y;
+        int thumbY = my - scrollbarDragOffsetY;
+        if (thumbY < fit.y) thumbY = fit.y;
+        if (thumbY > fit.y + fit.h - thumbV.h) thumbY = fit.y + fit.h - thumbV.h;
+        float range = (float)(fit.h - thumbV.h);
+        if (range > 0.f)
+            panY = (float)(thumbY - fit.y) / range * 2.f * maxPanY - maxPanY;
+        needsRedraw = true; return;
+    }
+    if (scrollbarDragH) {
+        SDL_Rect fit = getFitViewport();
+        float zW = fit.w * zoom;
+        float maxPanX = std::max(0.f, (zW - fit.w) / 2.f) + PAN_SLACK;
+        SDL_Rect trackV, thumbV, trackH, thumbH;
+        bool hasV, hasH;
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+        getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
+        int mx = e.motion.x;
+        int thumbX = mx - scrollbarDragOffsetX;
+        if (thumbX < fit.x) thumbX = fit.x;
+        if (thumbX > fit.x + fit.w - thumbH.w) thumbX = fit.x + fit.w - thumbH.w;
+        float range = (float)(fit.w - thumbH.w);
+        if (range > 0.f)
+            panX = (float)(thumbX - fit.x) / range * 2.f * maxPanX - maxPanX;
+        needsRedraw = true; return;
+    }
+    if (canvasResizer.isDragging()) {
+        bool lock = toolbar.getEffectiveLockAspect();
+        canvasResizer.onMouseMove(e.motion.x, e.motion.y, previewW, previewH, previewOriginX, previewOriginY, lock);
+        showResizePreview = true;
+        toolbar.syncCanvasSize(previewW, previewH);
+        needsRedraw = true; return;
+    }
+    if (handPanning) {
+        addPanDelta((float)(e.motion.x - handPanStartWinX), (float)(e.motion.y - handPanStartWinY));
+        handPanStartWinX = e.motion.x;
+        handPanStartWinY = e.motion.y;
+        needsRedraw = true;
+        return;
+    }
+    viewScrolling = false;
+    if (toolbar.onMouseMotion(e.motion.x, e.motion.y)) { needsRedraw = true; overlayDirty = true; return; }
+    int cX, cY;
+    getCanvasCoords(e.motion.x, e.motion.y, &cX, &cY);
+    withCanvas([&]{ currentTool->onMouseMove(cX, cY, renderer, toolbar.brushSize, toolbar.brushColor); });
+
+    if (currentType == ToolType::SELECT || currentType == ToolType::RESIZE) {
+        if (static_cast<TransformTool*>(currentTool.get())->isMutating())
+            redoStack.clear();
+    }
+
+    needsRedraw = true; overlayDirty = true;
+}
+
+void kPen::tickScrollbarFade(bool& needsRedraw) {
+    int winW, winH;
+    SDL_GetWindowSize(window, &winW, &winH);
+    SDL_Rect fit = getFitViewport();
+    int mx, my;
+    SDL_GetMouseState(&mx, &my);
+    bool hoverView = (mx >= fit.x && mx < fit.x + fit.w && my >= fit.y && my < fit.y + fit.h);
+    SDL_Rect trackV, thumbV, trackH, thumbH;
+    bool hasV, hasH;
+    getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
+    SDL_Point pt = { mx, my };
+    bool hoverV = hasV && (SDL_PointInRect(&pt, &trackV) || SDL_PointInRect(&pt, &thumbV));
+    bool hoverH = hasH && (SDL_PointInRect(&pt, &trackH) || SDL_PointInRect(&pt, &thumbH));
+    bool wantVisibleV = hasV && (scrollbarDragV || hoverV || (viewScrolling && scrollWheelWasVertical) || handPanning);
+    bool wantVisibleH = hasH && (scrollbarDragH || hoverH || (viewScrolling && !scrollWheelWasVertical) || handPanning);
+    const float SB_FADE_IN = 0.22f, SB_FADE_OUT = 0.028f;
+    if (wantVisibleV)
+        scrollbarAlphaV = std::min(1.f, scrollbarAlphaV + SB_FADE_IN);
+    else
+        scrollbarAlphaV = std::max(0.f, scrollbarAlphaV - SB_FADE_OUT);
+    if (wantVisibleH)
+        scrollbarAlphaH = std::min(1.f, scrollbarAlphaH + SB_FADE_IN);
+    else
+        scrollbarAlphaH = std::max(0.f, scrollbarAlphaH - SB_FADE_OUT);
+    if ((scrollbarAlphaV > 0.001f && scrollbarAlphaV < 0.999f) || (scrollbarAlphaH > 0.001f && scrollbarAlphaH < 0.999f))
+        needsRedraw = true;
+}
+
+void kPen::updateCursor(bool& /* needsRedraw */, bool& /* overlayDirty */) {
+    int mx, my;
+    SDL_GetMouseState(&mx, &my);
+    bool actAsEraser = (currentType == ToolType::ERASER) ||
+                       (currentType == ToolType::BRUSH && toolbar.brushColor.a == 0);
+    bool handActive = spaceHeld || handToggledOn;
+    ToolType cursorType = (handActive || handPanning) ? ToolType::HAND
+                            : (actAsEraser ? ToolType::ERASER : currentType);
+    bool cursorSquare = (currentType == ToolType::ERASER) ? toolbar.squareEraser : toolbar.squareBrush;
+    SDL_Rect vp = getViewport();
+    bool overCanvas = (mx >= vp.x && mx < vp.x + vp.w && my >= vp.y && my < vp.y + vp.h);
+    bool inToolbar  = toolbar.inToolbar(mx, my);
+    if (inToolbar) {
+        if (toolbar.isInteractive(mx, my))
+            cursorManager.forceSetCursor(cursorManager.getHandCursor());
+        else
+            cursorManager.forceSetCursor(cursorManager.getArrowCursor());
+    } else {
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+        SDL_Rect trackV, thumbV, trackH, thumbH;
+        bool hasV, hasH;
+        bool overScrollbar = false;
+        if (getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH)) {
+            SDL_Point pt = { mx, my };
+            overScrollbar = (hasV && (SDL_PointInRect(&pt, &trackV) || SDL_PointInRect(&pt, &thumbV)))
+                || (hasH && (SDL_PointInRect(&pt, &trackH) || SDL_PointInRect(&pt, &thumbH)));
+        }
+        if (overScrollbar && !(handActive || handPanning)) {
+            cursorManager.forceSetCursor(cursorManager.getArrowCursor());
+        } else {
+            bool nearHandle = canvasResizer.isDragging() ||
+                (!overCanvas &&
+                 canvasResizer.hitTest(mx, my, canvasW, canvasH) != CanvasResizer::Handle::NONE);
+            SDL_Color pickHoverColor = { 0, 0, 0, 0 };
+            const SDL_Color* pickHoverColorPtr = nullptr;
+            if (cursorType == ToolType::PICK && overCanvas) {
+                int cX, cY;
+                getCanvasCoords(mx, my, &cX, &cY);
+                int px = std::max(0, std::min(canvasW - 1, cX));
+                int py = std::max(0, std::min(canvasH - 1, cY));
+                withCanvas([&] {
+                    SDL_Rect r = { px, py, 1, 1 };
+                    Uint32 pixel = 0;
+                    SDL_RenderReadPixels(renderer, &r, SDL_PIXELFORMAT_ARGB8888, &pixel, 4);
+                    pickHoverColor.a = (pixel >> 24) & 0xFF;
+                    pickHoverColor.r = (pixel >> 16) & 0xFF;
+                    pickHoverColor.g = (pixel >>  8) & 0xFF;
+                    pickHoverColor.b =  pixel        & 0xFF;
+                });
+                pickHoverColorPtr = &pickHoverColor;
+            }
+            cursorManager.update(this, cursorType, originalType, currentTool.get(),
+                                 toolbar.brushSize, cursorSquare,
+                                 toolbar.brushColor,
+                                 mx, my, false, overCanvas, nearHandle,
+                                 &canvasResizer, canvasW, canvasH,
+                                 pickHoverColorPtr);
+        }
+    }
+}
+
+void kPen::renderFrame(bool& overlayDirty) {
+    bool hasOverlay = currentTool->hasOverlayContent();
+    if (overlayDirty) {
+        currentTool->onPreviewRender(renderer, toolbar.brushSize, toolbar.brushColor);
+        SDL_SetRenderTarget(renderer, overlay);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+        SDL_RenderClear(renderer);
+        if (hasOverlay) currentTool->onOverlayRender(renderer);
+        SDL_SetRenderTarget(renderer, nullptr);
+        overlayDirty = false;
+    }
+
+    SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
+    SDL_RenderClear(renderer);
+    SDL_FRect vf = getViewportF();
+
+    {
+        SDL_Rect cbClip = {
+            (int)std::ceil(vf.x),
+            (int)std::ceil(vf.y),
+            (int)std::floor(vf.x + vf.w) - (int)std::ceil(vf.x),
+            (int)std::floor(vf.y + vf.h) - (int)std::ceil(vf.y)
+        };
+        SDL_RenderSetClipRect(renderer, &cbClip);
+        const int cs = 8;
+        float tileW = vf.w / canvasW * cs;
+        float tileH = vf.h / canvasH * cs;
+        if (tileW > 0.f && tileH > 0.f) {
+            int numCols = (int)std::ceil((float)canvasW / cs) + 1;
+            int numRows = (int)std::ceil((float)canvasH / cs) + 1;
+            for (int row = 0; row < numRows; ++row) {
+                for (int col = 0; col < numCols; ++col) {
+                    bool light = ((col + row) % 2) == 0;
+                    SDL_SetRenderDrawColor(renderer,
+                        light ? 200 : 190, light ? 200 : 190, light ? 200 : 190, 255);
+                    SDL_FRect cell = {
+                        vf.x + col * tileW,
+                        vf.y + row * tileH,
+                        tileW,
+                        tileH
+                    };
+                    SDL_RenderFillRectF(renderer, &cell);
+                }
+            }
+        }
+        SDL_RenderSetClipRect(renderer, nullptr);
+    }
+
+    {
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+        SDL_Rect clip = { Toolbar::TB_W, 0, winW - Toolbar::TB_W, winH };
+        SDL_RenderSetClipRect(renderer, &clip);
+        SDL_RenderCopyF(renderer, canvas, nullptr, &vf);
+        if (hasOverlay) SDL_RenderCopyF(renderer, overlay, nullptr, &vf);
+        SDL_RenderSetClipRect(renderer, nullptr);
+    }
+
+    currentTool->onPreviewRender(renderer, toolbar.brushSize, toolbar.brushColor);
+
+    bool toolBusy = currentTool && (
+        currentTool->isActive() ||
+        ((currentType == ToolType::SELECT || currentType == ToolType::RESIZE) &&
+         static_cast<TransformTool*>(currentTool.get())->isMutating())
+    );
+    if (!toolBusy)
+        canvasResizer.draw(renderer, canvasW, canvasH);
+
+    // Scrollbars
+    {
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+        SDL_Rect trackV, thumbV, trackH, thumbH;
+        bool hasV, hasH;
+        getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
+        if (scrollbarAlphaV > 0.001f || scrollbarAlphaH > 0.001f) {
+            const Uint8 TRACK_R = 60, TRACK_G = 60, TRACK_B = 60, TRACK_A = 220;
+            const Uint8 THUMB_R = 120, THUMB_G = 120, THUMB_B = 120, THUMB_A = 240;
+            Uint8 trackAV = (Uint8)(TRACK_A * scrollbarAlphaV + 0.5f);
+            Uint8 thumbAV = (Uint8)(THUMB_A * scrollbarAlphaV + 0.5f);
+            Uint8 trackAH = (Uint8)(TRACK_A * scrollbarAlphaH + 0.5f);
+            Uint8 thumbAH = (Uint8)(THUMB_A * scrollbarAlphaH + 0.5f);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            const int SB_RADIUS = 4;
+            auto fillRoundedRect = [this, SB_RADIUS](const SDL_Rect* rect) {
+                int r = SB_RADIUS;
+                if (r <= 0 || rect->w < 2*r || rect->h < 2*r) {
+                    SDL_RenderFillRect(renderer, rect);
+                    return;
+                }
+                SDL_Rect c = { rect->x + r, rect->y + r, rect->w - 2*r, rect->h - 2*r };
+                SDL_RenderFillRect(renderer, &c);
+                SDL_Rect left  = { rect->x, rect->y + r, r, rect->h - 2*r };
+                SDL_Rect right = { rect->x + rect->w - r, rect->y + r, r, rect->h - 2*r };
+                SDL_Rect top   = { rect->x + r, rect->y, rect->w - 2*r, r };
+                SDL_Rect bot   = { rect->x + r, rect->y + rect->h - r, rect->w - 2*r, r };
+                SDL_RenderFillRect(renderer, &left);
+                SDL_RenderFillRect(renderer, &right);
+                SDL_RenderFillRect(renderer, &top);
+                SDL_RenderFillRect(renderer, &bot);
+                int cx_tl = rect->x + r, cy_tl = rect->y + r;
+                int cx_tr = rect->x + rect->w - r, cy_tr = rect->y + r;
+                int cx_bl = rect->x + r, cy_bl = rect->y + rect->h - r;
+                int cx_br = rect->x + rect->w - r, cy_br = rect->y + rect->h - r;
+                const int r2 = r * r;
+                for (int dy = 0; dy <= r; dy++)
+                    for (int dx = 0; dx <= r; dx++)
+                        if (dx*dx + dy*dy <= r2) {
+                            SDL_RenderDrawPoint(renderer, cx_tl - dx, cy_tl - dy);
+                            SDL_RenderDrawPoint(renderer, cx_tr + dx, cy_tr - dy);
+                            SDL_RenderDrawPoint(renderer, cx_bl - dx, cy_bl + dy);
+                            SDL_RenderDrawPoint(renderer, cx_br + dx, cy_br + dy);
+                        }
+            };
+            if (hasV && scrollbarAlphaV > 0.001f) {
+                SDL_SetRenderDrawColor(renderer, TRACK_R, TRACK_G, TRACK_B, trackAV);
+                fillRoundedRect(&trackV);
+                SDL_SetRenderDrawColor(renderer, THUMB_R, THUMB_G, THUMB_B, thumbAV);
+                fillRoundedRect(&thumbV);
+            }
+            if (hasH && scrollbarAlphaH > 0.001f) {
+                SDL_SetRenderDrawColor(renderer, TRACK_R, TRACK_G, TRACK_B, trackAH);
+                fillRoundedRect(&trackH);
+                SDL_SetRenderDrawColor(renderer, THUMB_R, THUMB_G, THUMB_B, thumbAH);
+                fillRoundedRect(&thumbH);
+            }
+        }
+    }
+
+    if (showResizePreview && canvasResizer.isDragging() && previewW > 0 && previewH > 0) {
+        SDL_FRect vf2 = getViewportF();
+        float scX = vf2.w / canvasW;
+        float scY = vf2.h / canvasH;
+        int wx1, wy1;
+        getWindowCoords(0, 0, &wx1, &wy1);
+        wx1 += (int)(previewOriginX * scX);
+        wy1 += (int)(previewOriginY * scY);
+        SDL_Rect ghost = { wx1, wy1, (int)(previewW * scX), (int)(previewH * scY) };
+        SDL_SetRenderDrawColor(renderer, 70, 130, 220, 200);
+        SDL_RenderDrawRect(renderer, &ghost);
+        SDL_Rect ghost2 = { ghost.x + 1, ghost.y + 1, ghost.w - 2, ghost.h - 2 };
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
+        SDL_RenderDrawRect(renderer, &ghost2);
+    }
+
+    toolbar.draw(spaceHeld || handToggledOn);
+    SDL_RenderPresent(renderer);
+}
+
 void kPen::run() {
     bool running      = true;
     bool needsRedraw  = true;
@@ -944,669 +1788,7 @@ void kPen::run() {
 
     while (running) {
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) {
-                if (promptSaveIfNeeded()) { running = false; }
-                break;
-            }
-
-            // ── Menu commands — native menu bar (macOS) or synthesised below (Windows/Linux) ──
-            if (e.type == SDL_USEREVENT) {
-                dispatchCommand(e.user.code, running, needsRedraw, overlayDirty);
-                continue;
-            }
-
-
-            // ── Text input for toolbar resize fields ──
-            if (e.type == SDL_TEXTINPUT) {
-                if (toolbar.onTextInput(e.text.text)) { needsRedraw = true; continue; }
-            }
-
-            if (e.type == SDL_KEYDOWN) {
-                // Track shift for aspect-lock override
-                if (e.key.keysym.sym == SDLK_LSHIFT || e.key.keysym.sym == SDLK_RSHIFT) {
-                    shiftHeld = true;
-                    if (canvasResizer.isDragging()) {
-                        toolbar.setShiftLockAspect(true);
-                        needsRedraw = true;
-                    }
-                }
-
-                // Let toolbar consume resize field keys first
-                if (toolbar.onResizeKey(e.key.keysym.sym)) { needsRedraw = true; continue; }
-
-                // First tool-key press while hand is toggled on only disables hand (no tool switch)
-                bool handKeyConsumed = false;
-                if (handToggledOn && !(e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))) {
-                    switch (e.key.keysym.sym) {
-                        case SDLK_b: case SDLK_l: case SDLK_r: case SDLK_e: case SDLK_f: case SDLK_i:
-                        case SDLK_s: case SDLK_o: case SDLK_h:
-                            handToggledOn = false;
-                            needsRedraw = true;
-                            handKeyConsumed = true;
-                            break;
-                        default: break;
-                    }
-                }
-                if (handKeyConsumed) continue;
-
-                switch (e.key.keysym.sym) {
-                    case SDLK_b:
-                        if (originalType == ToolType::BRUSH)  toolbar.squareBrush = !toolbar.squareBrush;
-                        setTool(ToolType::BRUSH);  needsRedraw = true; break;
-                    case SDLK_l: setTool(ToolType::LINE);   needsRedraw = true; break;
-                    case SDLK_r:
-                        if (originalType == ToolType::RECT)   toolbar.fillRect     = !toolbar.fillRect;
-                        setTool(ToolType::RECT);   needsRedraw = true; break;
-                    case SDLK_e:
-                        if (originalType == ToolType::ERASER) toolbar.squareEraser = !toolbar.squareEraser;
-                        setTool(ToolType::ERASER); needsRedraw = true; break;
-                    case SDLK_f: setTool(ToolType::FILL);   needsRedraw = true; break;
-                    case SDLK_i: setTool(ToolType::PICK);   needsRedraw = true; break;
-                    case SDLK_h:
-                        if (!(e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))) {
-                            handToggledOn = !handToggledOn;
-                            needsRedraw = true;
-                        }
-                        break;
-                    case SDLK_SPACE: spaceHeld = true; break;
-                    case SDLK_BACKSPACE:
-                    case SDLK_DELETE:
-                        deleteSelection();
-                        needsRedraw = true;
-                        break;
-                    case SDLK_UP:
-                        toolbar.brushSize = std::min(99, toolbar.brushSize + 1);
-                        toolbar.syncBrushSize();
-                        needsRedraw = true;
-                        if (currentTool->hasOverlayContent()) overlayDirty = true;
-                        break;
-                    case SDLK_DOWN:
-                        toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
-                        toolbar.syncBrushSize();
-                        needsRedraw = true;
-                        if (currentTool->hasOverlayContent()) overlayDirty = true;
-                        break;
-                    case SDLK_s:
-                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
-#ifndef __APPLE__
-                            // macOS: native menu fires EDIT_UNDO via SDL_USEREVENT — handled there.
-                            // Windows/Linux: synthesise the command here.
-                            bool saveAs = (e.key.keysym.mod & KMOD_SHIFT) != 0 || currentFilePath.empty();
-                            dispatchCommand(saveAs ? MacMenu::FILE_SAVE_AS : MacMenu::FILE_SAVE,
-                                            running, needsRedraw, overlayDirty);
-#endif
-                            break;
-                        }
-                        // No modifier — select tool shortcut
-                        setTool(ToolType::SELECT); needsRedraw = true; break;
-                    case SDLK_o:
-                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
-#ifndef __APPLE__
-                            dispatchCommand(MacMenu::FILE_OPEN, running, needsRedraw, overlayDirty);
-#endif
-                            break;
-                        }
-                        // No modifier — circle tool shortcut
-                        if (originalType == ToolType::CIRCLE) toolbar.fillCircle = !toolbar.fillCircle;
-                        setTool(ToolType::CIRCLE); needsRedraw = true; break;
-                    case SDLK_n:
-#ifndef __APPLE__
-                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))
-                            dispatchCommand(MacMenu::FILE_NEW, running, needsRedraw, overlayDirty);
-#endif
-                        break;
-                    case SDLK_z:
-#ifndef __APPLE__
-                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
-                            bool isRedo = (e.key.keysym.mod & KMOD_SHIFT) != 0;
-                            dispatchCommand(isRedo ? MacMenu::EDIT_REDO : MacMenu::EDIT_UNDO,
-                                            running, needsRedraw, overlayDirty);
-                        }
-#endif
-                        break;
-                    case SDLK_y:
-#ifndef __APPLE__
-                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))
-                            dispatchCommand(MacMenu::EDIT_REDO, running, needsRedraw, overlayDirty);
-#endif
-                        break;
-                    case SDLK_c:
-                    case SDLK_x:
-#ifndef __APPLE__
-                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
-                            dispatchCommand(e.key.keysym.sym == SDLK_x
-                                            ? MacMenu::EDIT_CUT : MacMenu::EDIT_COPY,
-                                            running, needsRedraw, overlayDirty);
-                        }
-#endif
-                        break;
-                    case SDLK_v:
-#ifndef __APPLE__
-                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))
-                            dispatchCommand(MacMenu::EDIT_PASTE, running, needsRedraw, overlayDirty);
-#endif
-                        break;
-                    case SDLK_a:
-#ifndef __APPLE__
-                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))
-                            dispatchCommand(MacMenu::EDIT_SELECT_ALL, running, needsRedraw, overlayDirty);
-#endif
-                        break;
-                    case SDLK_0:
-                        if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
-                            zoom = 1.f; zoomTarget = 1.f; panX = 0.f; panY = 0.f;
-                            needsRedraw = true;
-                        }
-                        break;
-                }
-            }
-
-            if (e.type == SDL_KEYUP) {
-                if (e.key.keysym.sym == SDLK_LSHIFT || e.key.keysym.sym == SDLK_RSHIFT) {
-                    shiftHeld = false;
-                    toolbar.setShiftLockAspect(false);
-                    if (canvasResizer.isDragging()) needsRedraw = true;
-                }
-                if (e.key.keysym.sym == SDLK_SPACE) {
-                    spaceHeld = false;
-                    handToggledOn = false;  // on Space release, don't stay in hand mode
-                    // handPanning stays true until mouse up so drag continues until release
-                }
-            }
-
-            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_RESIZED)
-                needsRedraw = true;
-
-            // ── Mouse wheel ──
-            if (e.type == SDL_MOUSEWHEEL) {
-                int mx, my; SDL_GetMouseState(&mx, &my);
-                #if SDL_VERSION_ATLEAST(2, 0, 18)
-                    float precX = e.wheel.preciseX;
-                    float precY = e.wheel.preciseY;
-                #else
-                    float precX = (float)e.wheel.x;
-                    float precY = (float)e.wheel.y;
-                #endif
-
-                if (toolbar.onMouseWheel(mx, my, precY)) {
-                    needsRedraw = true;
-                    if (currentTool->hasOverlayContent()) overlayDirty = true;
-                } else if (toolbar.inToolbar(mx, my)) {
-                    // Toolbar region: consumed, don't touch canvas
-                } else if (SDL_GetModState() & (KMOD_GUI | KMOD_CTRL)) {
-                    // Ctrl/Cmd held: zoom toward cursor, block all scrolling and gesture zoom
-                    onCanvasScroll(mx, my, 0.f, precY, true);
-                    needsRedraw = true;
-                } else if (multiGestureActive) {
-                    // Multigesture active: multigesture handler owns pan, drop wheel pan
-                } else {
-                    // Pan: add to velocity accumulation (fast wheel = more accum = quicker scroll + coast)
-                    float dx, dy;
-                    if (SDL_GetModState() & KMOD_SHIFT) {
-                        float scrollAmount = (std::abs(precY) > std::abs(precX)) ? precY : (-precX);
-                        dx = scrollAmount * 4.2f;
-                        dy = 0.f;
-                    } else {
-                        dx = -precX * 4.2f;
-                        dy = precY * 4.2f;
-                    }
-                    wheelAccumX += dx;
-                    wheelAccumY += dy;
-                    const float cap = 400.f;
-                    wheelAccumX = std::max(-cap, std::min(cap, wheelAccumX));
-                    wheelAccumY = std::max(-cap, std::min(cap, wheelAccumY));
-                    viewScrolling = true;
-                    // Shift = horizontal; no shift = vertical vs horizontal by input (touchpad can scroll horizontally via precX)
-                    if (SDL_GetModState() & KMOD_SHIFT)
-                        scrollWheelWasVertical = false;
-                    else
-                        scrollWheelWasVertical = std::abs(precY) >= std::abs(precX);
-                    needsRedraw = true;
-                }
-            }
-
-            // ── Track live finger count ──
-            if (e.type == SDL_FINGERDOWN) {
-                activeFingers++;
-                // If a 3rd finger lands while 2-finger pan/zoom is already active,
-                // mark that this 3-finger gesture should continue pan/zoom rather
-                // than switching to 3-finger draw mode.
-                if (activeFingers == 3 && multiGestureActive) {
-                    threeFingerPanMode = true;
-                    multiGestureActive = false;  // re-capture centroid on next MULTIGESTURE to avoid jump
-                    pinchActive        = false;
-                }
-
-            }
-            if (e.type == SDL_FINGERUP) {
-                int prevFingers = activeFingers;
-                activeFingers = std::max(0, activeFingers - 1);
-                // When dropping back from 3 to 2 fingers, reset the centroid so the
-                // first MULTIGESTURE doesn't produce a spurious pan jump.
-                // Keep threeFingerPanMode alive so 2->3->2 stays in pan/zoom.
-                if (prevFingers >= 3 && activeFingers == 2) {
-                    multiGestureActive = false;  // will be re-armed by next MULTIGESTURE
-                    pinchActive        = false;
-                }
-                // Dropping 2→1 while a gesture was active: reset so when the second finger
-                // returns we treat it as a fresh gesture. This makes pan→lift→zoom reliable
-                // regardless of finger position (no stale centroid or pan applied on first move).
-                if (prevFingers == 2 && activeFingers == 1 && multiGestureActive) {
-                    multiGestureActive   = false;   // next 2-finger gesture starts clean
-                    gestureNeedsRecenter = true;
-                    pinchActive          = false;
-                    zoomPriorityEvents   = 3;     // when 2nd finger returns, skip pan for 3 events so pinch can arm
-                }
-                // Clear threeFingerPanMode only when all fingers lift
-                if (activeFingers == 0) {
-                    threeFingerPanMode = false;
-                }
-            }
-
-            // ── Second-finger tap detection ──
-            // macOS holds MOUSEBUTTONDOWN until the primary finger stops moving,
-            // so we detect the tap via FINGER events and synthesize the click ourselves.
-            if (e.type == SDL_FINGERDOWN) {
-                int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
-                // Only arm tap detection for the 2nd finger (activeFingers==2 after
-                // the increment above). A 3rd finger signals a 3-finger draw gesture,
-                // not a canvas tap, so don't overwrite tap state in that case.
-                if (activeFingers == 2) {
-                tapFingerId    = e.tfinger.fingerId;
-                tapDownX       = e.tfinger.x * winW;
-                tapDownY       = e.tfinger.y * winH;
-                tapDownTime    = e.tfinger.timestamp;
-                tapPending     = true;
-                tapSawGesture  = multiGestureActive;
-                gestureNeedsRecenter = true;
-                pinchActive          = false;
-                zoomPriorityEvents   = 3;
-                // Store the new 2-finger positions as the zoom pivot (reset for this gesture).
-                // Clamp to window bounds so zoomAround() doesn't produce huge pan deltas that get
-                // snapped back and make zoom feel capped.
-                int mx, my; SDL_GetMouseState(&mx, &my);
-                twoFingerPivotX   = std::max(0.f, std::min((float)winW, (mx + e.tfinger.x * winW) * 0.5f));
-                twoFingerPivotY   = std::max(0.f, std::min((float)winH, (my + e.tfinger.y * winH) * 0.5f));
-                twoFingerPivotSet = true;
-                } else {
-                    // 3rd+ finger: cancel any pending tap to avoid a false draw-click
-                    tapPending = false;
-                }
-            }
-            if (e.type == SDL_FINGERUP && tapPending && e.tfinger.fingerId == tapFingerId) {
-                tapPending = false;
-                int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
-                float upX = e.tfinger.x * winW;
-                float upY = e.tfinger.y * winH;
-                float dx = upX - tapDownX, dy = upY - tapDownY;
-                Uint32 dt = e.tfinger.timestamp - tapDownTime;
-                // Tap = short duration (<300ms), little movement (<10px),
-                // cursor was moving (confirms drag+tap), and we didn't zoom (pinch).
-                if (dt < 300 && dx*dx + dy*dy < 100.f && tapSawGesture && !pinchActive) {
-                    int tx = (int)upX, ty = (int)upY;
-
-                    // Toolbar tap — route through normal toolbar click path.
-                    // Don't set tapConsumed: let the real MOUSEBUTTONDOWN be suppressed
-                    // only for canvas taps; toolbar can safely handle a double-fire
-                    // because onMouseDown is guarded by inToolbar and returns false on miss.
-                    if (toolbar.inToolbar(tx, ty)) {
-                        if (toolbar.onMouseDown(tx, ty)) {
-                            toolbar.onMouseUp(tx, ty);
-                            tapConsumed = true;  // suppress the delayed real MOUSEBUTTONDOWN
-                            needsRedraw = true;
-                        }
-                        // if onMouseDown missed (returned false), leave tapConsumed=false
-                        // so the real MOUSEBUTTONDOWN can still fire normally
-                    } else {
-                        toolbar.notifyClickOutside();  // canvas tap defocuses text fields
-                        tapConsumed = true;
-                        // Canvas tap — use primary finger (mouse) position for draw coords
-                        int mx, my; SDL_GetMouseState(&mx, &my);
-                        int tapCX, tapCY; getCanvasCoords(mx, my, &tapCX, &tapCY);
-
-                        if (currentType == ToolType::RESIZE) {
-                            auto* rt = static_cast<ResizeTool*>(currentTool.get());
-                            if (!rt->isHit(tapCX, tapCY)) {
-                                bool renders = rt->willRender();
-                                withCanvas([&]{ rt->deactivate(renderer); });
-                                if (renders) saveState(undoStack);
-                                currentTool.reset();
-                                setTool(originalType);
-                            }
-                        }
-                        if (currentType == ToolType::SELECT) {
-                            auto* st = static_cast<SelectTool*>(currentTool.get());
-                            if (st->isSelectionActive() && !st->isHit(tapCX, tapCY)) {
-                                bool dirty = st->isDirty();
-                                withCanvas([&]{ st->deactivate(renderer); });
-                                if (dirty) saveState(undoStack);
-                            }
-                        }
-
-                        withCanvas([&]{ currentTool->onMouseDown(tapCX, tapCY, renderer, toolbar.brushSize, toolbar.brushColor); });
-                        if (currentType == ToolType::FILL) saveState(undoStack);
-                        bool tapChanged = false;
-                        withCanvas([&]{ tapChanged = currentTool->onMouseUp(tapCX, tapCY, renderer, toolbar.brushSize, toolbar.brushColor); });
-                        if (tapChanged && currentType != ToolType::SELECT && currentType != ToolType::RESIZE)
-                            saveState(undoStack);
-                        needsRedraw = true; overlayDirty = true;
-                    }
-                }
-            }
-            // Cancel tap if the second finger moves significantly before lifting
-            if (e.type == SDL_FINGERMOTION && tapPending && e.tfinger.fingerId == tapFingerId) {
-                int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
-                float mx = e.tfinger.x * winW - tapDownX;
-                float my = e.tfinger.y * winH - tapDownY;
-                if (mx*mx + my*my > 100.f) tapPending = false;
-            }
-
-            // ── Pinch-to-zoom + two-finger pan ──
-            if (e.type == SDL_MULTIGESTURE && tapPending) { tapSawGesture = true; }
-            if (e.type == SDL_MULTIGESTURE) {
-                // MULTIGESTURE implies 2+ fingers; sync count if we got this before FINGERDOWN
-                // (e.g. after a tap, event order can leave activeFingers stale).
-                if (activeFingers < 2) {
-                    activeFingers        = 2;
-                    gestureNeedsRecenter = true;
-                    zoomPriorityEvents   = 3;
-                    pinchActive          = false;
-                }
-                // 3-finger gesture started fresh: suppress pan/zoom so mouse events
-                // drive drawing normally. But if we got here via 2->3 finger transition
-                // (threeFingerPanMode), continue pan/zoom instead.
-                if (activeFingers >= 3 && !threeFingerPanMode) {
-                    needsRedraw = true;
-                } else {
-                int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
-                float cx = e.mgesture.x * winW;
-                float cy = e.mgesture.y * winH;
-
-                // SDL_GetMouseState gives the actual cursor/finger position on macOS,
-                // which is reliable for toolbar detection (centroid coords are not).
-                int mx, my; SDL_GetMouseState(&mx, &my);
-                bool overToolbar = toolbar.inToolbar(mx, my);
-                bool ctrlHeld    = (SDL_GetModState() & (KMOD_GUI | KMOD_CTRL)) != 0;
-
-                // ① Zoom — skip if over toolbar or ctrl held.
-                // Arm pinch when we see pinch (dDist) OR when we're in zoom-priority window
-                // (second finger just landed) so zoom has a valid pivot and can start on next move.
-                bool zoomEligible = !overToolbar && !ctrlHeld;
-                bool pinchDetected = std::abs(e.mgesture.dDist) > 0.00008f;
-                bool inZoomPriority = (zoomPriorityEvents > 0);
-                if (zoomEligible && (pinchDetected || inZoomPriority)) {
-                    if (!pinchActive) {
-                        pinchBaseZoom = zoom;
-                        pinchRawDist  = 0.f;
-                        pinchActive   = true;
-                        viewScrolling = true;
-                        if (pinchDetected) tapPending = false;  // only cancel tap on real pinch
-                    }
-                    pinchRawDist += e.mgesture.dDist * 6.f;
-                    float rawZoom = pinchBaseZoom * expf(pinchRawDist);
-                    zoomTarget = std::max(MIN_ZOOM, std::min(MAX_ZOOM, rawZoom));
-                }
-
-                // ② Pan second — skip if over toolbar or ctrl held.
-                // Skip if centroid needs recapture or we're in the zoom-priority window
-                // (after 1→2 fingers so pinch can arm).
-                if (multiGestureActive && !gestureNeedsRecenter && zoomPriorityEvents == 0 && !overToolbar && !ctrlHeld) {
-                    float dx = cx - lastGestureCX, dy = cy - lastGestureCY;
-                    panX += dx;
-                    panY += dy;
-                    viewScrolling = true;
-                    // Show the scrollbar for the axis that moved more (so horizontal bar shows for touchpad horizontal scroll)
-                    scrollWheelWasVertical = std::abs(dy) >= std::abs(dx);
-                }
-                if (zoomPriorityEvents > 0) zoomPriorityEvents--;
-                gestureNeedsRecenter = false;
-                lastGestureCX      = cx;
-                lastGestureCY      = cy;
-                // First MULTIGESTURE event confirms a pan/zoom gesture. If a draw
-                // stroke is in progress, commit it now — MOUSEBUTTONUP is suppressed
-                // while multiGestureActive, so this is the last safe opportunity.
-                if (!multiGestureActive && currentTool && currentTool->isActive()) {
-                    int mx, my; SDL_GetMouseState(&mx, &my);
-                    int fx, fy; getCanvasCoords(mx, my, &fx, &fy);
-                    bool strokeChanged = false;
-                    withCanvas([&]{ strokeChanged = currentTool->onMouseUp(fx, fy, renderer, toolbar.brushSize, toolbar.brushColor); });
-                    if (strokeChanged && currentType != ToolType::SELECT && currentType != ToolType::RESIZE)
-                        saveState(undoStack);
-                }
-                multiGestureActive = true;
-
-                needsRedraw = true;
-                } // end pan/zoom branch
-            }
-
-            // Reset all gesture tracking when all fingers lift.
-            if (e.type == SDL_FINGERUP && activeFingers == 0) {
-                multiGestureActive   = false;
-                pinchActive          = false;
-                gestureNeedsRecenter = false;
-                zoomPriorityEvents   = 0;
-                twoFingerPivotX      = 0.f;
-                twoFingerPivotY      = 0.f;
-                twoFingerPivotSet    = false;
-                viewScrolling        = false;
-                tapConsumed          = false;
-            }
-
-            int cX, cY;
-            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT
-                && !multiGestureActive) {
-                if (tapConsumed) { tapConsumed = false; continue; }
-                viewScrolling = false;
-                // Defocus toolbar text fields only when click is outside the toolbar.
-                // Clicks inside the toolbar (e.g. between W/H fields) are handled by onMouseDown.
-                if (!toolbar.inToolbar(e.button.x, e.button.y))
-                    toolbar.notifyClickOutside();
-                // Scrollbars at window edge (right/bottom): thumb drag or track jump
-                {
-                    int winW, winH;
-                    SDL_GetWindowSize(window, &winW, &winH);
-                    SDL_Rect trackV, thumbV, trackH, thumbH;
-                    bool hasV, hasH;
-                    if (getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH)) {
-                        int mx = e.button.x, my = e.button.y;
-                        SDL_Point pt = { mx, my };
-                        if (hasV && SDL_PointInRect(&pt, &trackV)) {
-                            SDL_Rect fit = getFitViewport();
-                            float zH = fit.h * zoom;
-                            float maxPanY = std::max(0.f, (zH - fit.h) / 2.f) + PAN_SLACK;
-                            float range = (float)(fit.h - thumbV.h);
-                            if (SDL_PointInRect(&pt, &thumbV)) {
-                                scrollbarDragOffsetY = my - thumbV.y;
-                                scrollbarDragV = true;
-                            } else {
-                                // Track click: nearest edge of thumb jumps to cursor
-                                int thumbY;
-                                if (my < thumbV.y) {
-                                    thumbY = my;
-                                    scrollbarDragOffsetY = 0;
-                                } else {
-                                    thumbY = my - thumbV.h;
-                                    scrollbarDragOffsetY = thumbV.h;
-                                }
-                                if (thumbY < fit.y) thumbY = fit.y;
-                                if (thumbY > fit.y + fit.h - thumbV.h) thumbY = fit.y + fit.h - thumbV.h;
-                                if (range > 0.f)
-                                    panY = (float)(thumbY - fit.y) / range * 2.f * maxPanY - maxPanY;
-                                scrollbarDragV = true;
-                            }
-                            needsRedraw = true; continue;
-                        }
-                        if (hasH && SDL_PointInRect(&pt, &trackH)) {
-                            SDL_Rect fit = getFitViewport();
-                            float zW = fit.w * zoom;
-                            float maxPanX = std::max(0.f, (zW - fit.w) / 2.f) + PAN_SLACK;
-                            float range = (float)(fit.w - thumbH.w);
-                            if (SDL_PointInRect(&pt, &thumbH)) {
-                                scrollbarDragOffsetX = mx - thumbH.x;
-                                scrollbarDragH = true;
-                            } else {
-                                // Track click: nearest edge of thumb jumps to cursor
-                                int thumbX;
-                                if (mx < thumbH.x) {
-                                    thumbX = mx;
-                                    scrollbarDragOffsetX = 0;
-                                } else {
-                                    thumbX = mx - thumbH.w;
-                                    scrollbarDragOffsetX = thumbH.w;
-                                }
-                                if (thumbX < fit.x) thumbX = fit.x;
-                                if (thumbX > fit.x + fit.w - thumbH.w) thumbX = fit.x + fit.w - thumbH.w;
-                                if (range > 0.f)
-                                    panX = (float)(thumbX - fit.x) / range * 2.f * maxPanX - maxPanX;
-                                scrollbarDragH = true;
-                            }
-                            needsRedraw = true; continue;
-                        }
-                    }
-                }
-                // Canvas edge resize handles take priority
-                if (canvasResizer.onMouseDown(e.button.x, e.button.y, canvasW, canvasH)) {
-                    needsRedraw = true; continue;
-                }
-                if (toolbar.onMouseDown(e.button.x, e.button.y)) { needsRedraw = true; continue; }
-                if (toolbar.inToolbar(e.button.x, e.button.y)) { continue; }
-                // Hand pan: handActive (Space held or H toggled) — click-drag to pan (does not deactivate selection)
-                if (spaceHeld || handToggledOn) {
-                    handPanning = true;
-                    handPanStartWinX = e.button.x;
-                    handPanStartWinY = e.button.y;
-                    handPanStartPanX = panX;
-                    handPanStartPanY = panY;
-                    needsRedraw = true;
-                    continue;
-                }
-                getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
-
-                if (currentType == ToolType::SELECT) {
-                    auto* st = static_cast<SelectTool*>(currentTool.get());
-                    if (st->isSelectionActive() && !st->isHit(cX, cY)) {
-                        bool dirty = st->isDirty();
-                        withCanvas([&]{ st->deactivate(renderer); });
-                        if (dirty) { saveState(undoStack); }
-                        // Fall through — onMouseDown below starts a new rubber-band selection
-                    }
-                }
-
-                if (currentType == ToolType::RESIZE) {
-                    auto* rt = static_cast<ResizeTool*>(currentTool.get());
-                    if (!rt->isHit(cX, cY)) {
-                        bool renders = rt->willRender();
-                        withCanvas([&]{ rt->deactivate(renderer); });
-                        if (renders) saveState(undoStack);
-                        currentTool.reset(); // already saved; skip setTool's deactivate+save
-                        setTool(originalType);
-                        // Fall through so this click also starts drawing the next shape
-                    }
-                }
-
-                withCanvas([&]{ currentTool->onMouseDown(cX, cY, renderer, toolbar.brushSize, toolbar.brushColor); });
-                if (currentType == ToolType::FILL) saveState(undoStack);
-                needsRedraw = true; overlayDirty = true;
-            }
-
-            if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT
-                && !multiGestureActive) {
-                if (scrollbarDragV || scrollbarDragH) {
-                    scrollbarDragV = false;
-                    scrollbarDragH = false;
-                    needsRedraw = true;
-                    continue;
-                }
-                if (handPanning) {
-                    handPanning = false;
-                    needsRedraw = true;
-                    continue;
-                }
-                if (canvasResizer.isDragging()) {
-                    int newW, newH, ox = 0, oy = 0;
-                    bool lock = toolbar.getEffectiveLockAspect();
-                    toolbar.setShiftLockAspect(false);  // clear shift override on release
-                    if (canvasResizer.onMouseUp(e.button.x, e.button.y, canvasW, canvasH, newW, newH, ox, oy, lock))
-                        resizeCanvas(newW, newH, toolbar.getResizeScaleMode(), ox, oy);
-                    else
-                        toolbar.syncCanvasSize(canvasW, canvasH);  // restore if no actual resize
-                    showResizePreview = false;
-                    needsRedraw = true; continue;
-                }
-                toolbar.onMouseUp(e.button.x, e.button.y);
-                getCanvasCoords(e.button.x, e.button.y, &cX, &cY);
-                bool changed = false;
-                withCanvas([&]{ changed = currentTool->onMouseUp(cX, cY, renderer, toolbar.brushSize, toolbar.brushColor); });
-                if (changed && currentType != ToolType::SELECT && currentType != ToolType::RESIZE)
-                    saveState(undoStack);
-                needsRedraw = true; overlayDirty = true;
-            }
-
-            if (e.type == SDL_MOUSEMOTION && !multiGestureActive) {
-                if (scrollbarDragV) {
-                    SDL_Rect fit = getFitViewport();
-                    float zH = fit.h * zoom;
-                    float maxPanY = std::max(0.f, (zH - fit.h) / 2.f) + PAN_SLACK;
-                    SDL_Rect trackV, thumbV, trackH, thumbH;
-                    bool hasV, hasH;
-                    int winW, winH;
-                    SDL_GetWindowSize(window, &winW, &winH);
-                    getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
-                    int my = e.motion.y;
-                    int thumbY = my - scrollbarDragOffsetY;
-                    if (thumbY < fit.y) thumbY = fit.y;
-                    if (thumbY > fit.y + fit.h - thumbV.h) thumbY = fit.y + fit.h - thumbV.h;
-                    float range = (float)(fit.h - thumbV.h);
-                    if (range > 0.f)
-                        panY = (float)(thumbY - fit.y) / range * 2.f * maxPanY - maxPanY;
-                    needsRedraw = true; continue;
-                }
-                if (scrollbarDragH) {
-                    SDL_Rect fit = getFitViewport();
-                    float zW = fit.w * zoom;
-                    float maxPanX = std::max(0.f, (zW - fit.w) / 2.f) + PAN_SLACK;
-                    SDL_Rect trackV, thumbV, trackH, thumbH;
-                    bool hasV, hasH;
-                    int winW, winH;
-                    SDL_GetWindowSize(window, &winW, &winH);
-                    getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
-                    int mx = e.motion.x;
-                    int thumbX = mx - scrollbarDragOffsetX;
-                    if (thumbX < fit.x) thumbX = fit.x;
-                    if (thumbX > fit.x + fit.w - thumbH.w) thumbX = fit.x + fit.w - thumbH.w;
-                    float range = (float)(fit.w - thumbH.w);
-                    if (range > 0.f)
-                        panX = (float)(thumbX - fit.x) / range * 2.f * maxPanX - maxPanX;
-                    needsRedraw = true; continue;
-                }
-                if (canvasResizer.isDragging()) {
-                    bool lock = toolbar.getEffectiveLockAspect();
-                    canvasResizer.onMouseMove(e.motion.x, e.motion.y, previewW, previewH, previewOriginX, previewOriginY, lock);
-                    showResizePreview = true;
-                    toolbar.syncCanvasSize(previewW, previewH);  // live-update size text while dragging
-                    needsRedraw = true; continue;
-                }
-                if (handPanning) {
-                    addPanDelta((float)(e.motion.x - handPanStartWinX), (float)(e.motion.y - handPanStartWinY));
-                    handPanStartWinX = e.motion.x;
-                    handPanStartWinY = e.motion.y;
-                    needsRedraw = true;
-                    continue;
-                }
-                viewScrolling = false;
-                if (toolbar.onMouseMotion(e.motion.x, e.motion.y)) { needsRedraw = true; overlayDirty = true; continue; }
-                getCanvasCoords(e.motion.x, e.motion.y, &cX, &cY);
-                withCanvas([&]{ currentTool->onMouseMove(cX, cY, renderer, toolbar.brushSize, toolbar.brushColor); });
-
-                // Clear redo history the moment the user starts dragging a
-                // selection or resize handle — any future redo would be stale.
-                if (currentType == ToolType::SELECT || currentType == ToolType::RESIZE) {
-                    if (static_cast<TransformTool*>(currentTool.get())->isMutating())
-                        redoStack.clear();
-                }
-
-                needsRedraw = true; overlayDirty = true;
-            }
+            processEvent(e, running, needsRedraw, overlayDirty);
         }
 
         // Poll toolbar for a committed canvas resize (Enter key in text field)
@@ -1618,102 +1800,8 @@ void kPen::run() {
             }
         }
 
-        // Cursor update runs every tick — hovering over handles must update
-        // the cursor even when nothing else is redrawing.
-        {
-            int mx, my; SDL_GetMouseState(&mx, &my);
-            // Treat transparent brush color the same as eraser for cursor purposes
-            bool actAsEraser = (currentType == ToolType::ERASER) ||
-                               (currentType == ToolType::BRUSH && toolbar.brushColor.a == 0);
-            bool handActive = spaceHeld || handToggledOn;
-            ToolType cursorType = (handActive || handPanning) ? ToolType::HAND
-                                : (actAsEraser ? ToolType::ERASER : currentType);
-            bool cursorSquare = (currentType == ToolType::ERASER) ? toolbar.squareEraser : toolbar.squareBrush;
-            SDL_Rect vp = getViewport();
-            bool overCanvas = (mx >= vp.x && mx < vp.x + vp.w && my >= vp.y && my < vp.y + vp.h);
-            bool inToolbar  = toolbar.inToolbar(mx, my);
-            // Toolbar: hand over interactive elements, arrow elsewhere
-            if (inToolbar) {
-                if (toolbar.isInteractive(mx, my))
-                    cursorManager.forceSetCursor(cursorManager.getHandCursor());
-                else
-                    cursorManager.forceSetCursor(cursorManager.getArrowCursor());
-            } else {
-                // Scrollbar at window edge: pointer when hovering exactly on track or thumb
-                int winW, winH;
-                SDL_GetWindowSize(window, &winW, &winH);
-                SDL_Rect trackV, thumbV, trackH, thumbH;
-                bool hasV, hasH;
-                bool overScrollbar = false;
-                if (getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH)) {
-                    SDL_Point pt = { mx, my };
-                    overScrollbar = (hasV && (SDL_PointInRect(&pt, &trackV) || SDL_PointInRect(&pt, &thumbV)))
-                        || (hasH && (SDL_PointInRect(&pt, &trackH) || SDL_PointInRect(&pt, &thumbH)));
-                }
-                if (overScrollbar && !(handActive || handPanning)) {
-                    cursorManager.forceSetCursor(cursorManager.getArrowCursor());
-                } else {
-                    // nearHandle: hovering or dragging a canvas resize handle
-                    bool nearHandle = canvasResizer.isDragging() ||
-                        (!overCanvas &&
-                         canvasResizer.hitTest(mx, my, canvasW, canvasH) != CanvasResizer::Handle::NONE);
-                    // For pick tool over canvas: sample pixel under cursor so the dropper tip shows that color
-                    SDL_Color pickHoverColor = { 0, 0, 0, 0 };
-                    const SDL_Color* pickHoverColorPtr = nullptr;
-                    if (cursorType == ToolType::PICK && overCanvas) {
-                        int cX, cY;
-                        getCanvasCoords(mx, my, &cX, &cY);
-                        int px = std::max(0, std::min(canvasW - 1, cX));
-                        int py = std::max(0, std::min(canvasH - 1, cY));
-                        withCanvas([&] {
-                            SDL_Rect r = { px, py, 1, 1 };
-                            Uint32 pixel = 0;
-                            SDL_RenderReadPixels(renderer, &r, SDL_PIXELFORMAT_ARGB8888, &pixel, 4);
-                            pickHoverColor.a = (pixel >> 24) & 0xFF;
-                            pickHoverColor.r = (pixel >> 16) & 0xFF;
-                            pickHoverColor.g = (pixel >>  8) & 0xFF;
-                            pickHoverColor.b =  pixel        & 0xFF;
-                        });
-                        pickHoverColorPtr = &pickHoverColor;
-                    }
-                    cursorManager.update(this, cursorType, originalType, currentTool.get(),
-                                         toolbar.brushSize, cursorSquare,
-                                         toolbar.brushColor,
-                                         mx, my, false, overCanvas, nearHandle,
-                                         &canvasResizer, canvasW, canvasH,
-                                         pickHoverColorPtr);
-                }
-            }
-        }
-
-        // Scrollbar fade: update every frame so in/out animation runs (fade in faster than fade out)
-        {
-            int winW, winH;
-            SDL_GetWindowSize(window, &winW, &winH);
-            SDL_Rect fit = getFitViewport();
-            int mx, my;
-            SDL_GetMouseState(&mx, &my);
-            bool hoverView = (mx >= fit.x && mx < fit.x + fit.w && my >= fit.y && my < fit.y + fit.h);
-            SDL_Rect trackV, thumbV, trackH, thumbH;
-            bool hasV, hasH;
-            bool anyBar = getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
-            SDL_Point pt = { mx, my };
-            bool hoverV = hasV && (SDL_PointInRect(&pt, &trackV) || SDL_PointInRect(&pt, &thumbV));
-            bool hoverH = hasH && (SDL_PointInRect(&pt, &trackH) || SDL_PointInRect(&pt, &thumbH));
-            bool wantVisibleV = hasV && (scrollbarDragV || hoverV || (viewScrolling && scrollWheelWasVertical) || handPanning);
-            bool wantVisibleH = hasH && (scrollbarDragH || hoverH || (viewScrolling && !scrollWheelWasVertical) || handPanning);
-            const float SB_FADE_IN = 0.22f, SB_FADE_OUT = 0.028f;
-            if (wantVisibleV)
-                scrollbarAlphaV = std::min(1.f, scrollbarAlphaV + SB_FADE_IN);
-            else
-                scrollbarAlphaV = std::max(0.f, scrollbarAlphaV - SB_FADE_OUT);
-            if (wantVisibleH)
-                scrollbarAlphaH = std::min(1.f, scrollbarAlphaH + SB_FADE_IN);
-            else
-                scrollbarAlphaH = std::max(0.f, scrollbarAlphaH - SB_FADE_OUT);
-            if ((scrollbarAlphaV > 0.001f && scrollbarAlphaV < 0.999f) || (scrollbarAlphaH > 0.001f && scrollbarAlphaH < 0.999f))
-                needsRedraw = true;
-        }
+        updateCursor(needsRedraw, overlayDirty);
+        tickScrollbarFade(needsRedraw);
 
         if (!needsRedraw) {
             bool ta = toolbar.tickScroll();
@@ -1726,188 +1814,6 @@ void kPen::run() {
         }
         needsRedraw = false;
 
-        // 1. Overlay
-        bool hasOverlay = currentTool->hasOverlayContent();
-        if (overlayDirty) {
-            // Sync cachedBrushSize/cachedColor before redrawing the overlay
-            // so brush-size changes take effect immediately.
-            currentTool->onPreviewRender(renderer, toolbar.brushSize, toolbar.brushColor);
-            SDL_SetRenderTarget(renderer, overlay);
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-            SDL_RenderClear(renderer);
-            if (hasOverlay) currentTool->onOverlayRender(renderer);
-            SDL_SetRenderTarget(renderer, nullptr);
-            overlayDirty = false;
-        }
-
-        // 2. Composite
-        SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
-        SDL_RenderClear(renderer);
-        SDL_FRect vf = getViewportF();
-
-        // Checkerboard behind canvas. Tiles are sized in canvas pixels (cs=8) so
-        // the pattern scales and pans with the canvas exactly. Each tile maps to
-        // cs*(vf.w/canvasW) window pixels, drawn with float rects so tile edges
-        // align precisely to canvas pixel boundaries at any zoom level.
-        {
-            // Clip to the canvas rect — ceil origin so checkerboard never bleeds
-            // outside; canvas texture composites on top via BLENDMODE_BLEND.
-            SDL_Rect cbClip = {
-                (int)std::ceil(vf.x),
-                (int)std::ceil(vf.y),
-                (int)std::floor(vf.x + vf.w) - (int)std::ceil(vf.x),
-                (int)std::floor(vf.y + vf.h) - (int)std::ceil(vf.y)
-            };
-            SDL_RenderSetClipRect(renderer, &cbClip);
-
-            // cs = tile size in canvas pixels
-            const int cs = 8;
-            float tileW = vf.w / canvasW * cs;  // tile size in window pixels (float)
-            float tileH = vf.h / canvasH * cs;
-
-            if (tileW > 0.f && tileH > 0.f) {
-                // First tile whose top-left is <= vf.x / vf.y
-                int startCol = (int)std::floor((vf.x - vf.x) / tileW); // always 0
-                int startRow = 0;
-                // Number of tiles needed to cover the canvas width/height
-                int numCols = (int)std::ceil((float)canvasW / cs) + 1;
-                int numRows = (int)std::ceil((float)canvasH / cs) + 1;
-
-                for (int row = 0; row < numRows; ++row) {
-                    for (int col = 0; col < numCols; ++col) {
-                        bool light = ((col + row) % 2) == 0;
-                        SDL_SetRenderDrawColor(renderer,
-                            light ? 200 : 190, light ? 200 : 190, light ? 200 : 190, 255);
-                        SDL_FRect cell = {
-                            vf.x + col * tileW,
-                            vf.y + row * tileH,
-                            tileW,
-                            tileH
-                        };
-                        SDL_RenderFillRectF(renderer, &cell);
-                    }
-                }
-            }
-            SDL_RenderSetClipRect(renderer, nullptr);
-        }
-
-        // Render the canvas at the exact float viewport position.
-        // Use SDL's clip rect to restrict drawing to the visible window area.
-        // The old approach (manually computing a shifted src rect with floor/ceil
-        // expansion) caused a sub-pixel mismatch: the expanded dst origin didn't
-        // match vf, so pixels landed in different positions than getCanvasCoords
-        // expected. Using SDL_RenderSetClipRect keeps the mapping exact.
-        {
-            int winW, winH; SDL_GetWindowSize(window, &winW, &winH);
-            SDL_Rect clip = { Toolbar::TB_W, 0, winW - Toolbar::TB_W, winH };
-            SDL_RenderSetClipRect(renderer, &clip);
-            SDL_RenderCopyF(renderer, canvas, nullptr, &vf);
-            if (hasOverlay) SDL_RenderCopyF(renderer, overlay, nullptr, &vf);
-            SDL_RenderSetClipRect(renderer, nullptr);
-        }
-
-        // 3. Tool preview
-        currentTool->onPreviewRender(renderer, toolbar.brushSize, toolbar.brushColor);
-
-        // 4. Canvas edge resize handles (window-space, outside canvas texture)
-        // Hide while the current tool is actively drawing, or while a select/resize
-        // tool is moving or dragging a handle.
-        bool toolBusy = currentTool && (
-            currentTool->isActive() ||
-            ((currentType == ToolType::SELECT || currentType == ToolType::RESIZE) &&
-             static_cast<TransformTool*>(currentTool.get())->isMutating())
-        );
-        if (!toolBusy)
-            canvasResizer.draw(renderer, canvasW, canvasH);
-
-        // 4.5. Canvas scrollbars at window edge (right/bottom); show when scrolling or hovering view/scrollbar
-        {
-            int winW, winH;
-            SDL_GetWindowSize(window, &winW, &winH);
-            SDL_Rect fit = getFitViewport();
-            int mx, my;
-            SDL_GetMouseState(&mx, &my);
-            bool hoverView = (mx >= fit.x && mx < fit.x + fit.w && my >= fit.y && my < fit.y + fit.h);
-
-            SDL_Rect trackV, thumbV, trackH, thumbH;
-            bool hasV, hasH;
-            bool anyBar = getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
-            if (scrollbarAlphaV > 0.001f || scrollbarAlphaH > 0.001f) {
-                const Uint8 TRACK_R = 60, TRACK_G = 60, TRACK_B = 60, TRACK_A = 220;
-                const Uint8 THUMB_R = 120, THUMB_G = 120, THUMB_B = 120, THUMB_A = 240;
-                Uint8 trackAV = (Uint8)(TRACK_A * scrollbarAlphaV + 0.5f);
-                Uint8 thumbAV = (Uint8)(THUMB_A * scrollbarAlphaV + 0.5f);
-                Uint8 trackAH = (Uint8)(TRACK_A * scrollbarAlphaH + 0.5f);
-                Uint8 thumbAH = (Uint8)(THUMB_A * scrollbarAlphaH + 0.5f);
-                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-                const int SB_RADIUS = 4;  // rounded corner radius (half of bar thickness)
-                auto fillRoundedRect = [this, SB_RADIUS](const SDL_Rect* rect) {
-                    int r = SB_RADIUS;
-                    if (r <= 0 || rect->w < 2*r || rect->h < 2*r) {
-                        SDL_RenderFillRect(renderer, rect);
-                        return;
-                    }
-                    SDL_Rect c = { rect->x + r, rect->y + r, rect->w - 2*r, rect->h - 2*r };
-                    SDL_RenderFillRect(renderer, &c);
-                    SDL_Rect left  = { rect->x, rect->y + r, r, rect->h - 2*r };
-                    SDL_Rect right = { rect->x + rect->w - r, rect->y + r, r, rect->h - 2*r };
-                    SDL_Rect top   = { rect->x + r, rect->y, rect->w - 2*r, r };
-                    SDL_Rect bot   = { rect->x + r, rect->y + rect->h - r, rect->w - 2*r, r };
-                    SDL_RenderFillRect(renderer, &left);
-                    SDL_RenderFillRect(renderer, &right);
-                    SDL_RenderFillRect(renderer, &top);
-                    SDL_RenderFillRect(renderer, &bot);
-                    int cx_tl = rect->x + r, cy_tl = rect->y + r;
-                    int cx_tr = rect->x + rect->w - r, cy_tr = rect->y + r;
-                    int cx_bl = rect->x + r, cy_bl = rect->y + rect->h - r;
-                    int cx_br = rect->x + rect->w - r, cy_br = rect->y + rect->h - r;
-                    const int r2 = r * r;
-                    // Include dx=0 and dy=0 so the quarter-circles meet the side rects and center with no gap
-                    for (int dy = 0; dy <= r; dy++)
-                        for (int dx = 0; dx <= r; dx++)
-                            if (dx*dx + dy*dy <= r2) {
-                                SDL_RenderDrawPoint(renderer, cx_tl - dx, cy_tl - dy);
-                                SDL_RenderDrawPoint(renderer, cx_tr + dx, cy_tr - dy);
-                                SDL_RenderDrawPoint(renderer, cx_bl - dx, cy_bl + dy);
-                                SDL_RenderDrawPoint(renderer, cx_br + dx, cy_br + dy);
-                            }
-                };
-                if (hasV && scrollbarAlphaV > 0.001f) {
-                    SDL_SetRenderDrawColor(renderer, TRACK_R, TRACK_G, TRACK_B, trackAV);
-                    fillRoundedRect(&trackV);
-                    SDL_SetRenderDrawColor(renderer, THUMB_R, THUMB_G, THUMB_B, thumbAV);
-                    fillRoundedRect(&thumbV);
-                }
-                if (hasH && scrollbarAlphaH > 0.001f) {
-                    SDL_SetRenderDrawColor(renderer, TRACK_R, TRACK_G, TRACK_B, trackAH);
-                    fillRoundedRect(&trackH);
-                    SDL_SetRenderDrawColor(renderer, THUMB_R, THUMB_G, THUMB_B, thumbAH);
-                    fillRoundedRect(&thumbH);
-                }
-            }
-        }
-
-        // 5. Ghost outline while dragging a canvas handle
-        if (showResizePreview && canvasResizer.isDragging() && previewW > 0 && previewH > 0) {
-            // Map previewW/H through the same viewport scale as the canvas.
-            SDL_FRect vf2 = getViewportF();
-            float scX = vf2.w / canvasW;
-            float scY = vf2.h / canvasH;
-            int wx1, wy1;
-            getWindowCoords(0, 0, &wx1, &wy1);
-            wx1 += (int)(previewOriginX * scX);
-            wy1 += (int)(previewOriginY * scY);
-            SDL_Rect ghost = { wx1, wy1, (int)(previewW * scX), (int)(previewH * scY) };
-            SDL_SetRenderDrawColor(renderer, 70, 130, 220, 200);
-            SDL_RenderDrawRect(renderer, &ghost);
-            SDL_Rect ghost2 = { ghost.x + 1, ghost.y + 1, ghost.w - 2, ghost.h - 2 };
-            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
-            SDL_RenderDrawRect(renderer, &ghost2);
-        }
-
-        // 6. Toolbar
-        toolbar.draw(spaceHeld || handToggledOn);
-
-        SDL_RenderPresent(renderer);
+        renderFrame(overlayDirty);
     }
 }

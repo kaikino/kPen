@@ -64,7 +64,6 @@ class Toolbar {
 
     bool isDragging() const;
     bool onMouseWheel(int x, int y, float dy);
-    void stopScrolling() { userScrolling = false; scrollRawOffset = 0.f; scrollBaseY = scrollY; }
     bool tickScroll();
     bool inToolbar(int x, int y) const { return x < TB_W; }
     bool isInteractive(int x, int y) const;  // true when cursor is over a clickable element

@@ -2,12 +2,6 @@
 #include "DrawingUtils.h"
 #include <algorithm>
 
-// BrushTool uses its mapper to get the canvas size so it works at any resolution.
-static bool onCanvas(ICoordinateMapper* m, int cX, int cY) {
-    int cw, ch; m->getCanvasSize(&cw, &ch);
-    return cX >= 0 && cX < cw && cY >= 0 && cY < ch;
-}
-
 static void brushSetColor(SDL_Renderer* r, SDL_Color color) {
     if (color.a == 0) {
         SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
@@ -50,7 +44,7 @@ static void drawSquareLine(SDL_Renderer* r, int x0, int y0, int x1, int y1,
 
 void BrushTool::onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
     AbstractTool::onMouseDown(cX, cY, canvasRenderer, brushSize, color);
-    if (onCanvas(mapper, cX, cY)) {
+    if (isPointOnCanvas(mapper, cX, cY)) {
         int cw, ch; mapper->getCanvasSize(&cw, &ch);
         brushSetColor(canvasRenderer, color);
         if (squareBrush)
@@ -63,7 +57,7 @@ void BrushTool::onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int br
 
 void BrushTool::onMouseMove(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
     if (isDrawing) {
-        if (onCanvas(mapper, cX, cY) || onCanvas(mapper, lastX, lastY)) {
+        if (isPointOnCanvas(mapper, cX, cY) || isPointOnCanvas(mapper, lastX, lastY)) {
             int cw, ch; mapper->getCanvasSize(&cw, &ch);
             brushSetColor(canvasRenderer, color);
             if (squareBrush)
