@@ -4,8 +4,6 @@
 #include <algorithm>
 #include <climits>
 
-// ── Rotation helpers ──────────────────────────────────────────────────────────
-
 void TransformTool::rotatePt(float inX, float inY, float pivX, float pivY,
                               float angle, float& outX, float& outY) const {
     float c = std::cos(angle), s = std::sin(angle);
@@ -39,8 +37,6 @@ bool TransformTool::pointInRotatedBounds(int cX, int cY) const {
         && ly >= boxTop && ly < boxTop + currentBounds.h;
 }
 
-// ── Rotate handle position ────────────────────────────────────────────────────
-
 void TransformTool::getRotateHandleWin(int& rhwx, int& rhwy) const {
     float rot = getRotation();
     float ccx = drawCenterX, ccy = drawCenterY;
@@ -63,27 +59,6 @@ void TransformTool::getRotateHandleWin(int& rhwx, int& rhwy) const {
     rhwx = (int)std::round(nwx + std::sin(rot) * ROT_OFFSET);
     rhwy = (int)std::round(nwy - std::cos(rot) * ROT_OFFSET);
 }
-
-// ── Handle identity and flip state ────────────────────────────────────────────
-//
-// Handle identity: Handles are fixed to currentBounds (the axis-aligned box).
-//   NW = top-left (a.x, a.y), N = top center, NE = top-right, E = right center,
-//   SE = bottom-right, S = bottom center, SW = bottom-left, W = left center.
-// Flips are rendering-only (SDL_RenderCopyEx FLIP_HORIZONTAL/VERTICAL). Handle
-// positions do NOT move when flipX/flipY change — so "E" is always the right
-// edge of the box (then rotated by rotation).
-//
-// Flip state: flipX and flipY (bool) record whether the shape's content is
-// mirrored. They are toggled in handleMouseMove when a resize drag crosses the
-// shape center (so the box doesn't collapse). They persist across mouse up and
-// determine cursor orientation (CursorManager uses getFlipX()/getFlipY()).
-// handleMouseUp() does NOT clear flipX/flipY.
-//
-// During drag, when we flip we swap the active handle (e.g. W → E) so the
-// same logical edge keeps being dragged; resizing and anchor are updated so
-// the drag continues correctly.
-
-// ── Handle hit-testing ────────────────────────────────────────────────────────
 
 TransformTool::Handle TransformTool::getHandle(int cX, int cY) const {
     const SDL_Rect& a = currentBounds;
@@ -135,15 +110,12 @@ void TransformTool::syncDrawCenterFromBounds() {
 }
 
 float TransformTool::getRotation() const {
-    // When rotating with Shift held, snap display to nearest 45°; stored rotation still accumulates.
     if (isRotating && (SDL_GetModState() & KMOD_SHIFT)) {
         const float snap45 = (float)M_PI / 4.f;
         return std::round(rotation / snap45) * snap45;
     }
     return rotation;
 }
-
-// ── Shared mouse handling ─────────────────────────────────────────────────────
 
 bool TransformTool::handleMouseDown(int cX, int cY) {
     Handle h = getHandle(cX, cY);
@@ -163,33 +135,25 @@ bool TransformTool::handleMouseDown(int cX, int cY) {
         dragAspect = currentBounds.h > 0
             ? (float)currentBounds.w / currentBounds.h : 1.f;
 
-        // The anchor is the corner/edge diagonally opposite to the dragged handle,
-        // in local (un-rotated) canvas space. currentBounds is always a canonical
-        // positive-size AABB, so this is straightforward.
         float ccx = currentBounds.x + currentBounds.w * 0.5f;
         float ccy = currentBounds.y + currentBounds.h * 0.5f;
-
-        // Local anchor X: opposite side from the handle being dragged
         float ancLX, ancLY;
         if (h == Handle::W || h == Handle::NW || h == Handle::SW)
-            ancLX = (float)(currentBounds.x + currentBounds.w); // drag left  → anchor right
+            ancLX = (float)(currentBounds.x + currentBounds.w);
         else if (h == Handle::E || h == Handle::NE || h == Handle::SE)
-            ancLX = (float)currentBounds.x;                     // drag right → anchor left
+            ancLX = (float)currentBounds.x;
         else
-            ancLX = ccx;                                         // N/S edge   → anchor center X
+            ancLX = ccx;
 
         if (h == Handle::N || h == Handle::NW || h == Handle::NE)
-            ancLY = (float)(currentBounds.y + currentBounds.h); // drag top    → anchor bottom
+            ancLY = (float)(currentBounds.y + currentBounds.h);
         else if (h == Handle::S || h == Handle::SW || h == Handle::SE)
-            ancLY = (float)currentBounds.y;                     // drag bottom → anchor top
+            ancLY = (float)currentBounds.y;
         else
-            ancLY = ccy;                                         // E/W edge   → anchor center Y
+            ancLY = ccy;
 
         anchorX = (int)std::round(ancLX);
         anchorY = (int)std::round(ancLY);
-
-        // Rotate the local anchor into world space — this point stays fixed
-        // throughout the drag, even as the shape rotates or flips.
         rotatePt(ancLX, ancLY, ccx, ccy, rotation, anchorWorldX, anchorWorldY);
         return true;
     }
@@ -209,14 +173,11 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
     if (isRotating) {
         moved = true;
         float angle = std::atan2((float)cY - rotPivotCY, (float)cX - rotPivotCX);
-        // Accumulate per-frame delta to avoid atan2 branch-cut jumps (±2π
-        // discontinuity when the mouse crosses the negative-X axis).
         float delta = angle - rotLastAngle;
         if (delta >  (float)M_PI) delta -= 2.f * (float)M_PI;
         if (delta < -(float)M_PI) delta += 2.f * (float)M_PI;
         rotLastAngle = angle;
         rotation += delta;
-        // When w/h differ in parity, land exactly on 90° without Shift (avoids float drift).
         if (!aspectLock && (currentBounds.w % 2) != (currentBounds.h % 2)) {
             const float quarterEps = (float)M_PI / 180.f * 0.5f;  // 0.5°
             float q = std::round(rotation / ((float)M_PI * 0.5f)) * ((float)M_PI * 0.5f);
@@ -227,16 +188,6 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
 
     if (resizing != Handle::NONE) {
         moved = true;
-
-        // ── Step 1: Un-rotate the mouse into local (canonical) space ──────────
-        //
-        // We un-rotate the mouse around the world-space anchor point. The
-        // anchor is fixed in world space and maps to (anchorX, anchorY) in
-        // local space. After un-rotating, (cXl, cYl) is the mouse expressed
-        // in the same coordinate system as currentBounds — axis-aligned, with
-        // the anchor at (anchorX, anchorY).
-        // Un-rotate using a lambda so after a flip updates anchorX/Y we can
-        // re-run with the new local origin — eliminating the one-frame glitch.
         float c = std::cos(-rotation), s = std::sin(-rotation);
         auto unrotMouse = [&](float& outXl, float& outYl) {
             float dxW = (float)cX - anchorWorldX;
@@ -247,43 +198,19 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
         float cXl, cYl;
         unrotMouse(cXl, cYl);
 
-        // ── Step 2: Compute new bounds from local mouse position ───────────────
-        //
-        // The anchor is always the fixed edge/corner. The mouse determines the
-        // opposite edge. We never let the dimension go below 1.
-        //
-        // If the mouse crosses to the other side of the anchor, we flip the
-        // content and swap which side is being dragged — WITHOUT collapsing the
-        // dimension. The crossing distance (how far past the anchor the mouse is)
-        // becomes the new size, and we continue growing from there.
-
         int newX = currentBounds.x, newY = currentBounds.y;
         int newW = currentBounds.w, newH = currentBounds.h;
 
-        // ── X axis ────────────────────────────────────────────────────────────
-        //
-        // "dragFromRight" means the anchor is on the RIGHT side and the drag
-        // handle is on the LEFT (W, NW, SW). The mouse (cXl in local space)
-        // should be left of the anchor (rawW < 0) while dragging normally.
-        //
-        // If the mouse crosses to the other side, we toggle flipX, swap to the
-        // mirror handle, and update the local anchor so subsequent frames keep
-        // reading correctly. The WORLD anchor (anchorWorldX/Y) never moves.
         bool affectsX = (resizing == Handle::W  || resizing == Handle::NW || resizing == Handle::SW ||
                          resizing == Handle::E  || resizing == Handle::NE || resizing == Handle::SE);
         if (affectsX) {
             bool dragFromRight = (resizing == Handle::W || resizing == Handle::NW || resizing == Handle::SW);
-            float rawW = cXl - (float)anchorX; // signed distance: mouse - anchor in local space
+            float rawW = cXl - (float)anchorX;
 
             if (dragFromRight && rawW > 0.f) {
-                // Crossed right: flip X, swap to E/NE/SE
                 flipX = !flipX;
                 resizing = (resizing == Handle::W)  ? Handle::E  :
                            (resizing == Handle::NW) ? Handle::NE : Handle::SE;
-                // The world anchor stays fixed. Update local anchor to new left side.
-                // After the swap the anchor is on the LEFT, so anchorX = old anchorX
-                // (the right side that was fixed) is now the new left edge anchor.
-                // But we recompute via the world anchor unrotated (only need local X):
                 {
                     float co2 = std::cos(-rotation), si2 = std::sin(-rotation);
                     float ccx2 = currentBounds.x + currentBounds.w * 0.5f;
@@ -293,10 +220,9 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
                     anchorX = (int)std::round(ua);
                 }
                 dragFromRight = false;
-                unrotMouse(cXl, cYl);  // re-derive with updated anchorX
+                unrotMouse(cXl, cYl);
                 rawW = cXl - (float)anchorX;
             } else if (!dragFromRight && rawW < 0.f) {
-                // Crossed left: flip X, swap to W/NW/SW
                 flipX = !flipX;
                 resizing = (resizing == Handle::E)  ? Handle::W  :
                            (resizing == Handle::NE) ? Handle::NW : Handle::SW;
@@ -309,18 +235,17 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
                     anchorX = (int)std::round(ua);
                 }
                 dragFromRight = true;
-                unrotMouse(cXl, cYl);  // re-derive with updated anchorX
+                unrotMouse(cXl, cYl);
                 rawW = cXl - (float)anchorX;
             }
 
             newW = std::max(1, (int)std::round(std::abs(rawW)));
             if (dragFromRight)
-                newX = (int)std::round((float)anchorX - (float)newW); // anchor on right
+                newX = (int)std::round((float)anchorX - (float)newW);
             else
-                newX = anchorX;                                         // anchor on left
+                newX = anchorX;
         }
 
-        // ── Y axis ────────────────────────────────────────────────────────────
         bool affectsY = (resizing == Handle::N  || resizing == Handle::NW || resizing == Handle::NE ||
                          resizing == Handle::S  || resizing == Handle::SW || resizing == Handle::SE);
         if (affectsY) {
@@ -340,7 +265,7 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
                     anchorY = (int)std::round(ua);
                 }
                 dragFromBottom = false;
-                unrotMouse(cXl, cYl);  // re-derive with updated anchorY
+                unrotMouse(cXl, cYl);
                 rawH = cYl - (float)anchorY;
             } else if (!dragFromBottom && rawH < 0.f) {
                 flipY = !flipY;
@@ -355,7 +280,7 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
                     anchorY = (int)std::round(ua);
                 }
                 dragFromBottom = true;
-                unrotMouse(cXl, cYl);  // re-derive with updated anchorY
+                unrotMouse(cXl, cYl);
                 rawH = cYl - (float)anchorY;
             }
 
@@ -366,7 +291,6 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
                 newY = anchorY;
         }
 
-        // ── Step 3: Aspect lock (corners only) ─────────────────────────────────
         if (aspectLock && dragAspect > 0.f &&
             (resizing == Handle::NW || resizing == Handle::NE ||
              resizing == Handle::SW || resizing == Handle::SE)) {
@@ -390,13 +314,6 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
             }
         }
 
-        // ── Step 4: World-anchor correction for rotated shapes ────────────────
-        //
-        // When the shape is rotated, compute position so the anchor stays fixed in
-        // world space. Store ideal center (cx, cy) for drawing so the bounding box
-        // and shape use the same position/dimensions (no rounding offset at 90°/270°
-        // when width/height have different parity). currentBounds keeps integer
-        // position for hit-testing; draw center is used for actual draw position.
         if (rotation != 0.f) {
             float hw = newW * 0.5f, hh = newH * 0.5f;
 
@@ -446,8 +363,6 @@ void TransformTool::handleMouseUp() {
     isRotating = false;
 }
 
-// ── Handle rendering ──────────────────────────────────────────────────────────
-
 void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
     float ccx = drawCenterX, ccy = drawCenterY;
     float rot = getRotation();
@@ -466,8 +381,6 @@ void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
         boxLeft = ccx - hw; boxTop = ccy - hh;
         pivX = ccx; pivY = ccy;
     }
-
-    // Shared dashed-line helper
     auto drawDashed = [&](int ax, int ay, int bx, int by) {
         int dx = bx - ax, dy = by - ay;
         int steps = std::max(std::abs(dx), std::abs(dy));
@@ -481,8 +394,6 @@ void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
             SDL_RenderDrawPoint(winRenderer, px, py);
         }
     };
-
-    // --- Bounding box: 4 rotated dashed edges (same position as shape; rounded at 90°/270° + parity) ---
     {
         float corners[4][2] = {
             { boxLeft, boxTop },
@@ -501,37 +412,20 @@ void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
         drawDashed(wpts[2].x, wpts[2].y, wpts[3].x, wpts[3].y);
         drawDashed(wpts[3].x, wpts[3].y, wpts[0].x, wpts[0].y);
     }
-
-    // --- Square resize handles at 8 positions, rotated with the shape ---
-    //
-    // Each handle is a small square whose center is the rotated canvas point,
-    // but whose body is itself rotated by `rotation` so it stays aligned to
-    // the bounding-box edges rather than remaining axis-aligned.
-    //
-    // We draw each handle as a filled rotated quad: compute its 4 window-space
-    // corners (center ± half-size rotated by `rotation`), fill with two
-    // triangles using SDL lines, then draw the outline edges.
-    const int hs = 4;  // half-size: handle is (2*hs+1) x (2*hs+1) pixels
+    const int hs = 4;
     struct CPt { float x, y; };
     CPt pts[] = {
         { boxLeft, boxTop }, { pivX, boxTop }, { boxLeft + currentBounds.w, boxTop },
         { boxLeft, pivY },                     { boxLeft + currentBounds.w, pivY },
         { boxLeft, boxTop + currentBounds.h }, { pivX, boxTop + currentBounds.h }, { boxLeft + currentBounds.w, boxTop + currentBounds.h },
     };
-
-    // Handle half-extents in window pixels, rotated to match the shape orientation.
-    // These are pure window-space offsets — fixed pixel size regardless of zoom.
-    // u = rightward along shape edge, v = downward along shape edge (both in window px).
     float sinR = std::sin(rot), cosR = std::cos(rot);
     float uWx =  cosR * hs, uWy =  sinR * hs;
     float vWx = -sinR * hs, vWy =  cosR * hs;
 
-    // Helper: fill a quad given 4 window-space corners (scanline fill via horizontal spans)
     auto fillQuad = [&](SDL_Point q[4]) {
-        // Find vertical extent
         int yMin = q[0].y, yMax = q[0].y;
         for (int i = 1; i < 4; i++) { yMin = std::min(yMin, q[i].y); yMax = std::max(yMax, q[i].y); }
-        // For each scanline, find the two x intersections across all 4 edges
         for (int y = yMin; y <= yMax; y++) {
             int xLeft = INT_MAX, xRight = INT_MIN;
             for (int i = 0; i < 4; i++) {
@@ -554,26 +448,19 @@ void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
         int wpx, wpy;
         mapper->getWindowCoords((int)std::round(rx), (int)std::round(ry), &wpx, &wpy);
 
-        // 4 corners of the rotated handle square in window space
         SDL_Point corners[4] = {
-            { (int)std::round(wpx - uWx - vWx), (int)std::round(wpy - uWy - vWy) },  // top-left
-            { (int)std::round(wpx + uWx - vWx), (int)std::round(wpy + uWy - vWy) },  // top-right
-            { (int)std::round(wpx + uWx + vWx), (int)std::round(wpy + uWy + vWy) },  // bottom-right
-            { (int)std::round(wpx - uWx + vWx), (int)std::round(wpy - uWy + vWy) },  // bottom-left
+            { (int)std::round(wpx - uWx - vWx), (int)std::round(wpy - uWy - vWy) },
+            { (int)std::round(wpx + uWx - vWx), (int)std::round(wpy + uWy - vWy) },
+            { (int)std::round(wpx + uWx + vWx), (int)std::round(wpy + uWy + vWy) },
+            { (int)std::round(wpx - uWx + vWx), (int)std::round(wpy - uWy + vWy) },
         };
-
-        // White fill
         SDL_SetRenderDrawColor(winRenderer, 255, 255, 255, 255);
         fillQuad(corners);
-
-        // Black outline
         SDL_SetRenderDrawColor(winRenderer, 0, 0, 0, 255);
         for (int i = 0; i < 4; i++)
             SDL_RenderDrawLine(winRenderer, corners[i].x, corners[i].y,
                                corners[(i+1)%4].x, corners[(i+1)%4].y);
     }
-
-    // --- Rotate handle: dashed stem + circle ---
     {
         float rnx, rny;
         rotatePt(ccx, ccy - hh, ccx, ccy, rot, rnx, rny);
@@ -584,8 +471,6 @@ void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
         getRotateHandleWin(rhwx, rhwy);
 
         drawDashed(nwx, nwy, rhwx, rhwy);
-
-        // Circle handle
         SDL_SetRenderDrawColor(winRenderer, 255, 255, 255, 255);
         DrawingUtils::drawFillCircle(winRenderer, rhwx, rhwy, hs);
         SDL_SetRenderDrawColor(winRenderer, 0, 0, 0, 255);
@@ -597,8 +482,6 @@ void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
         }
     }
 }
-
-// ── isHit ─────────────────────────────────────────────────────────────────────
 
 bool TransformTool::isHit(int cX, int cY) const {
     return pointInRotatedBounds(cX, cY) || getHandle(cX, cY) != Handle::NONE;

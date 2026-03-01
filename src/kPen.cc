@@ -2,6 +2,7 @@
 #include "kPen.h"
 #include "DrawingUtils.h"
 #include "CanvasResizer.h"
+#include "ViewController.h"
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
@@ -55,7 +56,6 @@ kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
 
     savedStateId = nextStateSerial;  // pre-mark: saveState will assign this serial, so title shows clean
     saveState(undoStack);
-    zoomTarget = zoom;
 }
 
 kPen::~kPen() {
@@ -68,44 +68,16 @@ kPen::~kPen() {
 
 // ── Viewport ──────────────────────────────────────────────────────────────────
 
-SDL_Rect kPen::getFitViewport() {
+SDL_Rect kPen::getViewport() {
     int winW, winH;
     SDL_GetWindowSize(window, &winW, &winH);
-    int availW = winW - Toolbar::TB_W;
-    static const int GAP = 50;           // minimum gap on all non-toolbar edges
-    int fitW = availW - GAP * 2;
-    int fitH = winH    - GAP * 2;
-    if (fitW < 1) fitW = 1;
-    if (fitH < 1) fitH = 1;
-    float canvasAspect = (float)canvasW / canvasH;
-    float windowAspect = (float)fitW / fitH;
-    SDL_Rect v;
-    if (windowAspect > canvasAspect) {
-        v.h = fitH; v.w = (int)(fitH * canvasAspect);
-        v.x = Toolbar::TB_W + GAP + (fitW - v.w) / 2; v.y = GAP;
-    } else {
-        v.w = fitW; v.h = (int)(fitW / canvasAspect);
-        v.x = Toolbar::TB_W + GAP; v.y = GAP + (fitH - v.h) / 2;
-    }
-    return v;
-}
-
-SDL_Rect kPen::getViewport() {
-    SDL_FRect f = getViewportF();
-    int x = (int)std::floor(f.x);
-    int y = (int)std::floor(f.y);
-    int x2 = (int)std::ceil(f.x + f.w);
-    int y2 = (int)std::ceil(f.y + f.h);
-    return { x, y, x2 - x, y2 - y };
+    return view_.getViewport(winW, winH, canvasW, canvasH);
 }
 
 SDL_FRect kPen::getViewportF() {
-    SDL_Rect fit = getFitViewport();
-    float zW = fit.w * zoom;
-    float zH = fit.h * zoom;
-    float x = fit.x + (fit.w - zW) / 2.f + panX;
-    float y = fit.y + (fit.h - zH) / 2.f + panY;
-    return { x, y, zW, zH };
+    int winW, winH;
+    SDL_GetWindowSize(window, &winW, &winH);
+    return view_.getViewportF(winW, winH, canvasW, canvasH);
 }
 
 // ── ICoordinateMapper ─────────────────────────────────────────────────────────
@@ -137,222 +109,21 @@ void kPen::commitActiveTool() {
 }
 
 void kPen::resetViewAndGestureState() {
-    zoom = 1.f;
-    zoomTarget = 1.f;
-    panX = 0.f;
-    panY = 0.f;
-    viewScrolling      = false;
-    viewScrollRawX     = 0.f;
-    viewScrollRawY     = 0.f;
-    viewScrollRawZoom  = 0.f;
+    view_.reset();
     multiGestureActive = false;
     pinchActive        = false;
     activeFingers      = 0;
     tapPending         = false;
 }
 
-void kPen::zoomAround(float newZoom, int pivotWinX, int pivotWinY) {
-    SDL_Rect fit = getFitViewport();
-    float dz = newZoom / zoom;
-    // Shift pan so the canvas point under the pivot stays fixed
-    float pivotRelX = pivotWinX - (fit.x + fit.w / 2.f);
-    float pivotRelY = pivotWinY - (fit.y + fit.h / 2.f);
-    panX = pivotRelX + (panX - pivotRelX) * dz;
-    panY = pivotRelY + (panY - pivotRelY) * dz;
-    zoom = newZoom;
-}
-
 bool kPen::tickView() {
-    bool animating = false;
-    const float k = 0.18f;
-
-    // Lerp zoom toward zoomTarget. When pinching use the pivot stored when 2nd finger landed
-    // (twoFingerPivot); else use mouse. That way pan→lift→zoom uses a stable reset pivot.
-    {
-        float clamped = std::max(MIN_ZOOM, std::min(MAX_ZOOM, zoomTarget));
-        float diff = clamped - zoom;
-        int pivotX, pivotY;
-        if (pinchActive && twoFingerPivotSet) {
-            pivotX = (int)twoFingerPivotX;
-            pivotY = (int)twoFingerPivotY;
-        } else {
-            SDL_GetMouseState(&pivotX, &pivotY);
-        }
-        if (std::abs(diff) > 0.0002f) {
-            zoomAround(zoom + diff * k, pivotX, pivotY);
-            animating = true;
-        } else if (zoom != clamped) {
-            zoomAround(clamped, pivotX, pivotY);
-        }
-    }
-
-    // Apply mouse wheel velocity accumulation (fast scroll = more accum = more pan, then coast)
-    SDL_Rect fit = getFitViewport();
-    float zW = fit.w * zoom;
-    float zH = fit.h * zoom;
-    float maxPanX = std::max(0.f, (zW - fit.w) / 2.f) + PAN_SLACK;
-    float maxPanY = std::max(0.f, (zH - fit.h) / 2.f) + PAN_SLACK;
-    if (std::abs(wheelAccumX) > 0.01f || std::abs(wheelAccumY) > 0.01f) {
-        const float applyFactor = 0.45f;
-        const float decay = 0.88f;
-        panX += wheelAccumX * applyFactor;
-        panY += wheelAccumY * applyFactor;
-        panX = std::max(-maxPanX, std::min(maxPanX, panX));
-        panY = std::max(-maxPanY, std::min(maxPanY, panY));
-        wheelAccumX *= decay;
-        wheelAccumY *= decay;
-        animating = true;
-    }
-
-    if (viewScrolling) return animating;
-
-    auto snapAxis = [&](float& pan, float maxPan) {
-        float lo = -maxPan, hi = maxPan;
-        if (pan < lo)      { pan += (lo - pan) * k; if (std::abs(pan-lo)<0.5f) pan=lo; else animating=true; }
-        else if (pan > hi) { pan += (hi - pan) * k; if (std::abs(pan-hi)<0.5f) pan=hi; else animating=true; }
-    };
-    snapAxis(panX, maxPanX);
-    snapAxis(panY, maxPanY);
-
-    return animating;
-}
-
-void kPen::addPanDelta(float winDx, float winDy) {
-    SDL_Rect fit = getFitViewport();
-    float zW = fit.w * zoom;
-    float zH = fit.h * zoom;
-    float maxPanX = std::max(0.f, (zW - fit.w) / 2.f) + PAN_SLACK;
-    float maxPanY = std::max(0.f, (zH - fit.h) / 2.f) + PAN_SLACK;
-    panX = std::max(-maxPanX, std::min(maxPanX, panX + winDx));
-    panY = std::max(-maxPanY, std::min(maxPanY, panY + winDy));
-}
-
-void kPen::onCanvasScroll(int winX, int winY, float dx, float dy, bool ctrl) {
-    SDL_Rect fit = getFitViewport();
-
-    if (ctrl) {
-        // Zoom: position-based from gesture start.
-        // Reset pan baseline so switching from pan to ctrl+zoom gets a clean slate.
-        if (!viewScrolling) {
-            viewScrollBaseZoom = zoom;
-            viewScrollRawZoom  = 0.f;
-            viewScrolling      = true;
-        } else if (viewScrollRawX != 0.f || viewScrollRawY != 0.f) {
-            // Was panning — reset zoom baseline from current zoom
-            viewScrollBaseZoom = zoom;
-            viewScrollRawZoom  = 0.f;
-            viewScrollRawX     = 0.f;
-            viewScrollRawY     = 0.f;
-        }
-        viewScrollRawZoom += dy * 0.1f;
-
-        float rawZoom = viewScrollBaseZoom * expf(viewScrollRawZoom);
-
-        // Rubber-band resistance past zoom limits
-        float displayZoom = rawZoom;
-        const float kz = 0.3f;
-        if (rawZoom < MIN_ZOOM) {
-            float rawOver = MIN_ZOOM / rawZoom - 1.f;
-            float dispOver = rawOver * kz / (rawOver + kz);
-            displayZoom = MIN_ZOOM / (1.f + dispOver);
-        } else if (rawZoom > MAX_ZOOM) {
-            float rawOver = rawZoom / MAX_ZOOM - 1.f;
-            float dispOver = rawOver * kz / (rawOver + kz);
-            displayZoom = MAX_ZOOM * (1.f + dispOver);
-        }
-        // Only update the target — tickView lerps zoom smoothly toward it
-        // each tick using the live mouse position, so no jitter.
-        zoomTarget = std::max(MIN_ZOOM, std::min(MAX_ZOOM, rawZoom));
-    } else {
-        // Pan: position-based from gesture start.
-        // Reset zoom baseline so switching from ctrl+zoom to pan gets a clean slate.
-        if (!viewScrolling) {
-            viewScrollBaseX   = panX;
-            viewScrollBaseY   = panY;
-            viewScrollRawX    = 0.f;
-            viewScrollRawY    = 0.f;
-            viewScrolling     = true;
-        } else if (viewScrollRawZoom != 0.f) {
-            // Was zooming — reset pan baseline from current pan
-            viewScrollBaseX   = panX;
-            viewScrollBaseY   = panY;
-            viewScrollRawX    = 0.f;
-            viewScrollRawY    = 0.f;
-            viewScrollRawZoom = 0.f;
-        }
-        viewScrollRawX += dx * 2.5f;
-        viewScrollRawY += dy * 2.5f;
-
-        float zW = fit.w * zoom;
-        float zH = fit.h * zoom;
-        float maxPanX = std::max(0.f, (zW - fit.w) / 2.f) + PAN_SLACK;
-        float maxPanY = std::max(0.f, (zH - fit.h) / 2.f) + PAN_SLACK;
-
-        // Same hyperbolic rubber-band as toolbar
-        const float k = 80.f;
-        auto resist = [&](float base, float raw, float lo, float hi) -> float {
-            float t = base + raw;
-            if (t < lo) { float o = lo-t; return lo - o*k/(o+k); }
-            if (t > hi) { float o = t-hi; return hi + o*k/(o+k); }
-            return t;
-        };
-        panX = resist(viewScrollBaseX, viewScrollRawX, -maxPanX, maxPanX);
-        panY = resist(viewScrollBaseY, viewScrollRawY, -maxPanY, maxPanY);
-    }
-}
-
-bool kPen::getScrollbarRects(int winW, int winH, SDL_Rect* trackV, SDL_Rect* thumbV, SDL_Rect* trackH, SDL_Rect* thumbH, bool* hasV, bool* hasH) {
-    const int SB_SZ = 8;
-    const int THUMB_MIN = 24;
-    SDL_Rect fit = getFitViewport();
-    float zW = fit.w * zoom;
-    float zH = fit.h * zoom;
-    float maxPanX = std::max(0.f, (zW - fit.w) / 2.f) + PAN_SLACK;
-    float maxPanY = std::max(0.f, (zH - fit.h) / 2.f) + PAN_SLACK;
-
-    *hasV = (zH > (float)fit.h && maxPanY > 0.f);
-    *hasH = (zW > (float)fit.w && maxPanX > 0.f);
-    if (!*hasV && !*hasH) return false;
-
-    if (*hasV) {
-        float thumbRatio = (float)fit.h / zH;
-        int thumbH = (int)(fit.h * thumbRatio);
-        if (thumbH < THUMB_MIN) thumbH = THUMB_MIN;
-        if (thumbH > fit.h) thumbH = fit.h;
-        float range = (float)(fit.h - thumbH);
-        float norm = (panY + maxPanY) / (2.f * maxPanY);
-        if (norm < 0.f) norm = 0.f;
-        if (norm > 1.f) norm = 1.f;
-        int thumbY = fit.y + (int)(norm * range + 0.5f);
-        trackV->x = winW - SB_SZ;
-        trackV->y = fit.y;
-        trackV->w = SB_SZ;
-        trackV->h = fit.h;
-        thumbV->x = winW - SB_SZ;
-        thumbV->y = thumbY;
-        thumbV->w = SB_SZ;
-        thumbV->h = thumbH;
-    }
-    if (*hasH) {
-        float thumbRatio = (float)fit.w / zW;
-        int thumbW = (int)(fit.w * thumbRatio);
-        if (thumbW < THUMB_MIN) thumbW = THUMB_MIN;
-        if (thumbW > fit.w) thumbW = fit.w;
-        float range = (float)(fit.w - thumbW);
-        float norm = (panX + maxPanX) / (2.f * maxPanX);
-        if (norm < 0.f) norm = 0.f;
-        if (norm > 1.f) norm = 1.f;
-        int thumbX = fit.x + (int)(norm * range + 0.5f);
-        trackH->x = fit.x;
-        trackH->y = winH - SB_SZ;
-        trackH->w = fit.w;
-        trackH->h = SB_SZ;
-        thumbH->x = thumbX;
-        thumbH->y = winH - SB_SZ;
-        thumbH->w = thumbW;
-        thumbH->h = SB_SZ;
-    }
-    return true;
+    int winW, winH;
+    SDL_GetWindowSize(window, &winW, &winH);
+    int mx, my;
+    SDL_GetMouseState(&mx, &my);
+    return view_.tickView(winW, winH, canvasW, canvasH,
+                          pinchActive, twoFingerPivotSet, twoFingerPivotX, twoFingerPivotY,
+                          mx, my);
 }
 
 // ── Tool management ───────────────────────────────────────────────────────────
@@ -1090,7 +861,7 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
             break;
         case SDLK_0:
             if (e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL)) {
-                zoom = 1.f; zoomTarget = 1.f; panX = 0.f; panY = 0.f;
+                resetViewAndGestureState();
                 needsRedraw = true;
             }
             break;
@@ -1128,7 +899,9 @@ void kPen::handleMouseWheel(SDL_Event& e, bool& needsRedraw, bool& overlayDirty)
         if (currentTool->hasOverlayContent()) overlayDirty = true;
     } else if (toolbar.inToolbar(mx, my)) {
     } else if (SDL_GetModState() & (KMOD_GUI | KMOD_CTRL)) {
-        onCanvasScroll(mx, my, 0.f, precY, true);
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+        view_.onCanvasScroll(mx, my, precY, true, winW, winH, canvasW, canvasH);
         needsRedraw = true;
     } else if (multiGestureActive) {
     } else {
@@ -1141,16 +914,7 @@ void kPen::handleMouseWheel(SDL_Event& e, bool& needsRedraw, bool& overlayDirty)
             dx = -precX * 4.2f;
             dy = precY * 4.2f;
         }
-        wheelAccumX += dx;
-        wheelAccumY += dy;
-        const float cap = 400.f;
-        wheelAccumX = std::max(-cap, std::min(cap, wheelAccumX));
-        wheelAccumY = std::max(-cap, std::min(cap, wheelAccumY));
-        viewScrolling = true;
-        if (SDL_GetModState() & KMOD_SHIFT)
-            scrollWheelWasVertical = false;
-        else
-            scrollWheelWasVertical = std::abs(precY) >= std::abs(precX);
+        view_.onWheelPan(dx, dy);
         needsRedraw = true;
     }
 }
@@ -1260,7 +1024,7 @@ void kPen::handleFingerUp(SDL_Event& e, bool& needsRedraw, bool& overlayDirty) {
         twoFingerPivotX      = 0.f;
         twoFingerPivotY      = 0.f;
         twoFingerPivotSet    = false;
-        viewScrolling        = false;
+        view_.endScrollGesture();
         tapConsumed          = false;
     }
 }
@@ -1298,23 +1062,22 @@ void kPen::handleMultiGesture(SDL_Event& e, bool& needsRedraw) {
         bool inZoomPriority = (zoomPriorityEvents > 0);
         if (zoomEligible && (pinchDetected || inZoomPriority)) {
             if (!pinchActive) {
-                pinchBaseZoom = zoom;
+                pinchBaseZoom = view_.getZoom();
                 pinchRawDist  = 0.f;
                 pinchActive   = true;
-                viewScrolling = true;
+                view_.onWheelPan(0.f, 0.f);  // set viewScrolling
                 if (pinchDetected) tapPending = false;
             }
             pinchRawDist += e.mgesture.dDist * 6.f;
             float rawZoom = pinchBaseZoom * expf(pinchRawDist);
-            zoomTarget = std::max(MIN_ZOOM, std::min(MAX_ZOOM, rawZoom));
+            view_.setZoomTarget(std::max(ViewController::MIN_ZOOM, std::min(ViewController::MAX_ZOOM, rawZoom)));
         }
 
         if (multiGestureActive && !gestureNeedsRecenter && zoomPriorityEvents == 0 && !overToolbar && !ctrlHeld) {
             float dx = cx - lastGestureCX, dy = cy - lastGestureCY;
-            panX += dx;
-            panY += dy;
-            viewScrolling = true;
-            scrollWheelWasVertical = std::abs(dy) >= std::abs(dx);
+            view_.onWheelPan(0.f, 0.f);  // show scrollbar during gesture
+            view_.setScrollWheelWasVertical(std::abs(dy) >= std::abs(dx));
+            view_.addPanDelta(dx, dy, winW, winH, canvasW, canvasH);
         }
         if (zoomPriorityEvents > 0) zoomPriorityEvents--;
         gestureNeedsRecenter = false;
@@ -1336,67 +1099,16 @@ void kPen::handleMultiGesture(SDL_Event& e, bool& needsRedraw) {
 
 void kPen::handleMouseButtonDown(SDL_Event& e, bool& needsRedraw, bool& overlayDirty) {
     if (tapConsumed) { tapConsumed = false; return; }
-    viewScrolling = false;
+    view_.endScrollGesture();
     if (!toolbar.inToolbar(e.button.x, e.button.y))
         toolbar.notifyClickOutside();
     {
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
-        SDL_Rect trackV, thumbV, trackH, thumbH;
-        bool hasV, hasH;
-        if (getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH)) {
-            int mx = e.button.x, my = e.button.y;
-            SDL_Point pt = { mx, my };
-            if (hasV && SDL_PointInRect(&pt, &trackV)) {
-                SDL_Rect fit = getFitViewport();
-                float zH = fit.h * zoom;
-                float maxPanY = std::max(0.f, (zH - fit.h) / 2.f) + PAN_SLACK;
-                float range = (float)(fit.h - thumbV.h);
-                if (SDL_PointInRect(&pt, &thumbV)) {
-                    scrollbarDragOffsetY = my - thumbV.y;
-                    scrollbarDragV = true;
-                } else {
-                    int thumbY;
-                    if (my < thumbV.y) {
-                        thumbY = my;
-                        scrollbarDragOffsetY = 0;
-                    } else {
-                        thumbY = my - thumbV.h;
-                        scrollbarDragOffsetY = thumbV.h;
-                    }
-                    if (thumbY < fit.y) thumbY = fit.y;
-                    if (thumbY > fit.y + fit.h - thumbV.h) thumbY = fit.y + fit.h - thumbV.h;
-                    if (range > 0.f)
-                        panY = (float)(thumbY - fit.y) / range * 2.f * maxPanY - maxPanY;
-                    scrollbarDragV = true;
-                }
-                needsRedraw = true; return;
-            }
-            if (hasH && SDL_PointInRect(&pt, &trackH)) {
-                SDL_Rect fit = getFitViewport();
-                float zW = fit.w * zoom;
-                float maxPanX = std::max(0.f, (zW - fit.w) / 2.f) + PAN_SLACK;
-                float range = (float)(fit.w - thumbH.w);
-                if (SDL_PointInRect(&pt, &thumbH)) {
-                    scrollbarDragOffsetX = mx - thumbH.x;
-                    scrollbarDragH = true;
-                } else {
-                    int thumbX;
-                    if (mx < thumbH.x) {
-                        thumbX = mx;
-                        scrollbarDragOffsetX = 0;
-                    } else {
-                        thumbX = mx - thumbH.w;
-                        scrollbarDragOffsetX = thumbH.w;
-                    }
-                    if (thumbX < fit.x) thumbX = fit.x;
-                    if (thumbX > fit.x + fit.w - thumbH.w) thumbX = fit.x + fit.w - thumbH.w;
-                    if (range > 0.f)
-                        panX = (float)(thumbX - fit.x) / range * 2.f * maxPanX - maxPanX;
-                    scrollbarDragH = true;
-                }
-                needsRedraw = true; return;
-            }
+        bool consumed = false;
+        if (view_.onScrollbarMouseDown(winW, winH, e.button.x, e.button.y, canvasW, canvasH, &consumed)) {
+            needsRedraw = true;
+            return;
         }
     }
     if (canvasResizer.onMouseDown(e.button.x, e.button.y, canvasW, canvasH)) {
@@ -1408,8 +1120,6 @@ void kPen::handleMouseButtonDown(SDL_Event& e, bool& needsRedraw, bool& overlayD
         handPanning = true;
         handPanStartWinX = e.button.x;
         handPanStartWinY = e.button.y;
-        handPanStartPanX = panX;
-        handPanStartPanY = panY;
         needsRedraw = true;
         return;
     }
@@ -1442,9 +1152,8 @@ void kPen::handleMouseButtonDown(SDL_Event& e, bool& needsRedraw, bool& overlayD
 }
 
 void kPen::handleMouseButtonUp(SDL_Event& e, bool& needsRedraw, bool& overlayDirty) {
-    if (scrollbarDragV || scrollbarDragH) {
-        scrollbarDragV = false;
-        scrollbarDragH = false;
+    if (view_.getScrollbarDragV() || view_.getScrollbarDragH()) {
+        view_.endScrollbarDrag();
         needsRedraw = true;
         return;
     }
@@ -1475,41 +1184,13 @@ void kPen::handleMouseButtonUp(SDL_Event& e, bool& needsRedraw, bool& overlayDir
 }
 
 void kPen::handleMouseMotion(SDL_Event& e, bool& needsRedraw, bool& overlayDirty) {
-    if (scrollbarDragV) {
-        SDL_Rect fit = getFitViewport();
-        float zH = fit.h * zoom;
-        float maxPanY = std::max(0.f, (zH - fit.h) / 2.f) + PAN_SLACK;
-        SDL_Rect trackV, thumbV, trackH, thumbH;
-        bool hasV, hasH;
-        int winW, winH;
-        SDL_GetWindowSize(window, &winW, &winH);
-        getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
-        int my = e.motion.y;
-        int thumbY = my - scrollbarDragOffsetY;
-        if (thumbY < fit.y) thumbY = fit.y;
-        if (thumbY > fit.y + fit.h - thumbV.h) thumbY = fit.y + fit.h - thumbV.h;
-        float range = (float)(fit.h - thumbV.h);
-        if (range > 0.f)
-            panY = (float)(thumbY - fit.y) / range * 2.f * maxPanY - maxPanY;
-        needsRedraw = true; return;
-    }
-    if (scrollbarDragH) {
-        SDL_Rect fit = getFitViewport();
-        float zW = fit.w * zoom;
-        float maxPanX = std::max(0.f, (zW - fit.w) / 2.f) + PAN_SLACK;
-        SDL_Rect trackV, thumbV, trackH, thumbH;
-        bool hasV, hasH;
-        int winW, winH;
-        SDL_GetWindowSize(window, &winW, &winH);
-        getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
-        int mx = e.motion.x;
-        int thumbX = mx - scrollbarDragOffsetX;
-        if (thumbX < fit.x) thumbX = fit.x;
-        if (thumbX > fit.x + fit.w - thumbH.w) thumbX = fit.x + fit.w - thumbH.w;
-        float range = (float)(fit.w - thumbH.w);
-        if (range > 0.f)
-            panX = (float)(thumbX - fit.x) / range * 2.f * maxPanX - maxPanX;
-        needsRedraw = true; return;
+    int winW, winH;
+    SDL_GetWindowSize(window, &winW, &winH);
+    if (view_.getScrollbarDragV() || view_.getScrollbarDragH()) {
+        bool nr = false;
+        view_.onScrollbarMouseMotion(winW, winH, e.motion.x, e.motion.y, canvasW, canvasH, &nr);
+        if (nr) needsRedraw = true;
+        return;
     }
     if (canvasResizer.isDragging()) {
         bool lock = toolbar.getEffectiveLockAspect();
@@ -1519,13 +1200,14 @@ void kPen::handleMouseMotion(SDL_Event& e, bool& needsRedraw, bool& overlayDirty
         needsRedraw = true; return;
     }
     if (handPanning) {
-        addPanDelta((float)(e.motion.x - handPanStartWinX), (float)(e.motion.y - handPanStartWinY));
+        view_.addPanDelta((float)(e.motion.x - handPanStartWinX), (float)(e.motion.y - handPanStartWinY),
+                          winW, winH, canvasW, canvasH);
         handPanStartWinX = e.motion.x;
         handPanStartWinY = e.motion.y;
         needsRedraw = true;
         return;
     }
-    viewScrolling = false;
+    view_.endScrollGesture();
     if (toolbar.onMouseMotion(e.motion.x, e.motion.y)) { needsRedraw = true; overlayDirty = true; return; }
     int cX, cY;
     getCanvasCoords(e.motion.x, e.motion.y, &cX, &cY);
@@ -1533,7 +1215,7 @@ void kPen::handleMouseMotion(SDL_Event& e, bool& needsRedraw, bool& overlayDirty
 
     if (currentType == ToolType::SELECT || currentType == ToolType::RESIZE) {
         if (static_cast<TransformTool*>(currentTool.get())->isMutating())
-            redoStack.clear();
+            undoManager.clearRedo();
     }
 
     needsRedraw = true; overlayDirty = true;
@@ -1542,29 +1224,9 @@ void kPen::handleMouseMotion(SDL_Event& e, bool& needsRedraw, bool& overlayDirty
 void kPen::tickScrollbarFade(bool& needsRedraw) {
     int winW, winH;
     SDL_GetWindowSize(window, &winW, &winH);
-    SDL_Rect fit = getFitViewport();
     int mx, my;
     SDL_GetMouseState(&mx, &my);
-    bool hoverView = (mx >= fit.x && mx < fit.x + fit.w && my >= fit.y && my < fit.y + fit.h);
-    SDL_Rect trackV, thumbV, trackH, thumbH;
-    bool hasV, hasH;
-    getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
-    SDL_Point pt = { mx, my };
-    bool hoverV = hasV && (SDL_PointInRect(&pt, &trackV) || SDL_PointInRect(&pt, &thumbV));
-    bool hoverH = hasH && (SDL_PointInRect(&pt, &trackH) || SDL_PointInRect(&pt, &thumbH));
-    bool wantVisibleV = hasV && (scrollbarDragV || hoverV || (viewScrolling && scrollWheelWasVertical) || handPanning);
-    bool wantVisibleH = hasH && (scrollbarDragH || hoverH || (viewScrolling && !scrollWheelWasVertical) || handPanning);
-    const float SB_FADE_IN = 0.22f, SB_FADE_OUT = 0.028f;
-    if (wantVisibleV)
-        scrollbarAlphaV = std::min(1.f, scrollbarAlphaV + SB_FADE_IN);
-    else
-        scrollbarAlphaV = std::max(0.f, scrollbarAlphaV - SB_FADE_OUT);
-    if (wantVisibleH)
-        scrollbarAlphaH = std::min(1.f, scrollbarAlphaH + SB_FADE_IN);
-    else
-        scrollbarAlphaH = std::max(0.f, scrollbarAlphaH - SB_FADE_OUT);
-    if ((scrollbarAlphaV > 0.001f && scrollbarAlphaV < 0.999f) || (scrollbarAlphaH > 0.001f && scrollbarAlphaH < 0.999f))
-        needsRedraw = true;
+    view_.tickScrollbarFade(winW, winH, mx, my, canvasW, canvasH, handPanning, &needsRedraw);
 }
 
 void kPen::updateCursor(bool& /* needsRedraw */, bool& /* overlayDirty */) {
@@ -1587,14 +1249,9 @@ void kPen::updateCursor(bool& /* needsRedraw */, bool& /* overlayDirty */) {
     } else {
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
-        SDL_Rect trackV, thumbV, trackH, thumbH;
-        bool hasV, hasH;
-        bool overScrollbar = false;
-        if (getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH)) {
-            SDL_Point pt = { mx, my };
-            overScrollbar = (hasV && (SDL_PointInRect(&pt, &trackV) || SDL_PointInRect(&pt, &thumbV)))
-                || (hasH && (SDL_PointInRect(&pt, &trackH) || SDL_PointInRect(&pt, &thumbH)));
-        }
+        bool hoverV, hoverH, hasV, hasH;
+        view_.getScrollbarHover(winW, winH, mx, my, canvasW, canvasH, &hoverV, &hoverH, &hasV, &hasH);
+        bool overScrollbar = hoverV || hoverH;
         if (overScrollbar && !(handActive || handPanning)) {
             cursorManager.forceSetCursor(cursorManager.getArrowCursor());
         } else {
@@ -1703,7 +1360,9 @@ void kPen::renderFrame(bool& overlayDirty) {
         SDL_GetWindowSize(window, &winW, &winH);
         SDL_Rect trackV, thumbV, trackH, thumbH;
         bool hasV, hasH;
-        getScrollbarRects(winW, winH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
+        view_.getScrollbarRects(winW, winH, canvasW, canvasH, &trackV, &thumbV, &trackH, &thumbH, &hasV, &hasH);
+        float scrollbarAlphaV = view_.getScrollbarAlphaV();
+        float scrollbarAlphaH = view_.getScrollbarAlphaH();
         if (scrollbarAlphaV > 0.001f || scrollbarAlphaH > 0.001f) {
             const Uint8 TRACK_R = 60, TRACK_G = 60, TRACK_B = 60, TRACK_A = 220;
             const Uint8 THUMB_R = 120, THUMB_G = 120, THUMB_B = 120, THUMB_A = 240;

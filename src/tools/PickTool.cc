@@ -1,10 +1,6 @@
 #include "Tools.h"
 #include <algorithm>
 
-// ── PickTool ──────────────────────────────────────────────────────────────────
-//
-// Reads the ARGB pixel at the clicked canvas coordinate and fires the callback.
-// Clamped to canvas bounds before reading.
 
 static void samplePixel(int cX, int cY, SDL_Renderer* r,
                          ICoordinateMapper* mapper,
@@ -25,7 +21,6 @@ static void samplePixel(int cX, int cY, SDL_Renderer* r,
     c.g = (pixel >>  8) & 0xFF;
     c.b =  pixel        & 0xFF;
 
-    // Don't pick fully-transparent pixels — there's no meaningful color there.
     if (c.a == 0) return;
 
     cb(c);

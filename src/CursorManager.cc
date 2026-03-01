@@ -13,9 +13,7 @@ static const Uint32 C_WHITE  = argb(255, 255, 255, 255);
 static const Uint32 C_TRANSP = argb(  0,   0,   0,   0);
 static const Uint32 C_BLUE   = argb(255, 100, 149, 237);
 
-static SDL_Cursor* makePickCursor(SDL_Color tipColor);  // defined with eyedropper drawing
-
-// ── Simple pixel buffer for building cursors ──────────────────────────────────
+static SDL_Cursor* makePickCursor(SDL_Color tipColor);
 
 struct Bitmap {
     int w, h;
@@ -35,7 +33,6 @@ struct Bitmap {
             if(e2< dx){err+=dx;y0+=sy;}
         }
     }
-    // Add 1-pixel outline around all non-transparent pixels
     void outline(Uint32 c=C_BLACK) {
         Bitmap copy=*this;
         for(int y=0;y<h;y++) for(int x=0;x<w;x++) {
@@ -55,23 +52,15 @@ struct Bitmap {
     }
 };
 
-// ── Hand-drawn cursors (all use SDL_CreateColorCursor — works on macOS) ───────
-
 static SDL_Cursor* makeBucketCursor(SDL_Color fillColor) {
     const int W=24, H=24;
     Bitmap b(W,H);
-
-    // Shift diamond slightly right so the left-side indicator droplet has room.
     const int ox=13, oy=15, s=7;
-
-    // ── Opaque Color Definitions ─────────────────────────────────────────────
     const Uint32 WHITE = argb(255, 255, 255, 255);
     const Uint32 BLACK = argb(255,   0,   0,   0);
     const Uint32 FILL  = fillColor.a > 0
         ? argb(255, fillColor.r, fillColor.g, fillColor.b)
         : argb(255, 100, 149, 237);
-
-    // ── Diamond body (Main Bucket) ───────────────────────────────────────────
     for(int row=0; row<=s; row++) {
         int halfW = s - row;
         for(int x = ox-halfW+1; x <= ox+halfW-1; x++)
@@ -82,96 +71,48 @@ static SDL_Cursor* makeBucketCursor(SDL_Color fillColor) {
         for(int x = ox-halfW+1; x <= ox+halfW-1; x++)
             b.set(x, oy-row, WHITE);
     }
-
-    // Fill color (Lowered height: starts at -1 instead of -2)
     for(int row=-1; row<=s; row++) {
         int halfW = s - std::abs(row);
         for(int x = ox-halfW+1; x <= ox+halfW-1; x++)
             b.set(x, oy+row, FILL);
     }
-
-    // Diamond outline
     b.line(ox,    oy-s, ox+s, oy,   BLACK);
     b.line(ox+s,  oy,   ox,   oy+s, BLACK);
     b.line(ox,    oy+s, ox-s, oy,   BLACK);
     b.line(ox-s,  oy,   ox,   oy-s, BLACK);
-
-    // ── Handle: now goes UP-RIGHT (was up-left) ───────────────────────────────
     const int hLen = 2;
     b.line(ox,     oy-s, ox+hLen,   oy-s-hLen, BLACK);
     b.line(ox+1,   oy-s, ox+hLen+1, oy-s-hLen, BLACK);
+    const int ddx = ox - s - 2, ddy = oy;
 
-    // ── Indicator diamond: now on the LEFT side (was right) ──────────────────
-    const int ddx = ox - s - 2, ddy = oy;  // = 13 - 7 - 2 = 4
-
-    b.set(ddx,     ddy,     BLACK); // Row 0
-
-    b.set(ddx - 1, ddy + 1, BLACK); // Row 1
+    b.set(ddx,     ddy,     BLACK);
+    b.set(ddx - 1, ddy + 1, BLACK);
     b.set(ddx,     ddy + 1, WHITE);
     b.set(ddx + 1, ddy + 1, BLACK);
-
-    b.set(ddx - 2, ddy + 2, BLACK); // Row 2 (Center)
+    b.set(ddx - 2, ddy + 2, BLACK);
     b.set(ddx - 1, ddy + 2, WHITE);
     b.set(ddx,     ddy + 2, WHITE);
     b.set(ddx + 1, ddy + 2, WHITE);
     b.set(ddx + 2, ddy + 2, BLACK);
-
-    b.set(ddx - 1, ddy + 3, BLACK); // Row 3
+    b.set(ddx - 1, ddy + 3, BLACK);
     b.set(ddx,     ddy + 3, WHITE);
     b.set(ddx + 1, ddy + 3, BLACK);
-
-    b.set(ddx,     ddy + 4, BLACK); // Row 4
-
-    // 1px white outline so the bucket reads on dark backgrounds
+    b.set(ddx,     ddy + 4, BLACK);
     b.outline(WHITE);
-
-    // Hotspot centered in the indicator diamond (now on the left)
     return b.toCursor(ddx, ddy + 2);
 }
 
-// ── Rotated resize-arrow cursors ──────────────────────────────────────────────
-//
-// We draw a double-headed arrow pointing straight up (north↔south) in a 21×21
-// bitmap, then rotate the whole bitmap to the target angle. The hotspot is
-// always the bitmap center (10,10).
-//
-// Arrow anatomy (north-pointing half, mirrored for south):
-//
-//      █          ← tip
-//     ███
-//    █████
-//      █          ← shaft
-//      █
-//      █
-//
-// The shaft runs through the center; arrowheads sit at the top and bottom.
-
 static void drawArrowUp(Bitmap& b, int cx, int cy, Uint32 fill, Uint32 outline) {
-    // Symmetry axis is between cx-1 and cx (i.e. x = cx - 0.5).
-    // All even-width rows use cx-N..cx+N-1 to stay balanced about that axis.
-    //   2px: cx-1..cx
-    //   4px: cx-2..cx+1
-    //   6px: cx-3..cx+2
-
-    // Arrowhead (north): 2→4→6px, tip is 2px to match shaft
-    b.hline(cx-1, cx,   cy-9, fill);  // 2px tip
-    b.hline(cx-2, cx+1, cy-8, fill);  // 4px
-    b.hline(cx-3, cx+2, cy-7, fill);  // 6px base
-
-    // Shaft: 2px wide
+    b.hline(cx-1, cx,   cy-9, fill);
+    b.hline(cx-2, cx+1, cy-8, fill);
+    b.hline(cx-3, cx+2, cy-7, fill);
     for (int y = cy-6; y <= cy+6; y++) b.hline(cx-1, cx, y, fill);
-
-    // Arrowhead (south) — exact vertical mirror
-    b.hline(cx-1, cx,   cy+9, fill);  // 2px tip
-    b.hline(cx-2, cx+1, cy+8, fill);  // 4px
-    b.hline(cx-3, cx+2, cy+7, fill);  // 6px base
-
-    // 1-pixel outline
+    b.hline(cx-1, cx,   cy+9, fill);
+    b.hline(cx-2, cx+1, cy+8, fill);
+    b.hline(cx-3, cx+2, cy+7, fill);
     b.outline(outline);
 }
 
-// Rotate src bitmap by angleDeg (clockwise) into a new same-size bitmap.
-// Uses nearest-neighbour so pixels stay crisp at cursor resolution.
 static Bitmap rotateBitmap(const Bitmap& src, float angleDeg) {
     Bitmap dst(src.w, src.h);
     float rad  = angleDeg * (float)M_PI / 180.f;
@@ -181,7 +122,6 @@ static Bitmap rotateBitmap(const Bitmap& src, float angleDeg) {
     float cy   = (src.h - 1) * 0.5f;
     for (int y = 0; y < dst.h; y++) {
         for (int x = 0; x < dst.w; x++) {
-            // Map destination pixel back to source space (inverse rotation)
             float fx = (x - cx);
             float fy = (y - cy);
             int sx = (int)std::round( cosA * fx + sinA * fy + cx);
@@ -192,27 +132,16 @@ static Bitmap rotateBitmap(const Bitmap& src, float angleDeg) {
     return dst;
 }
 
-// Build one resize-arrow cursor pointing at angleDeg clockwise from north.
 SDL_Cursor* CursorManager::makeResizeArrowCursor(float angleDeg) {
-    const int SZ = 23;            // bitmap size; must be odd so center is exact
-    const int cx = SZ / 2;       // = 10
+    const int SZ = 23;
+    const int cx = SZ / 2;
     const int cy = SZ / 2;
-
-    // Draw a north↔south double-headed arrow (angle 0°)
     Bitmap base(SZ, SZ);
     drawArrowUp(base, cx, cy, C_BLACK, C_WHITE);
-
-    // Rotate to the desired direction
     Bitmap rotated = rotateBitmap(base, angleDeg);
 
     return rotated.toCursor(cx, cy);
 }
-
-// ── Rotate cursor ─────────────────────────────────────────────────────────────
-//
-// A circular arc (~270°) with a filled arrowhead at the clockwise end.
-// Drawn in a 23×23 bitmap, then rotated to match the shape's current rotation
-// so the open gap always faces the rotate-handle stem direction.
 
 static void drawRotateCursorBase(Bitmap& b, Uint32 fill, Uint32 outlineCol) {
     // 23x23 bitmap. Double-headed arrow with a smooth leftward bow.

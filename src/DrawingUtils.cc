@@ -12,12 +12,10 @@
 #include "stb/stb_image.h"
 #include "stb/stb_image_write.h"
 
-// ── Platform clipboard headers ────────────────────────────────────────────────
 #if defined(__APPLE__)
   #include <TargetConditionals.h>
   #if TARGET_OS_MAC
     #define KPEN_CLIPBOARD_MAC 1
-    // Implementation lives in ClipboardMac.mm
   #endif
 #elif defined(_WIN32)
   #define KPEN_CLIPBOARD_WIN 1
@@ -26,8 +24,6 @@
 #endif
 
 namespace DrawingUtils {
-
-// ── Drawing primitives ────────────────────────────────────────────────────────
 
     void drawFillCircle(SDL_Renderer* renderer, int centerX, int centerY, int radius) {
         if (radius <= 0) {
@@ -55,10 +51,6 @@ namespace DrawingUtils {
                 spans[row].push_back({x0, x1});
             }
         }
-        // Stamp a brush of the given pixel diameter at (cx, cy).
-        // For odd sizes: single circle with radius=(size-1)/2 centered on pixel.
-        // For even sizes: four circles with radius=size/2-1 at the 2x2 sub-pixel
-        // center, so the brush spans exactly 'size' pixels in each axis.
         void addBrush(int cx, int cy, int size) {
             if (size <= 1) { addCircle(cx, cy, 0); return; }
             if (size % 2 == 1) {
@@ -95,22 +87,14 @@ namespace DrawingUtils {
     }
 
     void drawRect(SDL_Renderer* renderer, const SDL_Rect* rect, int size, int w, int h) {
-        // Use square brush stamps so corners are sharp right angles, not rounded.
-        // The stroke is centred on the rect edge: li pixels hang inward, ri outward,
-        // matching the inset logic in ShapeTool / ResizeTool.
-        int li = (size - 1) / 2;  // left/top half  (asymmetric for even sizes)
-        int ri = size / 2;         // right/bottom half
-
-        // Each edge is a clipped filled rect, brush-size thick.
-        // Horizontal edges (top/bottom) span the full outer width — they own the corners.
-        // Vertical edges span only the inner height between the two bars so corners
-        // are not double-painted (avoids alpha-blending artefacts on transparent canvas).
+        int li = (size - 1) / 2;
+        int ri = size / 2;
         int x0 = rect->x - li;
         int y0 = rect->y - li;
-        int x1 = rect->x + rect->w + ri + 1;  // exclusive right  (outer edge + 1)
-        int y1 = rect->y + rect->h + ri + 1;  // exclusive bottom (outer edge + 1)
-        int innerY0 = rect->y + ri + 1;        // top    of inner vertical span
-        int innerY1 = rect->y + rect->h - li;  // bottom of inner vertical span
+        int x1 = rect->x + rect->w + ri + 1;
+        int y1 = rect->y + rect->h + ri + 1;
+        int innerY0 = rect->y + ri + 1;
+        int innerY1 = rect->y + rect->h - li;
 
         auto fillClipped = [&](int fx, int fy, int fw, int fh) {
             int cx0 = std::max(0, fx),     cy0 = std::max(0, fy);
@@ -131,12 +115,6 @@ namespace DrawingUtils {
         int left = std::min(x0,x1), top = std::min(y0,y1);
         int right = std::max(x0,x1), bottom = std::max(y0,y1);
         if (left == right || top == bottom) return;
-        // Normalize to even-span so cx/cy land exactly on the pixel grid and
-        // the algorithm reaches both left and right (top and bottom) edges.
-        // An odd span means cx = (left+right)/2 truncates toward left, so the
-        // Bresenham step cx+rx only reaches right-1, leaving a 1-pixel gap on
-        // the right (and bottom). Dropping 1 from right/bottom when odd makes
-        // the span even, cx exact, and both edges reachable.
         if ((right - left) % 2 == 1) right--;
         if ((bottom - top) % 2 == 1) bottom--;
         if (left == right || top == bottom) return;
@@ -144,8 +122,6 @@ namespace DrawingUtils {
         int rx = cx-left, ry = cy-top;
         long rx2 = (long)rx*rx, ry2 = (long)ry*ry;
         auto plot = [&](SpanBuffer& spans, int x, int y) {
-            // Clamp brush centers to the oval's bounding box so the stroke never
-            // bleeds outside the region the caller reserved for it.
             auto clampX = [&](int px){ return std::max(left, std::min(right, px)); };
             auto clampY = [&](int py){ return std::max(top,  std::min(bottom, py)); };
             spans.addBrush(clampX(cx+x), clampY(cy+y), size);
@@ -175,7 +151,6 @@ namespace DrawingUtils {
         int left = std::min(x0,x1), top = std::min(y0,y1);
         int right = std::max(x0,x1), bottom = std::max(y0,y1);
         if (left == right || top == bottom) return {x0, y0, 0, 0};
-        // Apply the same even-span normalization as drawOval.
         if ((right - left) % 2 == 1) right--;
         if ((bottom - top) % 2 == 1) bottom--;
         if (left == right || top == bottom) return {x0, y0, 0, 0};
@@ -205,9 +180,6 @@ namespace DrawingUtils {
             if (d2 > 0) { d2 += rx2 - ddy; }
             else { x++; ddx += 2*ry2; d2 += ddx - ddy + rx2; }
         }
-        // Return inclusive extents: w = maxCX - minCX (not +1), matching the
-        // convention used by all callers which add their own +1 when converting
-        // to exclusive-end coordinates.
         return { minCX, minCY, maxCX - minCX, maxCY - minCY };
     }
 
@@ -282,17 +254,14 @@ namespace DrawingUtils {
         }
     }
 
-// ── Pixel format conversion ───────────────────────────────────────────────────
-// SDL ARGB8888 (0xAARRGGBB) <-> stb RGBA8888 (bytes R,G,B,A)
-
     static std::vector<uint8_t> argbToRGBA(const uint32_t* argb, int w, int h) {
         std::vector<uint8_t> rgba(w * h * 4);
         for (int i = 0; i < w * h; i++) {
             uint32_t px = argb[i];
-            rgba[i*4+0] = (px >> 16) & 0xFF; // R
-            rgba[i*4+1] = (px >>  8) & 0xFF; // G
-            rgba[i*4+2] = (px >>  0) & 0xFF; // B
-            rgba[i*4+3] = (px >> 24) & 0xFF; // A
+            rgba[i*4+0] = (px >> 16) & 0xFF;
+            rgba[i*4+1] = (px >>  8) & 0xFF;
+            rgba[i*4+2] = (px >>  0) & 0xFF;
+            rgba[i*4+3] = (px >> 24) & 0xFF;
         }
         return rgba;
     }
@@ -306,10 +275,7 @@ namespace DrawingUtils {
         return argb;
     }
 
-// ── Encode / decode ───────────────────────────────────────────────────────────
-
     std::vector<uint8_t> encodeJPEG(const uint32_t* argbPixels, int w, int h, int quality) {
-        // JPEG is RGB-only; flatten alpha onto white background
         std::vector<uint8_t> rgb(w * h * 3);
         for (int i = 0; i < w * h; i++) {
             uint32_t px = argbPixels[i];
@@ -317,7 +283,6 @@ namespace DrawingUtils {
             uint8_t  r  = (px >> 16) & 0xFF;
             uint8_t  g  = (px >>  8) & 0xFF;
             uint8_t  b  = (px >>  0) & 0xFF;
-            // Composite over white
             rgb[i*3+0] = (uint8_t)(r + (255-r)*(255-a)/255);
             rgb[i*3+1] = (uint8_t)(g + (255-g)*(255-a)/255);
             rgb[i*3+2] = (uint8_t)(b + (255-b)*(255-a)/255);
@@ -353,12 +318,7 @@ namespace DrawingUtils {
         return argb;
     }
 
-// ── Platform clipboard ────────────────────────────────────────────────────────
-
 #if defined(KPEN_CLIPBOARD_MAC)
-    // Implemented in ClipboardMac.mm (compiled as Objective-C++ so AppKit
-    // types and objc_msgSend link correctly without extra CMake flags).
-    // Declarations are in DrawingUtils.h — definitions provided by that TU.
 
 #elif defined(KPEN_CLIPBOARD_WIN)
 
@@ -372,8 +332,6 @@ namespace DrawingUtils {
         if (!OpenClipboard(nullptr)) return false;
         EmptyClipboard();
         bool ok = false;
-
-        // PNG (lossless, preserves alpha)
         auto png = encodePNG(argbPixels, w, h);
         if (!png.empty()) {
             HGLOBAL hPng = GlobalAlloc(GMEM_MOVEABLE, png.size());
@@ -384,8 +342,6 @@ namespace DrawingUtils {
                 ok = true;
             }
         }
-
-        // CF_DIB (broadest compatibility, no alpha)
         int stride = ((w * 3 + 3) & ~3);
         size_t dibSize = sizeof(BITMAPINFOHEADER) + (size_t)stride * h;
         HGLOBAL hDib = GlobalAlloc(GMEM_MOVEABLE, dibSize);
@@ -396,14 +352,14 @@ namespace DrawingUtils {
             bih.biPlanes=1; bih.biBitCount=24; bih.biCompression=BI_RGB;
             memcpy(p, &bih, sizeof(bih));
             uint8_t* dst = p + sizeof(bih);
-            for (int row = h-1; row >= 0; row--) {  // bottom-up
+            for (int row = h-1; row >= 0; row--) {
                 const uint32_t* src = argbPixels + row * w;
                 uint8_t* rowDst = dst + (size_t)(h-1-row) * stride;
                 for (int col = 0; col < w; col++) {
                     uint32_t px = src[col];
-                    rowDst[col*3+0] = (px)      & 0xFF; // B
-                    rowDst[col*3+1] = (px >> 8)  & 0xFF; // G
-                    rowDst[col*3+2] = (px >> 16) & 0xFF; // R
+                    rowDst[col*3+0] = (px)      & 0xFF;
+                    rowDst[col*3+1] = (px >> 8)  & 0xFF;
+                    rowDst[col*3+2] = (px >> 16) & 0xFF;
                 }
             }
             GlobalUnlock(hDib);
@@ -418,8 +374,6 @@ namespace DrawingUtils {
     bool getClipboardImage(std::vector<uint32_t>& outPixels, int& outW, int& outH) {
         if (!OpenClipboard(nullptr)) return false;
         bool got = false;
-
-        // Prefer PNG (has alpha)
         UINT cfPng = getPngFormat();
         if (IsClipboardFormatAvailable(cfPng)) {
             HGLOBAL h = (HGLOBAL)GetClipboardData(cfPng);
@@ -430,8 +384,6 @@ namespace DrawingUtils {
                 GlobalUnlock(h);
             }
         }
-
-        // Fall back to CF_DIB
         if (!got && IsClipboardFormatAvailable(CF_DIB)) {
             HGLOBAL h = (HGLOBAL)GetClipboardData(CF_DIB);
             if (h) {

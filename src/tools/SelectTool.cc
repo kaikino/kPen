@@ -6,14 +6,10 @@ SelectTool::~SelectTool() {
     if (selectionTexture) SDL_DestroyTexture(selectionTexture);
 }
 
-// Render the selection texture into the current render target (canvas space)
-// with the current rotation, flip, and bounds applied.
 void SelectTool::renderWithTransform(SDL_Renderer* r, const SDL_Rect& dst) const {
     SDL_RendererFlip flip = (SDL_RendererFlip)(
         (flipX ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE) |
         (flipY ? SDL_FLIP_VERTICAL   : SDL_FLIP_NONE));
-    // Use the same position as the bounding box (dst.x, dst.y) and pivot (w/2, h/2)
-    // so the shape stays centered; do not offset the rect or pivot (causes uneven borders).
     double angleDeg = std::fmod(getRotation() * 180.0 / M_PI, 360.0);
     if (angleDeg < 0.0) angleDeg += 360.0;
     float hw = dst.w * 0.5f, hh = dst.h * 0.5f;
@@ -35,11 +31,9 @@ bool SelectTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_C
     if (resizing != Handle::NONE || isMoving || isRotating) { handleMouseUp(); return false; }
     if (!isDrawing || (cX == startX && cY == startY)) { isDrawing = false; return false; }
 
-    // Logical selection bounds (may extend outside canvas)
     currentBounds = { std::min(startX, cX), std::min(startY, cY),
                       std::max(1, std::abs(cX - startX)), std::max(1, std::abs(cY - startY)) };
 
-    // Intersection with canvas for the actual pixel read/erase
     int canvasW, canvasH; mapper->getCanvasSize(&canvasW, &canvasH);
     int rx = std::max(0, currentBounds.x);
     int ry = std::max(0, currentBounds.y);
@@ -132,9 +126,6 @@ std::vector<uint32_t> SelectTool::getFloatingPixels(SDL_Renderer* r) const {
         return {};
     int w = currentBounds.w, h = currentBounds.h;
 
-    // We need to render with the current rotation into a texture sized to hold
-    // the rotated result. For simplicity we render into the bounds size — the
-    // caller (copySelectionToClipboard) already uses the bounds rect.
     std::vector<uint32_t> pixels(w * h, 0);
     SDL_Texture* tmp = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888,
                                           SDL_TEXTUREACCESS_TARGET, w, h);
@@ -153,8 +144,6 @@ std::vector<uint32_t> SelectTool::getFloatingPixels(SDL_Renderer* r) const {
 
 void SelectTool::fillWithColor(SDL_Renderer* r, SDL_Color color) {
     if (!selectionTexture || !active) return;
-    // Render a solid color fill into the selection texture, replacing its pixels.
-    // BLENDMODE_NONE so even transparent color fully overwrites existing content.
     SDL_Texture* prev = SDL_GetRenderTarget(r);
     SDL_SetRenderTarget(r, selectionTexture);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);

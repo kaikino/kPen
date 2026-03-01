@@ -15,7 +15,6 @@ static void brushRestoreBlend(SDL_Renderer* r, SDL_Color color) {
     if (color.a == 0) SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
 }
 
-// Draw a filled square stamp of size brushSize centered at (cx,cy), clipped to canvas.
 static void drawSquareStamp(SDL_Renderer* r, int cx, int cy, int brushSize, int cw, int ch) {
     int half = brushSize / 2;
     int x0 = std::max(0, cx - half);
@@ -72,5 +71,4 @@ void BrushTool::onMouseMove(int cX, int cY, SDL_Renderer* canvasRenderer, int br
 }
 
 void BrushTool::onPreviewRender(SDL_Renderer* winRenderer, int brushSize, SDL_Color color) {
-    // No preview rendering for BrushTool
 }

@@ -15,7 +15,6 @@ void FillTool::onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int bru
 
     if (target == fill) return; // already that color, nothing to do
 
-    // BFS flood fill
     std::queue<int> q;
     q.push(cY * canvasW + cX);
     pixels[cY * canvasW + cX] = fill;
@@ -39,7 +38,6 @@ void FillTool::onMouseDown(int cX, int cY, SDL_Renderer* canvasRenderer, int bru
         tryPush(x,   y+1);
     }
 
-    // Write the modified pixels back to the canvas texture
     SDL_UpdateTexture(SDL_GetRenderTarget(canvasRenderer), nullptr,
                       pixels.data(), canvasW * 4);
 }

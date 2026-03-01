@@ -8,9 +8,6 @@ ResizeTool::ResizeTool(ICoordinateMapper* m, ToolType st, SDL_Rect bounds, SDL_R
     : TransformTool(m), shapeType(st), origBounds(ob), shapeStartX(sx), shapeStartY(sy)
     , shapeEndX(ex), shapeEndY(ey), liveBrushSize(liveBS), liveColor(liveCol), shapeFilled(filled)
 {
-    // ShapeTool now computes the tight pixel-footprint bounding box for all
-    // shape types (including both filled and unfilled circles) and passes it
-    // in as |bounds|.  No post-processing is needed here.
     currentBounds = bounds;
     syncDrawCenterFromBounds();
 }
@@ -21,8 +18,6 @@ void ResizeTool::onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL
 void ResizeTool::onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) { handleMouseMove(cX, cY); }
 bool ResizeTool::onMouseUp  (int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) { handleMouseUp(); return false; }
 
-// Render the shape into renderer r with bounds b (un-rotated, local space).
-// clipW/clipH are the canvas dimensions for clipping.
 void ResizeTool::renderShape(SDL_Renderer* r, const SDL_Rect& b, int bs, SDL_Color col, int clipW, int clipH) const {
     if (col.a == 0) {
         SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
@@ -67,13 +62,9 @@ void ResizeTool::renderShape(SDL_Renderer* r, const SDL_Rect& b, int bs, SDL_Col
         }
     } else if (shapeType == ToolType::CIRCLE) {
         if (shapeFilled) {
-            // b is the tight pixel bounding box {x, y, w, h} of the oval.
-            // drawFilledOval takes (x0,y0,x1,y1) inclusive endpoints of the draw extent.
             if (b.w >= 1 && b.h >= 1)
                 DrawingUtils::drawFilledOval(r, b.x, b.y, b.x + b.w - 1, b.y + b.h - 1, clipW, clipH);
         } else {
-            // b is the tight handle-space bounding box {x, y, w, h} of the oval stroke.
-            // Inset by li/ri to recover the oval center-point draw coords cx0..cx1.
             int ocx0 = b.x + li, ocy0 = b.y + li;
             int ocx1 = b.x + b.w - 1 - ri, ocy1 = b.y + b.h - 1 - ri;
             if (ocx1 >= ocx0 && ocy1 >= ocy0)
@@ -82,8 +73,6 @@ void ResizeTool::renderShape(SDL_Renderer* r, const SDL_Rect& b, int bs, SDL_Col
     }
 }
 
-// Draw the shape at (x,y) with size (w,h) and rotation. Position (x,y) is the same
-// as the bounding box (drawCenter - halfSize) so shape and box always match.
 void ResizeTool::renderShapeAt(SDL_Renderer* r, float x, float y, int w, int h, float rotationRad,
                               SDL_Color col, int clipW, int clipH) const {
     if (w <= 0 || h <= 0) return;
@@ -143,14 +132,6 @@ void ResizeTool::onOverlayRender(SDL_Renderer* r) {
 }
 
 void ResizeTool::onPreviewRender(SDL_Renderer* r, int bs, SDL_Color) {
-    // currentBounds semantics by shape type:
-    //   LINE / RECT (filled or not): tight pixel-footprint == raw draw extent.
-    //   CIRCLE filled:               currentBounds = raw draw extent {minX,minY,dw,dh};
-    //                                pixel footprint equals the draw extent for fill.
-    //   CIRCLE unfilled:             currentBounds = tight handle-space box derived
-    //                                from getOvalCenterBounds + brush expansion, so
-    //                                handles land exactly on the outermost stroke pixels.
-    // In all cases drawHandles uses currentBounds directly — no special-casing needed.
     drawHandles(r);
 }
 
@@ -172,7 +153,6 @@ std::vector<uint32_t> ResizeTool::getFloatingPixels(SDL_Renderer* r) const {
     SDL_SetRenderTarget(r, tmp);
     SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
     SDL_RenderClear(r);
-    // Render un-rotated into local space for pixel export
     renderShape(r, {0, 0, w, h}, *liveBrushSize, *liveColor, w, h);
     std::vector<uint32_t> pixels(w * h);
     SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), w * 4);
@@ -182,18 +162,9 @@ std::vector<uint32_t> ResizeTool::getFloatingPixels(SDL_Renderer* r) const {
 }
 
 void ResizeTool::snapBounds(int& newX, int& newY, int& newW, int& newH) {
-    // Only unfilled circles need snapping — the Bresenham oval algorithm uses
-    // integer-truncated center cx=(left+right)/2, so for odd center-point spans
-    // (i.e. (newW - bs) is odd) the algorithm only reaches right-1 on the right
-    // edge, leaving a 1-pixel gap between the stroke and the handle box.
-    // Snap by expanding 1px toward the dragged handle (never shrink toward it).
     if (shapeType != ToolType::CIRCLE || shapeFilled) return;
-
     int bs = *liveBrushSize;
-
-    // Snap width: center span = newW - bs; must be even.
     if ((newW - bs) % 2 != 0) {
-        // Expand toward the dragged handle edge.
         bool dragRight = (resizing == Handle::E  || resizing == Handle::NE ||
                           resizing == Handle::SE);
         bool dragLeft  = (resizing == Handle::W  || resizing == Handle::NW ||
@@ -203,11 +174,9 @@ void ResizeTool::snapBounds(int& newX, int& newY, int& newW, int& newH) {
         } else if (dragLeft) {
             newX--;  newW++;      // left edge moves left by 1 (anchor stays)
         } else {
-            newW++;               // N/S drag: expand right arbitrarily
+            newW++;
         }
     }
-
-    // Snap height: center span = newH - bs; must be even.
     if ((newH - bs) % 2 != 0) {
         bool dragBottom = (resizing == Handle::S  || resizing == Handle::SE ||
                            resizing == Handle::SW);
@@ -218,7 +187,7 @@ void ResizeTool::snapBounds(int& newX, int& newY, int& newW, int& newH) {
         } else if (dragTop) {
             newY--;  newH++;
         } else {
-            newH++;               // E/W drag: expand downward arbitrarily
+            newH++;
         }
     }
 }
@@ -230,9 +199,6 @@ bool ResizeTool::willRender() const {
     int bs = *liveBrushSize;
     if (shapeFilled) {
         return b.w >= 1 && b.h >= 1;
-    } else {
-        // currentBounds is tight pixel-footprint; its size includes bs on each axis.
-        // Need at least 1 center-point pixel, i.e. b.w >= bs and b.h >= bs.
-        return b.w >= bs && b.h >= bs;
     }
+    return b.w >= bs && b.h >= bs;
 }

@@ -12,7 +12,7 @@ class ICoordinateMapper {
     virtual void getCanvasCoords(int winX, int winY, int* canX, int* canY) = 0;
     virtual void getWindowCoords(int canX, int canY, int* winX, int* winY) = 0;
     virtual int  getWindowSize(int canSize) = 0;
-    virtual void getCanvasSize(int* w, int* h) = 0;  // runtime canvas dimensions
+    virtual void getCanvasSize(int* w, int* h) = 0;
 };
 
 inline bool isPointOnCanvas(ICoordinateMapper* m, int cX, int cY) {
@@ -39,19 +39,18 @@ class AbstractTool {
     virtual void deactivate(SDL_Renderer* r);
 };
 
-// ── TransformTool — shared handle/move logic for Select and Resize ────────────
+// --- TransformTool: shared handle/move logic for Select and Resize ---
 
 class TransformTool : public AbstractTool {
   public:
-    // Handle is public so CursorManager can switch on it directly.
     enum class Handle { NONE, N, S, E, W, NE, NW, SE, SW, ROTATE };
 
   protected:
-    static const int GRAB_WIN    = 4;   // hit radius in window pixels for square handles
-    static const int ROT_OFFSET  = 28;  // distance above N handle in window pixels
+    static const int GRAB_WIN    = 4;
+    static const int ROT_OFFSET  = 28;
 
     SDL_Rect currentBounds = {0, 0, 0, 0};
-    float    rotation      = 0.f;  // radians, clockwise positive
+    float    rotation      = 0.f;
 
     Handle resizing    = Handle::NONE;
     bool   isRotating  = false;
@@ -59,22 +58,20 @@ class TransformTool : public AbstractTool {
     bool   moved       = false;
     int    anchorX     = 0, anchorY  = 0;
     int    dragOffX    = 0, dragOffY = 0;
-    float  dragAspect  = 1.f;  // w/h of currentBounds captured at handleMouseDown
-    bool   flipX       = false; // content mirrored horizontally; used for cursor orientation
-    bool   flipY       = false; // content mirrored vertically; used for cursor orientation
-    float  rotPivotCX  = 0.f;  // canvas-space center at rotation drag start
+    float  dragAspect  = 1.f;
+    bool   flipX       = false;
+    bool   flipY       = false;
+    float  rotPivotCX  = 0.f;
     float  rotPivotCY  = 0.f;
-    float  rotStartAngle = 0.f; // angle from pivot to mouse at drag start
-    float  rotBaseAngle  = 0.f; // rotation value at drag start
-    float  rotLastAngle  = 0.f; // raw atan2 angle from previous frame (for wraparound)
-    float  anchorWorldX  = 0.f; // world-space position of resize anchor (set at mousedown)
+    float  rotStartAngle = 0.f;
+    float  rotBaseAngle  = 0.f;
+    float  rotLastAngle  = 0.f;
+    float  anchorWorldX  = 0.f;
     float  anchorWorldY  = 0.f;
-    float  drawCenterX   = 0.f; // exact center for drawing (avoids 1px offset when w/h parity differs at 90°)
+    float  drawCenterX   = 0.f;
     float  drawCenterY   = 0.f;
 
     void   syncDrawCenterFromBounds();
-
-    // Returns window-space position of the rotate handle circle center.
     void   getRotateHandleWin(int& wx, int& wy) const;
     Handle getHandle(int cX, int cY) const;
     void   drawHandles(SDL_Renderer* r) const;
@@ -82,11 +79,8 @@ class TransformTool : public AbstractTool {
     bool   handleMouseMove(int cX, int cY, bool aspectLock = false);
     void   handleMouseUp();
 
-    // Transform a canvas point through the current rotation about the bounds center.
-    // Returns rotated canvas coordinates.
     void rotatePt(float inX, float inY, float pivX, float pivY,
                   float angle, float& outX, float& outY) const;
-    // Test whether a canvas point lies inside the (possibly rotated) bounds.
     bool pointInRotatedBounds(int cX, int cY) const;
 
   public:
@@ -95,30 +89,24 @@ class TransformTool : public AbstractTool {
     bool hasMoved           () const { return moved; }
     bool isMutating         () const { return isMoving || isRotating || resizing != Handle::NONE; }
     SDL_Rect getFloatingBounds() const { return currentBounds; }
-    float    getRotation()      const;  // returns snapped-to-45° when rotating with Shift held
+    float    getRotation()      const;
     float    getDrawCenterX()   const { return drawCenterX; }
     float    getDrawCenterY()   const { return drawCenterY; }
     bool     getFlipX()         const { return flipX; }
     bool     getFlipY()         const { return flipY; }
-    // Used by CursorManager to pick the right resize-arrow cursor.
     Handle getHandleForCursor(int cX, int cY) const { return getHandle(cX, cY); }
-    // When resizing, the active handle (updates on flip); NONE when rotating or moving.
     Handle getResizingHandle() const { return resizing; }
 
   protected:
-    // Called by handleMouseMove just before applying a resize to currentBounds.
-    // Subclasses can override to snap newW/newH to shape-specific constraints
-    // (e.g. ensuring even center-point span for unfilled ovals so both edges
-    // of the stroke exactly reach the handle box). Default: no-op.
     virtual void snapBounds(int& /*newX*/, int& /*newY*/, int& /*newW*/, int& /*newH*/) {}
 };
 
-// ── SelectTool ────────────────────────────────────────────────────────────────
+// --- SelectTool ---
 
 class SelectTool : public TransformTool {
     SDL_Texture* selectionTexture = nullptr;
     bool         active           = false;
-    bool         dirty            = false;  // true if canvas will change on commit (paste or moved)
+    bool         dirty            = false;
   public:
     using TransformTool::TransformTool;
     ~SelectTool();
@@ -135,31 +123,25 @@ class SelectTool : public TransformTool {
     void activateWithTexture(SDL_Texture* tex, SDL_Rect area);
     void setBounds(SDL_Rect area) { currentBounds = area; }
     std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;
-    // Fill the floating selection with a solid color (used when a color is picked while selected).
     void fillWithColor(SDL_Renderer* r, SDL_Color color);
   private:
-    // Render the selection texture into renderer r with the current rotation,
-    // flip, and bounds. dst is in the coordinate space of r (canvas or window).
     void renderWithTransform(SDL_Renderer* r, const SDL_Rect& dst) const;
 };
 
-// ── ResizeTool ────────────────────────────────────────────────────────────────
+// --- ResizeTool ---
 
 class ResizeTool : public TransformTool {
     ToolType         shapeType;
     SDL_Rect         origBounds;
     int              shapeStartX, shapeStartY, shapeEndX, shapeEndY;
-    const SDL_Color* liveColor;   // points to toolbar.brushColor — always current
+    const SDL_Color* liveColor;
 
     void renderShape(SDL_Renderer* r, const SDL_Rect& bounds,
                      int bs, SDL_Color col, int clipW = 0, int clipH = 0) const;
-    // Single render entry: draw shape at (x,y) with size (w,h) and rotation.
-    // Position (x,y) must be the same formula as the bounding box (drawCenter - halfSize)
-    // so shape and box match for any parity. Uses float to avoid rounding offset.
     void renderShapeAt(SDL_Renderer* r, float x, float y, int w, int h, float rotationRad,
                        SDL_Color col, int clipW, int clipH) const;
   public:
-    int*      liveBrushSize;  // points to toolbar.brushSize — always current
+    int*      liveBrushSize;
     bool      shapeFilled;
     ResizeTool(ICoordinateMapper* m, ToolType shapeType, SDL_Rect bounds, SDL_Rect origBounds,
                int sx, int sy, int ex, int ey, int* liveBrushSize, const SDL_Color* liveColor, bool filled = false);
@@ -173,15 +155,13 @@ class ResizeTool : public TransformTool {
     bool hasOverlayContent() override { return true; }
     bool isHit(int cX, int cY) const  { return TransformTool::isHit(cX, cY); }
     SDL_Rect getBounds() const        { return currentBounds; }
-    bool willRender() const;  // true if the shape will produce visible pixels at current bounds/brushSize
+    bool willRender() const;
     std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;
   protected:
-    // Snap currentBounds so that unfilled oval center spans are always even,
-    // guaranteeing the Bresenham algorithm reaches both edges exactly.
     void snapBounds(int& newX, int& newY, int& newW, int& newH) override;
 };
 
-// ── Other tools ───────────────────────────────────────────────────────────────
+// --- Other tools ---
 
 class BrushTool : public AbstractTool {
   public:
@@ -205,7 +185,6 @@ class ShapeTool : public AbstractTool {
     ToolType type;
     using ShapeReadyCallback = std::function<void(ToolType, SDL_Rect, SDL_Rect, int, int, int, int, int, SDL_Color, bool)>;
     ShapeReadyCallback onShapeReady;
-    // Cached each frame so onOverlayRender can draw with the correct brush/color
     int       cachedBrushSize = 1;
     SDL_Color cachedColor     = {0, 0, 0, 255};
   public:
@@ -223,7 +202,7 @@ class FillTool : public AbstractTool {
     void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
 };
 
-// ── PickTool — samples a canvas pixel and fires a callback with the color ──────
+// --- PickTool ---
 
 class PickTool : public AbstractTool {
     using ColorPickedCallback = std::function<void(SDL_Color)>;

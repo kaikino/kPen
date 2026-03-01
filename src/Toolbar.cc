@@ -4,11 +4,6 @@
 #include <cmath>
 #include <algorithm>
 
-// ── ToolTypes ────────────────────────────────────────────────────────────────
-// Grid layout (row, col):
-//   Row 0: BRUSH    LINE    ERASER
-//   Row 1: RECT     CIRCLE  
-//   Row 2: PICK     FILL    SELECT
 constexpr int toolGrid[3][3] = {{0,1,2},{3,4,-1},{5,6,7}};
 constexpr ToolType toolTypes[] = {
     ToolType::BRUSH, ToolType::LINE, ToolType::ERASER,
@@ -16,15 +11,11 @@ constexpr ToolType toolTypes[] = {
     ToolType::FILL, ToolType::PICK
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 Toolbar::Toolbar(SDL_Renderer* renderer, kPen* app)
     : renderer(renderer), app(app)
 {
     rgbToHsv(brushColor, hue, sat, val);
 }
-
-// ── HSV helpers ───────────────────────────────────────────────────────────────
 
 SDL_Color Toolbar::hsvToRgb(float h, float s, float v) {
     h = fmod(h, 1.f) * 6.f;
@@ -50,8 +41,6 @@ void Toolbar::rgbToHsv(SDL_Color c, float& h, float& s, float& v) {
     if (h < 0) h += 1.f;
 }
 
-// ── O(1) swatch hit-tests ─────────────────────────────────────────────────────
-
 int Toolbar::hitCustomSwatch(int x, int y) const {
     int sz = swatchCellSize(), stride = swatchCellStride();
     int lx = x - TB_PAD, ly = y - customGridY;
@@ -72,8 +61,6 @@ int Toolbar::hitPresetSwatch(int x, int y) const {
     return row * 3 + col;
 }
 
-// ── Icon drawing ──────────────────────────────────────────────────────────────
-
 void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
     SDL_Color fg = active ? SDL_Color{255,255,255,255} : SDL_Color{160,160,170,255};
     SDL_SetRenderDrawColor(renderer, fg.r, fg.g, fg.b, 255);
@@ -81,12 +68,10 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
     switch (t) {
         case ToolType::BRUSH: {
             if (squareBrush) {
-                // Filled square
                 const int r = 4;
                 SDL_Rect sq = { cx - r, cy - r, r * 2 + 1, r * 2 + 1 };
                 SDL_RenderFillRect(renderer, &sq);
             } else {
-                // Solid circle with radius 4 (8x8 footprint)
                 const int r = 4;
                 for (int dy = -r; dy <= r; dy++) {
                     int dx = (int)std::sqrt((float)(r * r - dy * dy) + 0.5f);
@@ -97,25 +82,18 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
         }
         case ToolType::ERASER: {
             if (squareEraser) {
-                // Dashed hollow square: 2-px L-shaped dash at each corner.
-                // r=4 → square runs from (cx-4,cy-4) to (cx+4,cy+4), 9×9 px.
                 const int r = 4;
-                const int d = 2;   // dash arm length
+                const int d = 2;
                 int x0 = cx - r, y0 = cy - r, x1 = cx + r, y1 = cy + r;
-                // Top-left corner: right along top, down along left
                 SDL_RenderDrawLine(renderer, x0,     y0, x0 + d, y0);
                 SDL_RenderDrawLine(renderer, x0,     y0, x0,     y0 + d);
-                // Top-right corner: left along top, down along right
                 SDL_RenderDrawLine(renderer, x1 - d, y0, x1,     y0);
                 SDL_RenderDrawLine(renderer, x1,     y0, x1,     y0 + d);
-                // Bottom-left corner: right along bottom, up along left
                 SDL_RenderDrawLine(renderer, x0,     y1, x0 + d, y1);
                 SDL_RenderDrawLine(renderer, x0,     y1 - d, x0, y1);
-                // Bottom-right corner: left along bottom, up along right
                 SDL_RenderDrawLine(renderer, x1 - d, y1, x1,     y1);
                 SDL_RenderDrawLine(renderer, x1,     y1 - d, x1,  y1);
             } else {
-                // Dashed hollow circle with radius 4
                 const int r = 4;
                 for (int deg = 0; deg < 360; deg++) {
                     if ((deg / 45) % 2 == 0) {
@@ -170,24 +148,20 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
             int oy = cy + 2;
             s -= 2;
 
-            // Diamond outline (symmetric about ox — unchanged)
             SDL_RenderDrawLine(renderer, ox,    oy-s, ox+s, oy  );
             SDL_RenderDrawLine(renderer, ox+s,  oy,   ox,   oy+s);
             SDL_RenderDrawLine(renderer, ox,    oy+s, ox-s, oy  );
             SDL_RenderDrawLine(renderer, ox-s,  oy,   ox,   oy-s);
 
-            // Fill bottom half: triangle with wide base at middle, narrows to point at bottom
             for (int row = 2; row <= s; row++) {
                 int halfW = s - row;
                 SDL_RenderDrawLine(renderer, ox - halfW, oy + row, ox + halfW, oy + row);
             }
 
-            // Handle: now goes UP-RIGHT (was up-left)
             int hLen = 3;
             SDL_RenderDrawLine(renderer, ox,      oy-s,      ox+hLen,   oy-s-hLen);
             SDL_RenderDrawLine(renderer, ox+1,    oy-s,      ox+hLen+1, oy-s-hLen);
 
-            // Drip: now BOTTOM-LEFT (was bottom-right)
             int dx = ox - s - 2, dy = cy + 2;
             SDL_RenderDrawPoint(renderer, dx,   dy  );
             SDL_RenderDrawLine(renderer, dx-1, dy+1, dx+1, dy+1);
@@ -197,56 +171,41 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
             break;
         }
         case ToolType::PICK: {
-            // Eyedropper icon matching the cursor shape:
-            //   – wide rectangular cap at top-right
-            //   – 2px-wide diagonal tube body (NE→SW)
-            //   – tapered single-pixel nib at bottom-left
-
-            // Rectangular cap: 5 wide × 3 tall at top-right
             int capX = cx + 1, capY = cy - 8;
             SDL_Rect cap = { capX, capY, 5, 3 };
             SDL_RenderFillRect(renderer, &cap);
 
-            // Body: 2px-wide diagonal tube, 9 steps SW from bottom of cap
             int ax = cx + 3, ay = cy - 5;
             for (int i = 0; i < 9; i++) {
                 SDL_RenderDrawPoint(renderer, ax - i,     ay + i);
                 SDL_RenderDrawPoint(renderer, ax - i - 1, ay + i);
             }
 
-            // Nib: tapered tip, 4 steps continuing SW, narrowing to 1px
             int nx = ax - 9, ny = ay + 9;
             SDL_RenderDrawPoint(renderer, nx,     ny);
             SDL_RenderDrawPoint(renderer, nx - 1, ny);
             SDL_RenderDrawPoint(renderer, nx - 1, ny + 1);
-            SDL_RenderDrawPoint(renderer, nx - 2, ny + 2); // single-pixel tip
+            SDL_RenderDrawPoint(renderer, nx - 2, ny + 2);
             break;
         }
         case ToolType::RESIZE:
         case ToolType::HAND:
             break;  // no toolbar icon (resize is transient; hand is space/H only)
-    }  // end switch
-}  // end drawIcon
-
-// ── Full draw ─────────────────────────────────────────────────────────────────
+        }
+}
 
 void Toolbar::draw(bool handActive) {
     int winW, winH;
     SDL_GetWindowSize(SDL_RenderGetWindow(renderer), &winW, &winH);
 
-    // Background panel + right border
     SDL_Rect panel = {0, 0, TB_W, winH};
     SDL_SetRenderDrawColor(renderer, 30, 30, 35, 255);
     SDL_RenderFillRect(renderer, &panel);
     SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
     SDL_RenderDrawLine(renderer, TB_W-1, 0, TB_W-1, winH);
 
-    // Clamp scroll so content doesn't scroll past top or leave gap at bottom
-    // We'll clamp after computing total content height at the end of draw.
-    // For now just apply current scrollY.
-    const int S = scrollY; // alias for brevity
+    const int S = scrollY;
 
-    // ── Tool buttons (3 per row) ──
     int cellW = (TB_W - TB_PAD) / 3;
     int ty = toolStartY() - S;
     for (int row=0; row<3; row++) {
@@ -271,16 +230,13 @@ void Toolbar::draw(bool handActive) {
             drawIcon(bx + (cellW-2)/2, by + ICON_SIZE/2, toolTypes[idx], active);
         }
     }
-
-    // ── Brush size: row1=[field][preview], row2=[slider] ──
     int brushRowY = ty + 3*(ICON_SIZE+ICON_GAP) + 2;
     static const int BS_FIELD_W = 26;
     static const int BS_GAP     = 4;
-    static const int BS_ROW1_H  = 20;  // height of field/preview row
-    static const int BS_ROW2_H  = 14;  // height of slider row
-    static const int BS_ROW_GAP = 4;   // gap between the two rows
+    static const int BS_ROW1_H  = 20;
+    static const int BS_ROW2_H  = 14;
+    static const int BS_ROW_GAP = 4;
 
-    // Row 1: text field (left) + preview circle (right)
     SDL_Rect bsField = { TB_PAD, brushRowY, BS_FIELD_W, BS_ROW1_H };
     brushSizeFieldRect = bsField;
     bool bsFocused = brushSizeFocused;
@@ -299,7 +255,6 @@ void Toolbar::draw(bool handActive) {
         SDL_RenderDrawLine(renderer, curX, bsField.y + 2, curX, bsField.y + BS_ROW1_H - 3);
     }
 
-    // Preview circle (right of field, in row 1)
     int previewAreaX = TB_PAD + BS_FIELD_W + BS_GAP;
     int previewAreaW = TB_W - TB_PAD - previewAreaX;
     int previewCX = previewAreaX + previewAreaW / 2;
@@ -333,7 +288,6 @@ void Toolbar::draw(bool handActive) {
     SDL_SetRenderDrawColor(renderer, 120, 120, 130, 255);
     SDL_RenderDrawRect(renderer, &thumb);
 
-    // ── Color wheel ──
     int wTop = brushRowY + BS_ROW1_H + BS_ROW_GAP + BS_ROW2_H + 8;
     int availH = winH - wTop - TB_PAD;
     int wheelDiam = std::min(TB_W - TB_PAD*2, availH - 20);
@@ -365,7 +319,6 @@ void Toolbar::draw(bool handActive) {
     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255); SDL_RenderDrawRect(renderer, &cur);
     SDL_SetRenderDrawColor(renderer, 0,   0,   0,   255); SDL_RenderDrawRect(renderer, &cur2);
 
-    // ── Brightness bar ──
     int bTop = wTop + wheelDiam + 6, bH = 12;
     int bX = TB_PAD, bW = TB_W - TB_PAD*2;
     brightnessRect = {bX, bTop, bW, bH};
@@ -383,7 +336,6 @@ void Toolbar::draw(bool handActive) {
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderDrawLine(renderer, bCurX+1, bTop-2, bCurX+1, bTop+bH+2);
 
-    // ── Custom color slots (3x3) ──
     int csy = bTop + bH + 7;
     SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
     SDL_RenderDrawLine(renderer, TB_PAD, csy, TB_W-TB_PAD, csy);
@@ -405,7 +357,6 @@ void Toolbar::draw(bool handActive) {
         }
     }
 
-    // ── Preset colors (27, 3 per row = 9 rows) ──
     int psy = csy + 3*stride + 7;
     SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
     SDL_RenderDrawLine(renderer, TB_PAD, psy, TB_W-TB_PAD, psy);
@@ -436,20 +387,14 @@ void Toolbar::draw(bool handActive) {
         }
     }
 
-    // ── Canvas resize panel ──
     int rpTop = psy + 9*stride + 8;
     drawResizePanel(rpTop);       // rpTop is already in screen space (psy has -S applied)
     resizePanelY = rpTop;         // store screen-space Y for hit-testing (matches swatch pattern)
 
-    // ── Clamp scroll and draw subtle scrollbar ──
-    //    Panel height: separator(8) + label(8) + pad(4) + field_h(16) + gap(4) + field_h(16)
-    //                + gap(6) + btn(20) + bottom_pad(8) = 90
-    int totalContentH = (rpTop + S) + 90; // rpTop is screen-space; add S to get content-space bottom
+    int totalContentH = (rpTop + S) + 90;
     maxScrollCache = std::max(0, totalContentH - winH);
-    // Don't clamp here — overscroll is allowed; tickScroll() handles snap-back.
 
     if (maxScrollCache > 0) {
-        // Thin scrollbar on right edge of toolbar
         int sbW = 3, sbX = TB_W - sbW - 1;
         float ratio = (float)winH / totalContentH;
         int sbH   = std::max(20, (int)(winH * ratio));
@@ -463,7 +408,7 @@ void Toolbar::draw(bool handActive) {
     }
 }
 
-// ── Mouse update helpers ──────────────────────────────────────────────────────
+// --- Mouse update helpers ---
 
 void Toolbar::updateSliderFromMouse(int x) {
     int sX = TB_PAD, sW = TB_W - TB_PAD*2;
@@ -494,11 +439,8 @@ void Toolbar::updateBrightnessFromMouse(int x) {
     if (onColorChanged) onColorChanged(brushColor);
 }
 
-// ── Event handling ────────────────────────────────────────────────────────────
+// --- Event handling ---
 
-// Commit or revert the resize fields and clear focus.
-// commit=true  → if the entered W×H differs from the actual size, queue a resize.
-// commit=false → always revert the text fields back to the actual canvas size.
 void Toolbar::defocusResize(bool commit) {
     if (resizeFocus == ResizeFocus::NONE) return;
     resizeFocus = ResizeFocus::NONE;
@@ -554,7 +496,6 @@ bool Toolbar::isInteractive(int x, int y) const {
         }
     }
 
-    // Brush size field and slider
     SDL_Rect bsExp = { brushSizeFieldRect.x - 2, brushSizeFieldRect.y - 4,
                        brushSizeFieldRect.w + 4, brushSizeFieldRect.h + 8 };
     SDL_Point bsPt = {x, y};
@@ -574,11 +515,9 @@ bool Toolbar::isInteractive(int x, int y) const {
                      brightnessRect.w+4, brightnessRect.h+8};
     if (SDL_PointInRect(&bsPt, &bExp)) return true;
 
-    // Swatches
     if (hitCustomSwatch(x, y) >= 0) return true;
     if (hitPresetSwatch(x, y) >= 0) return true;
 
-    // Resize panel fields and buttons
     {
         int panelY = resizePanelY;
         int py     = panelY + 12;
@@ -603,10 +542,8 @@ bool Toolbar::onMouseDown(int x, int y) {
     if (!inToolbar(x, y)) return false;
     userScrolling = false;
 
-    // Adjust y for scroll offset before hit-testing
     int sy = y + scrollY;
 
-    // If brush size field is focused and click is outside it, commit and unfocus
     if (brushSizeFocused) {
         SDL_Rect bsExp = { brushSizeFieldRect.x - 2, brushSizeFieldRect.y - 4,
                            brushSizeFieldRect.w + 4, brushSizeFieldRect.h + 8 };
@@ -622,9 +559,6 @@ bool Toolbar::onMouseDown(int x, int y) {
         }
     }
 
-    // If a resize field is focused and the user clicks outside the resize panel
-    // (W field, gap, H field), commit the entered dimensions before processing the click.
-    // Use one combined rect so clicking between the two fields does not defocus.
     if (resizeFocus != ResizeFocus::NONE) {
         int panelY = resizePanelY;    // screen space
         int py     = panelY + 12;
@@ -750,7 +684,6 @@ bool Toolbar::onMouseDown(int x, int y) {
         }
     }
 
-    // ── Resize panel ──
     if (hitResizePanel(x, y, true)) return true;
 
     return false; // click was in toolbar area but didn't hit any control
@@ -838,33 +771,22 @@ bool Toolbar::tickScroll() {
     return false;
 }
 
-// ── Canvas resize panel ───────────────────────────────────────────────────────
-//
-// Baked 3×5 pixel font for digits 0–9, 'x', 'W', 'H'.
-// Each glyph is 5 rows of 3 bits (LSB = leftmost pixel).
-// ─────────────────────────────────────────────────────────────────────────────
-
 static const uint8_t DIGIT_FONT[13][5] = {
-    // 0        1        2        3        4
-    {0b111, 0b101, 0b101, 0b101, 0b111},  // 0
+    {0b111, 0b101, 0b101, 0b101, 0b111},
     {0b010, 0b110, 0b010, 0b010, 0b111},  // 1
     {0b111, 0b001, 0b111, 0b100, 0b111},  // 2
     {0b111, 0b001, 0b111, 0b001, 0b111},  // 3
     {0b101, 0b101, 0b111, 0b001, 0b001},  // 4
     {0b111, 0b100, 0b111, 0b001, 0b111},  // 5
     {0b111, 0b100, 0b111, 0b101, 0b111},  // 6
-    {0b111, 0b001, 0b011, 0b010, 0b010},  // 7
-    {0b111, 0b101, 0b111, 0b101, 0b111},  // 8
-    {0b111, 0b101, 0b111, 0b001, 0b111},  // 9
-    // 'x' sentinel (index 10)
-    {0b101, 0b101, 0b010, 0b101, 0b101},  // x
-    // 'W' (index 11): two V shapes sharing the middle column
-    {0b101, 0b101, 0b101, 0b111, 0b101},  // W
-    // 'H' (index 12): two verticals joined by a crossbar
-    {0b101, 0b101, 0b111, 0b101, 0b101},  // H
+    {0b111, 0b001, 0b011, 0b010, 0b010},
+    {0b111, 0b101, 0b111, 0b101, 0b111},
+    {0b111, 0b101, 0b111, 0b001, 0b111},
+    {0b101, 0b101, 0b010, 0b101, 0b101},
+    {0b101, 0b101, 0b101, 0b111, 0b101},
+    {0b101, 0b101, 0b111, 0b101, 0b101},
 };
 
-// Draw one character at pixel position (x,y). scale=1 → 3×5 px, scale=2 → 6×10 px etc.
 static void drawGlyph(SDL_Renderer* r, int x, int y, int glyphIdx, int scale = 1) {
     const uint8_t* rows = DIGIT_FONT[glyphIdx];
     for (int row = 0; row < 5; row++) {
@@ -886,40 +808,28 @@ void Toolbar::drawDigitString(int x, int y, const char* s, int len) const {
     }
 }
 
-// Panel metrics (all in content/screen space — caller already applies -S)
 static const int RP_FIELD_H  = 16;
 static const int RP_BTN_H    = 20;
 static const int RP_LABEL_H  = 8;
 
 void Toolbar::drawResizePanel(int panelY) {
-    // ── Separator ──
     SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
     SDL_RenderDrawLine(renderer, TB_PAD, panelY + 4, TB_W - TB_PAD, panelY + 4);
 
-    int y = panelY + 12;  // top of first field
-
-    // ── "W" label + field ──
+    int y = panelY + 12;
     int fieldX = TB_PAD;
     int fieldW = TB_W - TB_PAD * 2;
     int labelX = fieldX + 2;
-
-    // Label "W"
     SDL_SetRenderDrawColor(renderer, 140, 140, 155, 255);
-    drawGlyph(renderer, labelX, y + (RP_FIELD_H - 10) / 2, 11, 2);  // index 11 = 'W'
-
-    // Field background
+    drawGlyph(renderer, labelX, y + (RP_FIELD_H - 10) / 2, 11, 2);
     SDL_Rect wField = { fieldX + 10, y, fieldW - 10, RP_FIELD_H };
     bool wFocused = (resizeFocus == ResizeFocus::W);
     SDL_SetRenderDrawColor(renderer, wFocused ? 45 : 38, wFocused ? 45 : 38, wFocused ? 55 : 45, 255);
     SDL_RenderFillRect(renderer, &wField);
     SDL_SetRenderDrawColor(renderer, wFocused ? 70 : 55, wFocused ? 130 : 55, wFocused ? 220 : 62, 255);
     SDL_RenderDrawRect(renderer, &wField);
-
-    // Digit text
     SDL_SetRenderDrawColor(renderer, 220, 220, 230, 255);
     drawDigitString(wField.x + 3, wField.y + (RP_FIELD_H - 10) / 2, resizeWBuf, resizeWLen);
-
-    // Cursor line if focused
     if (wFocused) {
         int cx2 = wField.x + 3 + resizeWLen * 8;
         SDL_SetRenderDrawColor(renderer, 200, 200, 220, 255);
@@ -927,11 +837,8 @@ void Toolbar::drawResizePanel(int panelY) {
     }
 
     y += RP_FIELD_H + 4;
-
-    // ── "H" label + field ──
-    // Label "H"
     SDL_SetRenderDrawColor(renderer, 140, 140, 155, 255);
-    drawGlyph(renderer, labelX, y + (RP_FIELD_H - 10) / 2, 12, 2);  // index 12 = 'H'
+    drawGlyph(renderer, labelX, y + (RP_FIELD_H - 10) / 2, 12, 2);
 
     SDL_Rect hField = { fieldX + 10, y, fieldW - 10, RP_FIELD_H };
     bool hFocused = (resizeFocus == ResizeFocus::H);
@@ -950,19 +857,13 @@ void Toolbar::drawResizePanel(int panelY) {
     }
 
     y += RP_FIELD_H + 6;
-
-    // ── Two side-by-side buttons: [Lock Aspect] [Scale] ──
     int halfW = (fieldW - 2) / 2;
-
-    // ── Lock Aspect button (left) ──
     SDL_Rect lockBtn = { fieldX, y, halfW, RP_BTN_H };
     bool la = resizeLockAspect;
     SDL_SetRenderDrawColor(renderer, la ? 70 : 45, la ? 130 : 45, la ? 220 : 52, 255);
     SDL_RenderFillRect(renderer, &lockBtn);
     SDL_SetRenderDrawColor(renderer, 80, 80, 90, 255);
     SDL_RenderDrawRect(renderer, &lockBtn);
-
-    // Lock icon (same as old scale icon)
     SDL_SetRenderDrawColor(renderer, la ? 255 : 160, la ? 255 : 160, la ? 255 : 170, 255);
     {
         int iconW = 8, iconH = 11;
@@ -971,18 +872,14 @@ void Toolbar::drawResizePanel(int panelY) {
         SDL_Rect lockBody = { ix, iy + 5, iconW, 6 };
         SDL_RenderFillRect(renderer, &lockBody);
         if (la) {
-            // LOCKED: closed U-shape shackle
             SDL_RenderDrawLine(renderer, ix + 1, iy + 5, ix + 1, iy + 2);
             SDL_RenderDrawLine(renderer, ix + 1, iy + 2, ix + 6, iy + 2);
             SDL_RenderDrawLine(renderer, ix + 6, iy + 2, ix + 6, iy + 5);
         } else {
-            // UNLOCKED: open shackle
             SDL_RenderDrawLine(renderer, ix + 1, iy + 3, ix + 1, iy + 0);
             SDL_RenderDrawLine(renderer, ix + 1, iy + 0, ix + 6, iy + 0);
         }
     }
-
-    // ── Scale button (right) ──
     SDL_Rect scaleBtn = { fieldX + halfW + 2, y, halfW, RP_BTN_H };
     bool sc = resizeScaleMode;
     SDL_SetRenderDrawColor(renderer, sc ? 70 : 45, sc ? 130 : 45, sc ? 220 : 52, 255);

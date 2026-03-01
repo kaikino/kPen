@@ -2,7 +2,6 @@
 #include "DrawingUtils.h"
 #include <algorithm>
 
-// Eraser draws fully transparent pixels by temporarily switching blend mode to NONE.
 static void eraserDraw(SDL_Renderer* r, int x0, int y0, int x1, int y1, int brushSize, int cw, int ch) {
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
     SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
@@ -60,5 +59,4 @@ void EraserTool::onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL
 }
 
 void EraserTool::onPreviewRender(SDL_Renderer* /*r*/, int /*brushSize*/, SDL_Color /*color*/) {
-    // No preview rendering for EraserTool
 }

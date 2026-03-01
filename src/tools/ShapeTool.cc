@@ -5,10 +5,6 @@
 ShapeTool::ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb, bool fill)
     : AbstractTool(m), type(t), onShapeReady(std::move(cb)), filled(fill) {}
 
-// Apply shift-key constraint to the drag endpoint (curX, curY) relative to
-// (startX, startY).  For LINE: snap to nearest 45° axis.  For RECT/CIRCLE:
-// constrain to square by taking the smaller dimension on each axis.
-// Only called when shift is held.
 static void applyShiftConstraint(ToolType type, int startX, int startY,
                                   int& curX, int& curY) {
     int dx = curX - startX;
@@ -16,23 +12,17 @@ static void applyShiftConstraint(ToolType type, int startX, int startY,
     if (dx == 0 && dy == 0) return;
 
     if (type == ToolType::LINE) {
-        // Snap to the nearest 45° multiple: H, V, or one of two diagonals.
-        // Find which octant the drag is in and clamp to its axis.
         int adx = std::abs(dx), ady = std::abs(dy);
         if (adx > ady * 2) {
-            // Closer to horizontal — lock Y
             curY = startY;
         } else if (ady > adx * 2) {
-            // Closer to vertical — lock X
             curX = startX;
         } else {
-            // Diagonal — make dx and dy equal magnitude
             int d = std::min(adx, ady);
             curX = startX + (dx >= 0 ? d : -d);
             curY = startY + (dy >= 0 ? d : -d);
         }
     } else {
-        // RECT / CIRCLE — constrain to square: use the smaller extent on both axes.
         int adx = std::abs(dx), ady = std::abs(dy);
         int d = std::min(adx, ady);
         curX = startX + (dx >= 0 ? d : -d);
@@ -53,17 +43,12 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
     int ri = brushSize / 2;
 
     SDL_Rect bounds, origBounds;
-    int sx = startX, sy = startY, ex = cX, ey = cY;  // coords passed to ResizeTool
+    int sx = startX, sy = startY, ex = cX, ey = cY;
     if (type == ToolType::LINE) {
-        // Convert to inclusive center endpoints (same as drawShapeCanvasSpace).
         int isx = sx < ex ? sx : sx > ex ? sx - 1 : sx;
         int isy = sy < ey ? sy : sy > ey ? sy - 1 : sy;
         int iex = ex > sx ? ex - 1 : ex < sx ? ex : ex;
         int iey = ey > sy ? ey - 1 : ey < sy ? ey : ey;
-        // origBounds maps isx→tx=0, iex→tx=1 (w = iex-isx, clamped to 1 to
-        // avoid division by zero for single-point lines where isx==iex).
-        // bounds (currentBounds) = brush footprint: expands by li left and ri right,
-        // so w = (iex-isx) + li + ri + 1 = (iex-isx) + brushSize.
         int spanX = std::abs(iex - isx), spanY = std::abs(iey - isy);
         origBounds = {
             std::min(isx, iex),
@@ -79,7 +64,6 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
         };
         sx = isx; sy = isy; ex = iex; ey = iey;
     } else {
-        // Rect/circle: skip shapes too small to draw.
         int dw = std::abs(cX - startX);
         int dh = std::abs(cY - startY);
         if (!filled && (dw < brushSize || dh < brushSize)) { isDrawing = false; return false; }
@@ -87,23 +71,14 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
         if (type == ToolType::CIRCLE) {
             if (filled) {
                 if (dw < 1 || dh < 1) { isDrawing = false; return false; }
-                // For a filled oval the pixel footprint equals the draw extent:
-                // every pixel inside the ellipse defined by {minX,minY,maxX,maxY}
-                // is filled, so currentBounds (= bounds) can sit exactly there.
-                // origBounds == bounds for scale-invariant re-rendering.
                 bounds = origBounds = { minX, minY, dw, dh };
             } else {
                 int cx0 = minX + li, cy0 = minY + li;
                 int cx1 = minX + dw - 1 - ri, cy1 = minY + dh - 1 - ri;
                 if (cx1 < cx0 || cy1 < cy0) { isDrawing = false; return false; }
-                // Compute the tight center-point box the oval algorithm actually plots,
-                // then expand by the brush half-sizes to get the true pixel footprint.
-                // This ensures handles sit on actual pixels, not on the raw mouse rect.
-                // origBounds stores the draw coords {cx0,cy0,w,h} for re-rendering.
                 SDL_Rect cb = DrawingUtils::getOvalCenterBounds(cx0, cy0, cx1, cy1);
                 if (cb.w == 0 && cb.h == 0) { isDrawing = false; return false; }
                 origBounds = { cx0, cy0, cx1 - cx0 + 1, cy1 - cy0 + 1 };
-                // Handle-space: expand tight center bounds by brush insets on each side.
                 bounds = { cb.x - li, cb.y - li,
                            cb.w + 1 + li + ri,
                            cb.h + 1 + li + ri };
@@ -120,30 +95,17 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
     return false;
 }
 
-// Draw shape in canvas space. Used by both onOverlayRender (live preview) and
-// ResizeTool::renderShape (committed), guaranteeing pixel-identical output.
-//
-// addBrush is asymmetric for even sizes: extends (bs/2-1) left, bs/2 right of stamp.
-// So the correct insets are:
-//   left  inset = (bs-1)/2   [= bs/2-1 for even, bs/2 for odd]
-//   right inset = bs/2       [= bs/2   for both]
-// This makes the outer stroke edge touch minX and maxX exactly.
-
 static void drawShapeCanvasSpace(SDL_Renderer* r, ToolType type,
                                   int startX, int startY, int endX, int endY,
                                   int bs, int clipW, int clipH, bool filled = false) {
-    int li = (bs - 1) / 2;  // left/top inset
-    int ri = bs / 2;         // right/bottom inset
+    int li = (bs - 1) / 2;
+    int ri = bs / 2;
     int minX = std::min(startX, endX), minY = std::min(startY, endY);
-    // max(startX,endX) is the exclusive right boundary; -1 gives inclusive last pixel
-    // used by rect/circle and also as the base for line (converted to inclusive below)
     int maxX = std::max(startX, endX) - 1, maxY = std::max(startY, endY) - 1;
     int cx0 = minX + li, cy0 = minY + li;
     int cx1 = maxX - ri, cy1 = maxY - ri;
 
     if (type == ToolType::LINE) {
-        // Convert exclusive boundaries to inclusive center pixels, then pass
-        // directly to drawLine (no inset — drawLine stamps the brush at each center).
         int iStartX = startX < endX ? startX : startX > endX ? startX - 1 : startX;
         int iStartY = startY < endY ? startY : startY > endY ? startY - 1 : startY;
         int iEndX   = endX > startX ? endX - 1 : endX < startX ? endX : endX;

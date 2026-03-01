@@ -3,11 +3,7 @@
 
 class ICoordinateMapper;
 
-// Draws 8 drag handles (4 corners + 4 edges) around the canvas boundary in
-// window space, and lets the user drag them to propose a new canvas size.
-//
-// Top/left handles move the top-left origin — content is cropped or padded
-// on those edges. Bottom/right handles extend the canvas rightward/downward.
+// Canvas-edge drag handles to propose new size; top/left move origin (crop/pad), bottom/right extend.
 class CanvasResizer {
   public:
     enum class Handle { NONE, N, S, E, W, NE, NW, SE, SW };
@@ -18,14 +14,11 @@ class CanvasResizer {
 
     bool onMouseDown(int winX, int winY, int canvasW, int canvasH);
 
-    // Updates live preview. originX/Y are the shift of the top-left corner in
-    // canvas pixels (negative = canvas grew upward/leftward).
     bool onMouseMove(int winX, int winY,
                      int& previewW, int& previewH,
                      int& originX,  int& originY,
                      bool aspectLock = false) const;
 
-    // Returns true if size changed. Fills new dims and origin shift.
     bool onMouseUp(int winX, int winY, int canvasW, int canvasH,
                    int& newW, int& newH, int& originX, int& originY,
                    bool aspectLock = false);
@@ -46,7 +39,6 @@ class CanvasResizer {
     struct HandlePos { Handle h; int wx, wy; };
     void getHandlePositions(int canvasW, int canvasH, HandlePos out[8]) const;
 
-    // Computes new size AND the origin shift caused by top/left handle movement.
     void compute(int winX, int winY,
                  int& newW, int& newH,
                  int& originX, int& originY,
