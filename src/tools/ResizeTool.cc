@@ -1,6 +1,7 @@
 #include "Tools.h"
 #include "DrawingUtils.h"
 #include <algorithm>
+#include <cmath>
 
 ResizeTool::ResizeTool(ICoordinateMapper* m, ToolType st, SDL_Rect bounds, SDL_Rect ob,
                        int sx, int sy, int ex, int ey, int* liveBS, const SDL_Color* liveCol, bool filled)
@@ -11,6 +12,7 @@ ResizeTool::ResizeTool(ICoordinateMapper* m, ToolType st, SDL_Rect bounds, SDL_R
     // shape types (including both filled and unfilled circles) and passes it
     // in as |bounds|.  No post-processing is needed here.
     currentBounds = bounds;
+    syncDrawCenterFromBounds();
 }
 
 ResizeTool::~ResizeTool() {}
@@ -80,19 +82,17 @@ void ResizeTool::renderShape(SDL_Renderer* r, const SDL_Rect& b, int bs, SDL_Col
     }
 }
 
-// Render the shape into a temporary texture (local bounds space), then
-// composite it onto the current render target rotated around the bounds center.
-void ResizeTool::renderShapeRotated(SDL_Renderer* r, SDL_Color col, int clipW, int clipH) const {
-    int w = currentBounds.w, h = currentBounds.h;
+// Draw the shape at (x,y) with size (w,h) and rotation. Position (x,y) is the same
+// as the bounding box (drawCenter - halfSize) so shape and box always match.
+void ResizeTool::renderShapeAt(SDL_Renderer* r, float x, float y, int w, int h, float rotationRad,
+                              SDL_Color col, int clipW, int clipH) const {
     if (w <= 0 || h <= 0) return;
 
-    if (rotation == 0.f) {
-        // Fast path: no rotation needed
-        renderShape(r, currentBounds, *liveBrushSize, col, clipW, clipH);
+    if (rotationRad == 0.f) {
+        renderShape(r, { (int)std::round(x), (int)std::round(y), w, h }, *liveBrushSize, col, clipW, clipH);
         return;
     }
 
-    // Render shape into an offscreen texture in local space {0,0,w,h}
     SDL_Texture* tmp = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888,
                                           SDL_TEXTUREACCESS_TARGET, w, h);
     if (!tmp) return;
@@ -102,17 +102,21 @@ void ResizeTool::renderShapeRotated(SDL_Renderer* r, SDL_Color col, int clipW, i
     SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
     SDL_RenderClear(r);
-    renderShape(r, {0, 0, w, h}, *liveBrushSize, col, w, h);
+    renderShape(r, { 0, 0, w, h }, *liveBrushSize, col, w, h);
     SDL_SetRenderTarget(r, prev);
 
-    // Composite rotated onto the canvas.
-    // Use SDL_RenderCopyExF with a float pivot so the rotation center is exact
-    // at the texture midpoint — integer division (w/2) would drift by 0.5px for
-    // odd dimensions, which becomes a visible 1px offset at 90/180/270 degrees.
-    double angleDeg = rotation * 180.0 / M_PI;
-    SDL_FRect dstF = { (float)currentBounds.x, (float)currentBounds.y,
-                       (float)currentBounds.w, (float)currentBounds.h };
-    SDL_FPoint centerF = { currentBounds.w * 0.5f, currentBounds.h * 0.5f };
+    double angleDeg = std::fmod(rotationRad * 180.0 / M_PI, 360.0);
+    if (angleDeg < 0.0) angleDeg += 360.0;
+    float hw = w * 0.5f, hh = h * 0.5f;
+    bool parityDiff = (w & 1) != (h & 1);
+    bool is90or270 = (std::fabs(angleDeg - 90.0) < 1.0 || std::fabs(angleDeg - 270.0) < 1.0);
+    float pivotX = hw, pivotY = hh;
+    if (is90or270 && parityDiff) {
+        pivotX = (float)std::round(hw);
+        pivotY = (float)std::round(hh);
+    }
+    SDL_FRect dstF = { x, y, (float)w, (float)h };
+    SDL_FPoint centerF = { pivotX, pivotY };
     SDL_RenderCopyExF(r, tmp, nullptr, &dstF, angleDeg, &centerF, SDL_FLIP_NONE);
     SDL_DestroyTexture(tmp);
 }
@@ -123,7 +127,19 @@ void ResizeTool::onOverlayRender(SDL_Renderer* r) {
     if (drawColor.a == 0) {
         drawColor = { 100, 149, 237, 128 };
     }
-    renderShapeRotated(r, drawColor, cw, ch);
+    const SDL_Rect b = currentBounds;
+    float hw = b.w * 0.5f, hh = b.h * 0.5f;
+    float drawX = getDrawCenterX() - hw, drawY = getDrawCenterY() - hh;
+    float rot = getRotation();
+    double rotDeg = std::fmod(rot * 180.0 / M_PI, 360.0);
+    if (rotDeg < 0.0) rotDeg += 360.0;
+    bool parityDiff = (b.w & 1) != (b.h & 1);
+    bool is90or270 = (std::fabs(rotDeg - 90.0) < 1.0 || std::fabs(rotDeg - 270.0) < 1.0);
+    if (is90or270 && parityDiff) {
+        drawX = (float)std::round(drawX);
+        drawY = (float)std::round(drawY);
+    }
+    renderShapeAt(r, drawX, drawY, b.w, b.h, rot, drawColor, cw, ch);
 }
 
 void ResizeTool::onPreviewRender(SDL_Renderer* r, int bs, SDL_Color) {
@@ -140,7 +156,10 @@ void ResizeTool::onPreviewRender(SDL_Renderer* r, int bs, SDL_Color) {
 
 void ResizeTool::deactivate(SDL_Renderer* r) {
     int cw, ch; mapper->getCanvasSize(&cw, &ch);
-    renderShapeRotated(r, *liveColor, cw, ch);
+    const SDL_Rect b = currentBounds;
+    float hw = b.w * 0.5f, hh = b.h * 0.5f;
+    float drawX = getDrawCenterX() - hw, drawY = getDrawCenterY() - hh;
+    renderShapeAt(r, drawX, drawY, b.w, b.h, getRotation(), *liveColor, cw, ch);
 }
 
 std::vector<uint32_t> ResizeTool::getFloatingPixels(SDL_Renderer* r) const {

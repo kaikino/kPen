@@ -12,12 +12,13 @@ void SelectTool::renderWithTransform(SDL_Renderer* r, const SDL_Rect& dst) const
     SDL_RendererFlip flip = (SDL_RendererFlip)(
         (flipX ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE) |
         (flipY ? SDL_FLIP_VERTICAL   : SDL_FLIP_NONE));
-    // SDL_RenderCopyExF with float pivot so rotation center is exact at the
-    // texture midpoint — integer division (w/2) drifts 0.5px for odd sizes,
-    // producing a visible 1px offset at 90/180/270 degree rotations.
-    double angleDeg = rotation * 180.0 / M_PI;
+    // Use the same position as the bounding box (dst.x, dst.y) and pivot (w/2, h/2)
+    // so the shape stays centered; do not offset the rect or pivot (causes uneven borders).
+    double angleDeg = std::fmod(getRotation() * 180.0 / M_PI, 360.0);
+    if (angleDeg < 0.0) angleDeg += 360.0;
+    float hw = dst.w * 0.5f, hh = dst.h * 0.5f;
     SDL_FRect dstF = { (float)dst.x, (float)dst.y, (float)dst.w, (float)dst.h };
-    SDL_FPoint centerF = { dst.w * 0.5f, dst.h * 0.5f };
+    SDL_FPoint centerF = { hw, hh };
     SDL_RenderCopyExF(r, selectionTexture, nullptr, &dstF, angleDeg, &centerF, flip);
 }
 
@@ -63,7 +64,8 @@ bool SelectTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_C
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
 
     currentBounds = { rx, ry, rw, rh };
-    rotation = 0.f;  // fresh selection always starts unrotated
+    rotation = 0.f;
+    syncDrawCenterFromBounds();
 
     active = true;
     isDrawing = false;
@@ -116,6 +118,7 @@ void SelectTool::activateWithTexture(SDL_Texture* tex, SDL_Rect area) {
     selectionTexture = tex;
     currentBounds = area;
     rotation = 0.f;
+    syncDrawCenterFromBounds();
     active = true;
     dirty  = true;
     isMoving   = false;

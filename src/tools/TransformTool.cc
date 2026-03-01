@@ -15,58 +15,95 @@ void TransformTool::rotatePt(float inX, float inY, float pivX, float pivY,
 }
 
 bool TransformTool::pointInRotatedBounds(int cX, int cY) const {
-    if (rotation == 0.f) {
+    float rot = getRotation();
+    if (rot == 0.f) {
         SDL_Point pt = {cX, cY};
         return SDL_PointInRect(&pt, &currentBounds) != 0;
     }
-    float cx = currentBounds.x + currentBounds.w * 0.5f;
-    float cy = currentBounds.y + currentBounds.h * 0.5f;
+    float hw = currentBounds.w * 0.5f, hh = currentBounds.h * 0.5f;
+    double rotDeg = std::fmod(rot * 180.0 / M_PI, 360.0);
+    if (rotDeg < 0.0) rotDeg += 360.0;
+    bool parityDiff = (currentBounds.w & 1) != (currentBounds.h & 1);
+    bool is90or270 = (std::fabs(rotDeg - 90.0) < 1.0 || std::fabs(rotDeg - 270.0) < 1.0);
+    float boxLeft, boxTop, pivX, pivY;
+    if (is90or270 && parityDiff) {
+        boxLeft = (float)std::round(drawCenterX - hw); boxTop = (float)std::round(drawCenterY - hh);
+        pivX = boxLeft + (float)std::round(hw); pivY = boxTop + (float)std::round(hh);
+    } else {
+        boxLeft = drawCenterX - hw; boxTop = drawCenterY - hh;
+        pivX = drawCenterX; pivY = drawCenterY;
+    }
     float lx, ly;
-    rotatePt((float)cX, (float)cY, cx, cy, -rotation, lx, ly);
-    return lx >= currentBounds.x && lx < currentBounds.x + currentBounds.w
-        && ly >= currentBounds.y && ly < currentBounds.y + currentBounds.h;
+    rotatePt((float)cX, (float)cY, pivX, pivY, -rot, lx, ly);
+    return lx >= boxLeft && lx < boxLeft + currentBounds.w
+        && ly >= boxTop && ly < boxTop + currentBounds.h;
 }
 
 // ── Rotate handle position ────────────────────────────────────────────────────
 
 void TransformTool::getRotateHandleWin(int& rhwx, int& rhwy) const {
-    float ccx = currentBounds.x + currentBounds.w * 0.5f;
-    float ccy = currentBounds.y + currentBounds.h * 0.5f;
-
-    // Rotate handle always extends from the visual top edge (N handle side).
-    // flipY swaps which local edge is visually "top", but currentBounds is
-    // always canonical (positive size), so we always use the top edge (y)
-    // and the flip is purely a rendering concern for the content inside.
-    // The rotate handle stays at the geometric top of currentBounds.
+    float rot = getRotation();
+    float ccx = drawCenterX, ccy = drawCenterY;
+    float hw = currentBounds.w * 0.5f, hh = currentBounds.h * 0.5f;
+    double rotDeg = std::fmod(rot * 180.0 / M_PI, 360.0);
+    if (rotDeg < 0.0) rotDeg += 360.0;
+    bool parityDiff = (currentBounds.w & 1) != (currentBounds.h & 1);
+    bool is90or270 = (std::fabs(rotDeg - 90.0) < 1.0 || std::fabs(rotDeg - 270.0) < 1.0);
+    float pivX = ccx, pivY = ccy;
     float edgeY = (float)currentBounds.y;
-
+    if (is90or270 && parityDiff) {
+        pivX = (float)std::round(ccx - hw) + (float)std::round(hw);
+        pivY = (float)std::round(ccy - hh) + (float)std::round(hh);
+        edgeY = (float)std::round(ccy - hh);
+    }
     float rnx, rny;
-    rotatePt(ccx, edgeY, ccx, ccy, rotation, rnx, rny);
+    rotatePt(pivX, edgeY, pivX, pivY, rot, rnx, rny);
     int nwx, nwy;
     mapper->getWindowCoords((int)std::round(rnx), (int)std::round(rny), &nwx, &nwy);
-
-    // Outward direction from N edge (0, -1) rotated by rotation:
-    // gives (sin(rotation), -cos(rotation)) in canvas space, same in window space
-    // (assuming uniform scaling). Extend by ROT_OFFSET window pixels.
-    rhwx = (int)std::round(nwx + std::sin(rotation) * ROT_OFFSET);
-    rhwy = (int)std::round(nwy - std::cos(rotation) * ROT_OFFSET);
+    rhwx = (int)std::round(nwx + std::sin(rot) * ROT_OFFSET);
+    rhwy = (int)std::round(nwy - std::cos(rot) * ROT_OFFSET);
 }
 
-// ── Handle hit-testing ────────────────────────────────────────────────────────
+// ── Handle identity and flip state ────────────────────────────────────────────
 //
-// currentBounds is always a canonical positive-size AABB. Flips are rendering-
-// only and do NOT remap handle positions — the NW handle is always at the
-// top-left corner of currentBounds (before rotation). This keeps handle logic
-// simple and consistent regardless of flip state.
+// Handle identity: Handles are fixed to currentBounds (the axis-aligned box).
+//   NW = top-left (a.x, a.y), N = top center, NE = top-right, E = right center,
+//   SE = bottom-right, S = bottom center, SW = bottom-left, W = left center.
+// Flips are rendering-only (SDL_RenderCopyEx FLIP_HORIZONTAL/VERTICAL). Handle
+// positions do NOT move when flipX/flipY change — so "E" is always the right
+// edge of the box (then rotated by rotation).
+//
+// Flip state: flipX and flipY (bool) record whether the shape's content is
+// mirrored. They are toggled in handleMouseMove when a resize drag crosses the
+// shape center (so the box doesn't collapse). They persist across mouse up and
+// determine cursor orientation (CursorManager uses getFlipX()/getFlipY()).
+// handleMouseUp() does NOT clear flipX/flipY.
+//
+// During drag, when we flip we swap the active handle (e.g. W → E) so the
+// same logical edge keeps being dragged; resizing and anchor are updated so
+// the drag continues correctly.
+
+// ── Handle hit-testing ────────────────────────────────────────────────────────
 
 TransformTool::Handle TransformTool::getHandle(int cX, int cY) const {
     const SDL_Rect& a = currentBounds;
-    float ccx = a.x + a.w * 0.5f;
-    float ccy = a.y + a.h * 0.5f;
+    float ccx = drawCenterX, ccy = drawCenterY;
+    float rot = getRotation();
+    float hw = a.w * 0.5f, hh = a.h * 0.5f;
+    double rotDeg = std::fmod(rot * 180.0 / M_PI, 360.0);
+    if (rotDeg < 0.0) rotDeg += 360.0;
+    bool parityDiff = (a.w & 1) != (a.h & 1);
+    bool is90or270 = (std::fabs(rotDeg - 90.0) < 1.0 || std::fabs(rotDeg - 270.0) < 1.0);
+    float boxLeft, boxTop, pivX, pivY;
+    if (is90or270 && parityDiff) {
+        boxLeft = (float)std::round(ccx - hw); boxTop = (float)std::round(ccy - hh);
+        pivX = boxLeft + (float)std::round(hw); pivY = boxTop + (float)std::round(hh);
+    } else {
+        boxLeft = ccx - hw; boxTop = ccy - hh;
+        pivX = ccx; pivY = ccy;
+    }
 
     int wX, wY; SDL_GetMouseState(&wX, &wY);
-
-    // ① Rotate handle first
     {
         int rhwx, rhwy; getRotateHandleWin(rhwx, rhwy);
         const int G = GRAB_WIN;
@@ -74,29 +111,36 @@ TransformTool::Handle TransformTool::getHandle(int cX, int cY) const {
             return Handle::ROTATE;
     }
 
-    // ② Square resize handles — 8 positions in canvas space, rotated to world
     struct CPt { float x, y; Handle h; };
     CPt pts[] = {
-        { (float)a.x,         (float)a.y,         Handle::NW },
-        { ccx,                (float)a.y,          Handle::N  },
-        { (float)(a.x + a.w), (float)a.y,         Handle::NE },
-        { (float)a.x,         ccy,                 Handle::W  },
-        { (float)(a.x + a.w), ccy,                 Handle::E  },
-        { (float)a.x,         (float)(a.y + a.h), Handle::SW },
-        { ccx,                (float)(a.y + a.h),  Handle::S  },
-        { (float)(a.x + a.w),(float)(a.y + a.h),  Handle::SE },
+        { boxLeft, boxTop, Handle::NW }, { pivX, boxTop, Handle::N  }, { boxLeft + a.w, boxTop, Handle::NE },
+        { boxLeft, pivY, Handle::W  },                 { boxLeft + a.w, pivY, Handle::E  },
+        { boxLeft, boxTop + a.h, Handle::SW }, { pivX, boxTop + a.h, Handle::S  }, { boxLeft + a.w, boxTop + a.h, Handle::SE },
     };
-
     const int G = GRAB_WIN;
     for (auto& p : pts) {
         float rx, ry;
-        rotatePt(p.x, p.y, ccx, ccy, rotation, rx, ry);
+        rotatePt(p.x, p.y, pivX, pivY, rot, rx, ry);
         int wpx, wpy;
         mapper->getWindowCoords((int)std::round(rx), (int)std::round(ry), &wpx, &wpy);
         if (std::abs(wX - wpx) <= G && std::abs(wY - wpy) <= G)
             return p.h;
     }
     return Handle::NONE;
+}
+
+void TransformTool::syncDrawCenterFromBounds() {
+    drawCenterX = currentBounds.x + currentBounds.w * 0.5f;
+    drawCenterY = currentBounds.y + currentBounds.h * 0.5f;
+}
+
+float TransformTool::getRotation() const {
+    // When rotating with Shift held, snap display to nearest 45°; stored rotation still accumulates.
+    if (isRotating && (SDL_GetModState() & KMOD_SHIFT)) {
+        const float snap45 = (float)M_PI / 4.f;
+        return std::round(rotation / snap45) * snap45;
+    }
+    return rotation;
 }
 
 // ── Shared mouse handling ─────────────────────────────────────────────────────
@@ -172,15 +216,11 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
         if (delta < -(float)M_PI) delta += 2.f * (float)M_PI;
         rotLastAngle = angle;
         rotation += delta;
-        if (aspectLock) {
-            const float snap = (float)M_PI / 12.f;  // 15°
-            float snapped = std::round(rotation / snap) * snap;
-            // Force exact multiples of π/2 (90°) to avoid floating-point drift
-            // that makes it impossible to land precisely on 0, 90, 180, 270°.
-            float quarterTurns = std::round(rotation / ((float)M_PI * 0.5f));
-            float quarter = quarterTurns * (float)M_PI * 0.5f;
-            if (std::abs(snapped - quarter) < snap * 0.1f) snapped = quarter;
-            rotation = snapped;
+        // When w/h differ in parity, land exactly on 90° without Shift (avoids float drift).
+        if (!aspectLock && (currentBounds.w % 2) != (currentBounds.h % 2)) {
+            const float quarterEps = (float)M_PI / 180.f * 0.5f;  // 0.5°
+            float q = std::round(rotation / ((float)M_PI * 0.5f)) * ((float)M_PI * 0.5f);
+            if (std::fabs(rotation - q) < quarterEps) rotation = q;
         }
         return true;
     }
@@ -340,40 +380,7 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
                 newY = anchorY;
         }
 
-        // ── Step 3: World-anchor correction for rotated shapes ────────────────
-        //
-        // When the shape is rotated, changing size shifts the center, which
-        // would drift the fixed anchor away from its world position. We correct
-        // by computing where the center must be so that the anchor (at its
-        // local offset from center) maps to the fixed world position.
-        //
-        // localOffset = anchor position relative to new center (in local space)
-        // worldAnchor = center + R(rotation) * localOffset
-        // => center = worldAnchor - R(rotation) * localOffset
-        if (rotation != 0.f) {
-            float hw = newW * 0.5f, hh = newH * 0.5f;
-
-            // Local offset from the new center to the anchor
-            float offX = 0.f, offY = 0.f;
-            bool dragsLeft   = (resizing == Handle::W  || resizing == Handle::NW || resizing == Handle::SW);
-            bool dragsRight  = (resizing == Handle::E  || resizing == Handle::NE || resizing == Handle::SE);
-            bool dragsTop    = (resizing == Handle::N  || resizing == Handle::NW || resizing == Handle::NE);
-            bool dragsBottom = (resizing == Handle::S  || resizing == Handle::SW || resizing == Handle::SE);
-
-            if      (dragsLeft)   offX = +hw;  // anchor is on the right of new center
-            else if (dragsRight)  offX = -hw;  // anchor is on the left of new center
-            if      (dragsTop)    offY = +hh;  // anchor is at the bottom of new center
-            else if (dragsBottom) offY = -hh;  // anchor is at the top of new center
-
-            float co = std::cos(rotation), si = std::sin(rotation);
-            // center = worldAnchor - R * offset
-            float cx = anchorWorldX - (co * offX - si * offY);
-            float cy = anchorWorldY - (si * offX + co * offY);
-            newX = (int)std::round(cx - hw);
-            newY = (int)std::round(cy - hh);
-        }
-
-        // ── Step 4: Aspect lock (corners only) ────────────────────────────────
+        // ── Step 3: Aspect lock (corners only) ─────────────────────────────────
         if (aspectLock && dragAspect > 0.f &&
             (resizing == Handle::NW || resizing == Handle::NE ||
              resizing == Handle::SW || resizing == Handle::SE)) {
@@ -381,22 +388,55 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
             int hFromW = std::max(1, (int)std::round(newW / dragAspect));
             if (wFromH <= newW) {
                 newW = wFromH;
-                bool fromRight = (resizing == Handle::NW || resizing == Handle::SW);
-                if (fromRight) newX = (int)std::round(anchorWorldX) - newW; // reuse local in no-rot case
-                // (rotation correction above already handled; for simplicity
-                //  aspect-lock at non-zero rotation may have minor drift — acceptable)
+                if (rotation == 0.f) {
+                    bool fromRight = (resizing == Handle::NW || resizing == Handle::SW);
+                    if (fromRight) newX = (int)std::round(anchorWorldX) - newW;
+                }
             } else {
                 newH = hFromW;
                 newW = std::max(1, (int)std::round(newH * dragAspect));
-                bool fromBottom = (resizing == Handle::NW || resizing == Handle::NE);
-                if (fromBottom) newY = (int)std::round(anchorWorldY) - newH;
-                bool fromRight  = (resizing == Handle::NW || resizing == Handle::SW);
-                if (fromRight)  newX = (int)std::round(anchorWorldX) - newW;
+                if (rotation == 0.f) {
+                    bool fromBottom = (resizing == Handle::NW || resizing == Handle::NE);
+                    if (fromBottom) newY = (int)std::round(anchorWorldY) - newH;
+                    bool fromRight  = (resizing == Handle::NW || resizing == Handle::SW);
+                    if (fromRight)  newX = (int)std::round(anchorWorldX) - newW;
+                }
             }
+        }
+
+        // ── Step 4: World-anchor correction for rotated shapes ────────────────
+        //
+        // When the shape is rotated, compute position so the anchor stays fixed in
+        // world space. Store ideal center (cx, cy) for drawing so the bounding box
+        // and shape use the same position/dimensions (no rounding offset at 90°/270°
+        // when width/height have different parity). currentBounds keeps integer
+        // position for hit-testing; draw center is used for actual draw position.
+        if (rotation != 0.f) {
+            float hw = newW * 0.5f, hh = newH * 0.5f;
+
+            float offX = 0.f, offY = 0.f;
+            bool dragsLeft   = (resizing == Handle::W  || resizing == Handle::NW || resizing == Handle::SW);
+            bool dragsRight  = (resizing == Handle::E  || resizing == Handle::NE || resizing == Handle::SE);
+            bool dragsTop    = (resizing == Handle::N  || resizing == Handle::NW || resizing == Handle::NE);
+            bool dragsBottom = (resizing == Handle::S  || resizing == Handle::SW || resizing == Handle::SE);
+
+            if      (dragsLeft)   offX = +hw;
+            else if (dragsRight)  offX = -hw;
+            if      (dragsTop)    offY = +hh;
+            else if (dragsBottom) offY = -hh;
+
+            float co = std::cos(rotation), si = std::sin(rotation);
+            float cx = anchorWorldX - (co * offX - si * offY);
+            float cy = anchorWorldY - (si * offX + co * offY);
+            newX = (int)std::round(cx - hw);
+            newY = (int)std::round(cy - hh);
+            drawCenterX = cx;
+            drawCenterY = cy;
         }
 
         snapBounds(newX, newY, newW, newH);
         currentBounds = { newX, newY, newW, newH };
+        if (rotation == 0.f) syncDrawCenterFromBounds();
         return true;
     }
 
@@ -404,12 +444,17 @@ bool TransformTool::handleMouseMove(int cX, int cY, bool aspectLock) {
         moved = true;
         currentBounds.x = cX - dragOffX;
         currentBounds.y = cY - dragOffY;
+        syncDrawCenterFromBounds();
         return true;
     }
     return false;
 }
 
 void TransformTool::handleMouseUp() {
+    if (isRotating && (SDL_GetModState() & KMOD_SHIFT)) {
+        const float snap45 = (float)M_PI / 4.f;
+        rotation = std::round(rotation / snap45) * snap45;
+    }
     resizing   = Handle::NONE;
     isMoving   = false;
     isRotating = false;
@@ -418,8 +463,23 @@ void TransformTool::handleMouseUp() {
 // ── Handle rendering ──────────────────────────────────────────────────────────
 
 void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
-    float ccx = currentBounds.x + currentBounds.w * 0.5f;
-    float ccy = currentBounds.y + currentBounds.h * 0.5f;
+    float ccx = drawCenterX, ccy = drawCenterY;
+    float rot = getRotation();
+    float hw = currentBounds.w * 0.5f, hh = currentBounds.h * 0.5f;
+    double rotDeg = std::fmod(rot * 180.0 / M_PI, 360.0);
+    if (rotDeg < 0.0) rotDeg += 360.0;
+    bool parityDiff = (currentBounds.w & 1) != (currentBounds.h & 1);
+    bool is90or270 = (std::fabs(rotDeg - 90.0) < 1.0 || std::fabs(rotDeg - 270.0) < 1.0);
+    float boxLeft, boxTop, pivX, pivY;
+    if (is90or270 && parityDiff) {
+        float rx = (float)std::round(ccx - hw), ry = (float)std::round(ccy - hh);
+        boxLeft = rx; boxTop = ry;
+        pivX = rx + (float)std::round(hw);
+        pivY = ry + (float)std::round(hh);
+    } else {
+        boxLeft = ccx - hw; boxTop = ccy - hh;
+        pivX = ccx; pivY = ccy;
+    }
 
     // Shared dashed-line helper
     auto drawDashed = [&](int ax, int ay, int bx, int by) {
@@ -436,18 +496,18 @@ void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
         }
     };
 
-    // --- Bounding box: 4 rotated dashed edges ---
+    // --- Bounding box: 4 rotated dashed edges (same position as shape; rounded at 90°/270° + parity) ---
     {
         float corners[4][2] = {
-            { (float)currentBounds.x,                     (float)currentBounds.y                     },
-            { (float)(currentBounds.x + currentBounds.w), (float)currentBounds.y                     },
-            { (float)(currentBounds.x + currentBounds.w), (float)(currentBounds.y + currentBounds.h) },
-            { (float)currentBounds.x,                     (float)(currentBounds.y + currentBounds.h) },
+            { boxLeft, boxTop },
+            { boxLeft + currentBounds.w, boxTop },
+            { boxLeft + currentBounds.w, boxTop + currentBounds.h },
+            { boxLeft, boxTop + currentBounds.h },
         };
         SDL_Point wpts[4];
         for (int i = 0; i < 4; ++i) {
             float rx, ry;
-            rotatePt(corners[i][0], corners[i][1], ccx, ccy, rotation, rx, ry);
+            rotatePt(corners[i][0], corners[i][1], pivX, pivY, rot, rx, ry);
             mapper->getWindowCoords((int)std::round(rx), (int)std::round(ry), &wpts[i].x, &wpts[i].y);
         }
         drawDashed(wpts[0].x, wpts[0].y, wpts[1].x, wpts[1].y);
@@ -468,20 +528,15 @@ void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
     const int hs = 4;  // half-size: handle is (2*hs+1) x (2*hs+1) pixels
     struct CPt { float x, y; };
     CPt pts[] = {
-        { (float)currentBounds.x,                     (float)currentBounds.y                     },
-        { ccx,                                         (float)currentBounds.y                     },
-        { (float)(currentBounds.x + currentBounds.w), (float)currentBounds.y                     },
-        { (float)currentBounds.x,                     ccy                                        },
-        { (float)(currentBounds.x + currentBounds.w), ccy                                        },
-        { (float)currentBounds.x,                     (float)(currentBounds.y + currentBounds.h) },
-        { ccx,                                         (float)(currentBounds.y + currentBounds.h) },
-        { (float)(currentBounds.x + currentBounds.w), (float)(currentBounds.y + currentBounds.h) },
+        { boxLeft, boxTop }, { pivX, boxTop }, { boxLeft + currentBounds.w, boxTop },
+        { boxLeft, pivY },                     { boxLeft + currentBounds.w, pivY },
+        { boxLeft, boxTop + currentBounds.h }, { pivX, boxTop + currentBounds.h }, { boxLeft + currentBounds.w, boxTop + currentBounds.h },
     };
 
     // Handle half-extents in window pixels, rotated to match the shape orientation.
     // These are pure window-space offsets — fixed pixel size regardless of zoom.
     // u = rightward along shape edge, v = downward along shape edge (both in window px).
-    float sinR = std::sin(rotation), cosR = std::cos(rotation);
+    float sinR = std::sin(rot), cosR = std::cos(rot);
     float uWx =  cosR * hs, uWy =  sinR * hs;
     float vWx = -sinR * hs, vWy =  cosR * hs;
 
@@ -509,7 +564,7 @@ void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
 
     for (auto& p : pts) {
         float rx, ry;
-        rotatePt(p.x, p.y, ccx, ccy, rotation, rx, ry);
+        rotatePt(p.x, p.y, pivX, pivY, rot, rx, ry);
         int wpx, wpy;
         mapper->getWindowCoords((int)std::round(rx), (int)std::round(ry), &wpx, &wpy);
 
@@ -534,9 +589,8 @@ void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
 
     // --- Rotate handle: dashed stem + circle ---
     {
-        // Stem roots at the top edge of currentBounds (N), rotated to world space
         float rnx, rny;
-        rotatePt(ccx, (float)currentBounds.y, ccx, ccy, rotation, rnx, rny);
+        rotatePt(ccx, ccy - hh, ccx, ccy, rot, rnx, rny);
         int nwx, nwy;
         mapper->getWindowCoords((int)std::round(rnx), (int)std::round(rny), &nwx, &nwy);
 

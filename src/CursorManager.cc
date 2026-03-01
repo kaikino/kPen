@@ -13,6 +13,8 @@ static const Uint32 C_WHITE  = argb(255, 255, 255, 255);
 static const Uint32 C_TRANSP = argb(  0,   0,   0,   0);
 static const Uint32 C_BLUE   = argb(255, 100, 149, 237);
 
+static SDL_Cursor* makePickCursor(SDL_Color tipColor);  // defined with eyedropper drawing
+
 // ── Simple pixel buffer for building cursors ──────────────────────────────────
 
 struct Bitmap {
@@ -120,6 +122,9 @@ static SDL_Cursor* makeBucketCursor(SDL_Color fillColor) {
     b.set(ddx + 1, ddy + 3, BLACK);
 
     b.set(ddx,     ddy + 4, BLACK); // Row 4
+
+    // 1px white outline so the bucket reads on dark backgrounds
+    b.outline(WHITE);
 
     // Hotspot centered in the indicator diamond (now on the left)
     return b.toCursor(ddx, ddy + 2);
@@ -281,24 +286,21 @@ SDL_Cursor* CursorManager::makeRotateCursor(float angleDeg) {
     return rotated.toCursor(c, c);
 }
 
-// Apply shape flip to cursor angle (degrees, 0 = north, clockwise). Used only during drag.
+// Mirror a direction angle (degrees, 0 = north, clockwise) by flip.
+// Used in shape local space: flipX = reflect through vertical axis, flipY = through horizontal.
 static float applyFlipToAngle(float deg, bool flipX, bool flipY) {
-    if (flipX) { deg = 360.f - deg; if (deg >= 360.f) deg -= 360.f; }
-    if (flipY) { deg = 180.f - deg; if (deg < 0.f) deg += 360.f; if (deg >= 360.f) deg -= 360.f; }
+    if (flipX) deg = 360.f - deg;
+    if (flipY) deg = 180.f - deg;
+    deg = std::fmod(deg, 360.f);
+    if (deg < 0.f) deg += 360.f;
     return deg;
 }
 
-void CursorManager::buildRotateCursor(float rotationRad, bool flipX, bool flipY) {
-    (void)flipX;
-    (void)flipY;
-    // Rotate handle: use rotation only. Flip is not applied so the curved-arrow
-    // direction stays correct (flip would invert the angle and break the cursor).
+void CursorManager::buildRotateCursor(float rotationRad) {
     float deg = std::fmod(rotationRad * 180.f / (float)M_PI, 360.f);
     if (deg < 0.f) deg += 360.f;
     if (std::fabs(deg - lastRotateCursorDeg) < 0.5f && lastRotateCursorDeg > -999.f) return;
     lastRotateCursorDeg = deg;
-    lastRotateFlipX = flipX;
-    lastRotateFlipY = flipY;
     if (curRotate) { SDL_FreeCursor(curRotate); curRotate = nullptr; }
     curRotate = makeRotateCursor(deg);
 }
@@ -309,8 +311,13 @@ void CursorManager::buildResizeCursors(float rotationRad, bool flipX, bool flipY
     float deg = std::fmod(rotationRad * 180.f / (float)M_PI, 360.f);
     if (deg < 0.f) deg += 360.f;
 
-    if (std::fabs(deg - lastResizeRotationDeg) < 0.5f && lastResizeRotationDeg > -999.f &&
-        flipX == lastResizeFlipX && flipY == lastResizeFlipY) return;
+    // Never use cache when flipped so cursor always reflects current flip; when not flipped, cache by rotation.
+    if (flipX || flipY) { /* always rebuild */ }
+    else if (lastResizeRotationDeg >= -999.f &&
+             std::fabs(deg - lastResizeRotationDeg) < 0.5f &&
+             flipX == lastResizeFlipX && flipY == lastResizeFlipY)
+        return;
+
     lastResizeRotationDeg = deg;
     lastResizeFlipX = flipX;
     lastResizeFlipY = flipY;
@@ -319,9 +326,15 @@ void CursorManager::buildResizeCursors(float rotationRad, bool flipX, bool flipY
         if (curResize[i]) { SDL_FreeCursor(curResize[i]); curResize[i] = nullptr; }
     }
 
+    // Cursor arrow = handle direction in shape local frame, mirrored by flip, then rotated to world.
+    // So: localAngle = i*45° (N=0, NE=45, E=90, ...), mirror by flip, then worldAngle = localAngle' + rotation.
+    // This makes the arrow reflect the flipped content at any rotation.
     for (int i = 0; i < NUM_RESIZE_SLOTS; i++) {
-        float arrowAngle = (float)i * 45.f + deg;
-        if (flipX || flipY) arrowAngle = applyFlipToAngle(arrowAngle, flipX, flipY);
+        float localAngle = (float)i * 45.f;
+        if (flipX || flipY) localAngle = applyFlipToAngle(localAngle, flipX, flipY);
+        float arrowAngle = localAngle + deg;
+        arrowAngle = std::fmod(arrowAngle, 360.f);
+        if (arrowAngle < 0.f) arrowAngle += 360.f;
         curResize[i] = makeResizeArrowCursor(arrowAngle);
     }
 }
@@ -396,6 +409,16 @@ void CursorManager::buildBucketCursor(SDL_Color color) {
     lastBucketColor = color;
     if (curBucket) { SDL_FreeCursor(curBucket); curBucket = nullptr; }
     curBucket = makeBucketCursor(color);
+}
+
+void CursorManager::buildPickCursor(SDL_Color tipColor) {
+    if (tipColor.a == 0) tipColor = { 128, 128, 128, 255 };
+    bool same = (tipColor.r == lastPickTipColor.r && tipColor.g == lastPickTipColor.g &&
+                 tipColor.b == lastPickTipColor.b && tipColor.a == lastPickTipColor.a);
+    if (same && lastPickTipColor.a != 0) return;  // reuse cached (lastPickTipColor.a==0 is sentinel)
+    lastPickTipColor = tipColor;
+    if (curPick) { SDL_FreeCursor(curPick); curPick = nullptr; }
+    curPick = makePickCursor(tipColor);
 }
 
 // Draw crosshair arms into buf (size canvasDim×canvasDim), centered at (cx,cy).
@@ -540,13 +563,17 @@ void CursorManager::buildBrushCursors(ICoordinateMapper* mapper, int brushSize, 
 //  .........XXX..................
 //  ........XX....................
 //  .......X......................  ← hotspot (tip)
+//  The cap (top end) is drawn in tipColor so it shows the color under the cursor.
 
-static SDL_Cursor* makePickCursor() {
+static SDL_Cursor* makePickCursor(SDL_Color tipColor) {
     const int W = 22, H = 22;
     Bitmap b(W, H);
 
+    // Default when transparent or not over canvas
+    if (tipColor.a == 0) tipColor = { 128, 128, 128, 255 };
+    Uint32 capARGB = argb(tipColor.a, tipColor.r, tipColor.g, tipColor.b);
+
     // Body: 2-px wide diagonal tube (SW direction)
-    // We trace a line from (16,2) to (7,11), drawing 2 pixels wide
     for (int i = 0; i <= 9; i++) {
         int x = 16 - i, y = 2 + i;
         b.set(x,   y,   C_WHITE);
@@ -554,12 +581,14 @@ static SDL_Cursor* makePickCursor() {
         b.set(x,   y+1, C_WHITE);
     }
 
-    // Cap at top-right: 4×3 filled rectangle
-    for (int dy = 0; dy < 3; dy++)
-        for (int dx = 0; dx < 5; dx++)
-            b.set(13 + dx, dy, C_WHITE);
+    // Cap at top-right (the other end): show the sampled color.
+    // Taper 4-4-3-2 so the bottom flows into the body.
+    b.set(14, 0, capARGB); b.set(15, 0, capARGB); b.set(16, 0, capARGB); b.set(17, 0, capARGB);   // y=0: 4 px
+    b.set(14, 1, capARGB); b.set(15, 1, capARGB); b.set(16, 1, capARGB); b.set(17, 1, capARGB);   // y=1: 4 px
+    b.set(14, 2, capARGB); b.set(15, 2, capARGB); b.set(16, 2, capARGB);   // y=2: 3 px
+    b.set(15, 3, capARGB); b.set(16, 3, capARGB);   // y=3: 2 px, flows into body
 
-    // Nib: tapered tip pointing to bottom-left
+    // Nib: tapered tip (hotspot end) stays white
     b.set(7, 12, C_WHITE);
     b.set(6, 12, C_WHITE);
     b.set(6, 13, C_WHITE);
@@ -572,22 +601,26 @@ static SDL_Cursor* makePickCursor() {
     // Black outline around everything for visibility
     b.outline(C_BLACK);
 
-    // Re-draw inner white after outline (outline may have overwritten some)
+    // Re-draw body and nib (outline may have overwritten)
     for (int i = 0; i <= 9; i++) {
         int x = 16 - i, y = 2 + i;
         b.set(x,   y,   C_WHITE);
         b.set(x-1, y,   C_WHITE);
         b.set(x,   y+1, C_WHITE);
     }
-    for (int dy = 0; dy < 3; dy++)
-        for (int dx = 0; dx < 5; dx++)
-            b.set(13 + dx, dy, C_WHITE);
     b.set(7, 12, C_WHITE); b.set(6, 12, C_WHITE);
     b.set(6, 13, C_WHITE); b.set(5, 13, C_WHITE);
     b.set(5, 14, C_WHITE); b.set(4, 14, C_WHITE);
     b.set(4, 15, C_WHITE); b.set(3, 15, C_WHITE);
+    // Re-draw cap in sampled color (same tapered shape: 4-4-3-2)
+    b.set(14, 0, capARGB); b.set(15, 0, capARGB); b.set(16, 0, capARGB); b.set(17, 0, capARGB);
+    b.set(14, 1, capARGB); b.set(15, 1, capARGB); b.set(16, 1, capARGB); b.set(17, 1, capARGB);
+    b.set(14, 2, capARGB); b.set(15, 2, capARGB); b.set(16, 2, capARGB);
+    b.set(15, 3, capARGB); b.set(16, 3, capARGB);
 
-    // Hotspot at tip (bottom-left pixel of the nib)
+    // 1px white outline so the dropper reads on dark backgrounds
+    b.outline(C_WHITE);
+
     return b.toCursor(3, 15);
 }
 
@@ -696,13 +729,13 @@ void CursorManager::init() {
     curSizeNWSE = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENWSE);
     curSizeNESW = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENESW);
     curBucket    = makeBucketCursor({100, 149, 237, 255}); // default cornflower blue
-    curPick      = makePickCursor();
+    buildPickCursor({128, 128, 128, 255});  // default gray tip until over canvas
     buildCrossHairCursor(0, false, {0,0,0,255});  // build with dot radius 0
 
     // Pre-build resize cursors for the default (zero) rotation so they are
     // immediately available before any shape is drawn.
     buildResizeCursors(0.f, false, false);
-    buildRotateCursor(0.f, false, false);
+    buildRotateCursor(0.f);
 }
 
 CursorManager::~CursorManager() {
@@ -749,7 +782,8 @@ void CursorManager::update(ICoordinateMapper* mapper,
                             bool overCanvas,
                             bool nearHandle,
                             const CanvasResizer* canvasResizer,
-                            int canvasW, int canvasH) {
+                            int canvasW, int canvasH,
+                            const SDL_Color* pickHoverColor) {
     if (overToolbar) { setCursor(curArrow); return; }
 
     // Canvas resize drag — lock the directional cursor for the entire drag,
@@ -783,9 +817,20 @@ void CursorManager::update(ICoordinateMapper* mapper,
         if (rc) { dragResizeCursor = rc; setCursor(rc); return; }
     }
 
-    // Outside canvas and not actively drawing
+    // Outside canvas and not actively drawing — hand cursor still shows (everywhere except toolbar).
+    // Treat SELECT/RESIZE as "active" when mutating (resizing/rotating/moving) so we still show
+    // the correct resize cursor with flip even when the mouse leaves the canvas during drag.
     bool toolActive = currentTool && currentTool->isActive();
-    if (!overCanvas && !toolActive) {
+    if (!toolActive && currentTool && (currentType == ToolType::SELECT || currentType == ToolType::RESIZE)) {
+        if (currentType == ToolType::SELECT) {
+            SelectTool* st = static_cast<SelectTool*>(currentTool);
+            if (st->isMutating()) toolActive = true;
+        } else if (currentType == ToolType::RESIZE) {
+            ResizeTool* rt = static_cast<ResizeTool*>(currentTool);
+            if (rt->isMutating()) toolActive = true;
+        }
+    }
+    if (currentType != ToolType::HAND && !overCanvas && !toolActive) {
         setCursor(curArrow);
         return;
     }
@@ -822,29 +867,39 @@ void CursorManager::update(ICoordinateMapper* mapper,
             buildBucketCursor(brushColor);
             if(curBucket) setCursor(curBucket);
             break;
-        case ToolType::PICK:
-            if(curPick) setCursor(curPick);
+        case ToolType::PICK: {
+            SDL_Color tipColor = { 128, 128, 128, 255 };
+            if (pickHoverColor && pickHoverColor->a != 0) tipColor = *pickHoverColor;
+            buildPickCursor(tipColor);
+            if (curPick) setCursor(curPick);
             break;
+        }
         case ToolType::SELECT: {
             auto* st = static_cast<SelectTool*>(currentTool);
             if (!st || !st->isSelectionActive()) { setCursor(curCross); break; }
             float rot = st->getRotation();
-            // Apply flip to cursor only during drag so it matches the shape; when hovering, no flip so orientation stays correct post-resize.
-            bool flipX = st->isMutating() ? st->getFlipX() : false;
-            bool flipY = st->isMutating() ? st->getFlipY() : false;
+            // Resize cursor uses mirrored orientation (flip on) so arrow matches handle direction in all cases.
+            bool flipX = true;
+            bool flipY = true;
             int cX, cY; mapper->getCanvasCoords(mouseWinX, mouseWinY, &cX, &cY);
+            TransformTool::Handle h;
             if (st->isMutating()) {
-                if (!dragHandleLocked) {
-                    dragHandleLocked = true;
-                    lockedHandle = st->getHandleForCursor(cX, cY);
+                TransformTool::Handle activeResize = st->getResizingHandle();
+                if (activeResize != TransformTool::Handle::NONE) {
+                    h = activeResize;  // resizing: use tool's current handle (updates when shape flips)
+                } else {
+                    if (!dragHandleLocked) {
+                        dragHandleLocked = true;
+                        lockedHandle = st->getHandleForCursor(cX, cY);
+                    }
+                    h = lockedHandle;  // rotating or moving
                 }
             } else {
                 dragHandleLocked = false;
+                h = st->getHandleForCursor(cX, cY);
             }
-            TransformTool::Handle h = dragHandleLocked ? lockedHandle
-                                                       : st->getHandleForCursor(cX, cY);
             if (h == TransformTool::Handle::ROTATE) {
-                buildRotateCursor(rot, flipX, flipY);
+                buildRotateCursor(rot);
                 if (curRotate) setCursor(curRotate);
                 break;
             }
@@ -861,21 +916,27 @@ void CursorManager::update(ICoordinateMapper* mapper,
             auto* rt = static_cast<ResizeTool*>(currentTool);
             if (!rt) { setCursor(curArrow); break; }
             float rot = rt->getRotation();
-            bool flipX = rt->isMutating() ? rt->getFlipX() : false;
-            bool flipY = rt->isMutating() ? rt->getFlipY() : false;
+            bool flipX = true;
+            bool flipY = true;
             int cX, cY; mapper->getCanvasCoords(mouseWinX, mouseWinY, &cX, &cY);
+            TransformTool::Handle h;
             if (rt->isMutating()) {
-                if (!dragHandleLocked) {
-                    dragHandleLocked = true;
-                    lockedHandle = rt->getHandleForCursor(cX, cY);
+                TransformTool::Handle activeResize = rt->getResizingHandle();
+                if (activeResize != TransformTool::Handle::NONE) {
+                    h = activeResize;  // resizing: use tool's current handle (updates when shape flips)
+                } else {
+                    if (!dragHandleLocked) {
+                        dragHandleLocked = true;
+                        lockedHandle = rt->getHandleForCursor(cX, cY);
+                    }
+                    h = lockedHandle;  // rotating or moving
                 }
             } else {
                 dragHandleLocked = false;
+                h = rt->getHandleForCursor(cX, cY);
             }
-            TransformTool::Handle h = dragHandleLocked ? lockedHandle
-                                                       : rt->getHandleForCursor(cX, cY);
             if (h == TransformTool::Handle::ROTATE) {
-                buildRotateCursor(rot, flipX, flipY);
+                buildRotateCursor(rot);
                 if (curRotate) setCursor(curRotate);
                 break;
             }
@@ -888,6 +949,9 @@ void CursorManager::update(ICoordinateMapper* mapper,
             }
             break;
         }
+        case ToolType::HAND:
+            if (curHand) setCursor(curHand);
+            break;
         default:
             setCursor(curArrow);
             break;

@@ -35,7 +35,8 @@ public:
                 bool overCanvas,
                 bool nearHandle,
                 const CanvasResizer* canvasResizer = nullptr,
-                int canvasW = 0, int canvasH = 0);
+                int canvasW = 0, int canvasH = 0,
+                const SDL_Color* pickHoverColor = nullptr);
 
 private:
     // System cursors
@@ -52,7 +53,8 @@ private:
     SDL_Cursor* curBucket    = nullptr;  // fill tool — rebuilt on color change
     SDL_Cursor* curBrush     = nullptr;  // rebuilt on change
     SDL_Cursor* curEraser    = nullptr;  // rebuilt on change
-    SDL_Cursor* curPick      = nullptr;  // eyedropper — built once in init()
+    SDL_Cursor* curPick      = nullptr;  // eyedropper — tip color = pixel under cursor
+    SDL_Color   lastPickTipColor = { 255, 255, 255, 0 };  // invalid sentinel
     SDL_Cursor* curCrossHairBrush  = nullptr;  // tiny-brush crosshair (brush color dot)
     SDL_Cursor* curCrossHairEraser = nullptr;  // tiny-brush crosshair (eraser color dot)
     int         lastCrossHairWinSz  = -1;
@@ -75,8 +77,6 @@ private:
     // Rotate-handle cursor: a curved arc arrow, rebuilt on rotation change.
     SDL_Cursor* curRotate            = nullptr;
     float       lastRotateCursorDeg   = -9999.f;
-    bool        lastRotateFlipX       = false;
-    bool        lastRotateFlipY       = false;
 
     // Cursor lock during active drags — keeps the cursor stable even when the
     // mouse wanders off the shape (e.g. rotating with the mouse far from centre).
@@ -95,16 +95,16 @@ private:
     SDL_Color lastBucketColor = {255, 255, 255, 0}; // invalid sentinel
 
     void buildBucketCursor(SDL_Color color);
+    void buildPickCursor(SDL_Color tipColor);
     void buildBrushCursors(ICoordinateMapper* mapper, int brushSize,
                            bool squareBrush, SDL_Color color);
 
     // Build/rebuild the 8 directional resize cursors (rotation + optional flip for during-drag).
     void buildResizeCursors(float rotationRad, bool flipX, bool flipY);
 
-    // Build/rebuild the rotate cursor (rotation + optional flip for during-drag).
-    void buildRotateCursor(float rotationRad, bool flipX, bool flipY);
+    void buildRotateCursor(float rotationRad);
 
-    // Return the resize cursor for a given handle (pass flip only when isMutating() so post-resize stays correct).
+    // Return the resize cursor for a given handle (pass current flip so cursor matches shape on hover and during drag).
     SDL_Cursor* getResizeCursor(TransformTool::Handle h, float rotationRad, bool flipX, bool flipY);
 
     // Draw a double-headed arrow into a Bitmap, pointing at angleDeg clockwise
@@ -126,6 +126,5 @@ private:
     void outlineCircle(Uint32* buf, int w, int h, int cx, int cy, int r,   Uint32 color);
     void outlineSquare(Uint32* buf, int w, int h, int cx, int cy, int half,Uint32 color);
 
-    void buildBucketCursor();
     void setCursor(SDL_Cursor* c);      // always applies (no cache)
 };

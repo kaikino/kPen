@@ -71,6 +71,15 @@ class kPen : public ICoordinateMapper {
     float panX = 0.f;   // window-pixel offset from the fit-centered position
     float panY = 0.f;
 
+    void addPanDelta(float winDx, float winDy);  // apply pan delta and clamp (used by hand tool)
+
+    // Hand pan: handActive = Space held or H toggled; does not deactivate other tools (e.g. selection stays).
+    bool spaceHeld      = false;
+    bool handToggledOn  = false;   // H toggles this; handActive = spaceHeld || handToggledOn
+    bool handPanning    = false;
+    int  handPanStartWinX = 0, handPanStartWinY = 0;
+    float handPanStartPanX = 0.f, handPanStartPanY = 0.f;
+
     // Position-based scroll gesture state (mirrors toolbar scroll approach)
     bool  viewScrolling      = false;
     float viewScrollBaseX    = 0.f;   // panX at gesture start
@@ -79,6 +88,8 @@ class kPen : public ICoordinateMapper {
     float viewScrollRawY     = 0.f;
     float viewScrollBaseZoom = 1.f;   // zoom at gesture start (ctrl+scroll / pinch)
     float viewScrollRawZoom  = 0.f;   // accumulated raw zoom input since gesture start
+    float wheelAccumX = 0.f;          // mouse wheel velocity accumulation (applied + decayed each frame)
+    float wheelAccumY = 0.f;
 
     // Two-finger pan gesture tracking
     bool  multiGestureActive   = false;
@@ -118,6 +129,16 @@ class kPen : public ICoordinateMapper {
     void zoomAround(float newZoom, int pivotWinX, int pivotWinY);
     void onCanvasScroll(int winX, int winY, float dx, float dy, bool ctrl);
     bool tickView();             // call every frame; springs zoom/pan back if out of bounds
+
+    // Canvas scrollbars at window edge (right/bottom). Fills rects when scrollable; returns true if any.
+    bool getScrollbarRects(int winW, int winH, SDL_Rect* trackV, SDL_Rect* thumbV, SDL_Rect* trackH, SDL_Rect* thumbH, bool* hasV, bool* hasH);
+    bool scrollbarDragV = false;
+    bool scrollbarDragH = false;
+    int  scrollbarDragOffsetX = 0;  // mouse offset into thumb at drag start (for smooth drag)
+    int  scrollbarDragOffsetY = 0;
+    float scrollbarAlphaV = 0.f;     // vertical (right) bar fade
+    float scrollbarAlphaH = 0.f;     // horizontal (bottom) bar fade
+    bool scrollWheelWasVertical = true;  // last wheel scroll axis (for showing only relevant scrollbar)
 
     // ── Undo / redo ───────────────────────────────────────────────────────────
     template<typename F> void withCanvas(F f);

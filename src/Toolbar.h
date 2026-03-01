@@ -54,8 +54,8 @@ class Toolbar {
 
     Toolbar(SDL_Renderer* renderer, kPen* app);
 
-    // Draw the entire toolbar panel
-    void draw();
+    // Draw the entire toolbar panel. When handActive is true, no tool button appears selected.
+    void draw(bool handActive = false);
 
     // Event handling — return true if the event was consumed by the toolbar
     bool onMouseDown(int x, int y);

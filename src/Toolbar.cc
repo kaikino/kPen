@@ -222,12 +222,15 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
             SDL_RenderDrawPoint(renderer, nx - 2, ny + 2); // single-pixel tip
             break;
         }
+        case ToolType::RESIZE:
+        case ToolType::HAND:
+            break;  // no toolbar icon (resize is transient; hand is space/H only)
     }  // end switch
 }  // end drawIcon
 
 // ── Full draw ─────────────────────────────────────────────────────────────────
 
-void Toolbar::draw() {
+void Toolbar::draw(bool handActive) {
     int winW, winH;
     SDL_GetWindowSize(SDL_RenderGetWindow(renderer), &winW, &winH);
 
@@ -259,8 +262,8 @@ void Toolbar::draw() {
                 SDL_RenderDrawRect(renderer, &btn);
                 continue;
             }
-            bool active = (currentType == toolTypes[idx]) ||
-                          (currentType == ToolType::RESIZE && toolTypes[idx] == ToolType::SELECT);
+            bool active = !handActive && ((currentType == toolTypes[idx]) ||
+                          (currentType == ToolType::RESIZE && toolTypes[idx] == ToolType::SELECT));
             SDL_SetRenderDrawColor(renderer, active ? 70 : 45, active ? 130 : 45, active ? 220 : 52, 255);
             SDL_RenderFillRect(renderer, &btn);
             SDL_SetRenderDrawColor(renderer, 80, 80, 90, 255);
@@ -619,18 +622,18 @@ bool Toolbar::onMouseDown(int x, int y) {
         }
     }
 
-    // If a resize field is focused and the user clicks somewhere other than a resize
-    // field, commit the entered dimensions (if changed) before processing the click.
+    // If a resize field is focused and the user clicks outside the resize panel
+    // (W field, gap, H field), commit the entered dimensions before processing the click.
+    // Use one combined rect so clicking between the two fields does not defocus.
     if (resizeFocus != ResizeFocus::NONE) {
         int panelY = resizePanelY;    // screen space
         int py     = panelY + 12;
         int fieldX = TB_PAD + 10;
         int fieldW = TB_W - TB_PAD * 2 - 10;
-        SDL_Rect wField = { fieldX, py,           fieldW, 16 };
-        SDL_Rect hField = { fieldX, py + 16 + 4, fieldW, 16 };
-        SDL_Point pt = { x, y };     // raw screen-space y
-        bool clickingField = SDL_PointInRect(&pt, &wField) || SDL_PointInRect(&pt, &hField);
-        if (!clickingField)
+        static const int RP_FH = 16;
+        SDL_Rect resizeFieldsArea = { fieldX, py, fieldW, RP_FH + 4 + RP_FH };
+        SDL_Point pt = { x, y };
+        if (!SDL_PointInRect(&pt, &resizeFieldsArea))
             defocusResize(true);
     }
 

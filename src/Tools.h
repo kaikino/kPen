@@ -5,7 +5,7 @@
 #include <vector>
 #include "DrawingUtils.h"
 
-enum class ToolType { BRUSH, ERASER, LINE, RECT, CIRCLE, SELECT, FILL, PICK, RESIZE };
+enum class ToolType { BRUSH, ERASER, LINE, RECT, CIRCLE, SELECT, FILL, PICK, RESIZE, HAND };
 
 class ICoordinateMapper {
   public:
@@ -13,18 +13,6 @@ class ICoordinateMapper {
     virtual void getWindowCoords(int canX, int canY, int* winX, int* winY) = 0;
     virtual int  getWindowSize(int canSize) = 0;
     virtual void getCanvasSize(int* w, int* h) = 0;  // runtime canvas dimensions
-
-    // Clamp (cx,cy) to the canvas edge along the ray from (sx,sy).
-    void clampToCanvasEdge(int sx, int sy, int& cx, int& cy) {
-        int cw, ch; getCanvasSize(&cw, &ch);
-        if (cx >= 0 && cx < cw && cy >= 0 && cy < ch) return;
-        float dx = (float)(cx - sx), dy = (float)(cy - sy);
-        float t = 1.f;
-        if (dx != 0.f) { float v = (dx > 0 ? cw - 1 - sx : -sx) / dx; if (v > 0.f && v < t) t = v; }
-        if (dy != 0.f) { float v = (dy > 0 ? ch - 1 - sy : -sy) / dy; if (v > 0.f && v < t) t = v; }
-        cx = std::max(0, std::min(cw - 1, sx + (int)(dx * t)));
-        cy = std::max(0, std::min(ch - 1, sy + (int)(dy * t)));
-    }
 };
 
 class AbstractTool {
@@ -67,8 +55,8 @@ class TransformTool : public AbstractTool {
     int    anchorX     = 0, anchorY  = 0;
     int    dragOffX    = 0, dragOffY = 0;
     float  dragAspect  = 1.f;  // w/h of currentBounds captured at handleMouseDown
-    bool   flipX       = false;
-    bool   flipY       = false;
+    bool   flipX       = false; // content mirrored horizontally; used for cursor orientation
+    bool   flipY       = false; // content mirrored vertically; used for cursor orientation
     float  rotPivotCX  = 0.f;  // canvas-space center at rotation drag start
     float  rotPivotCY  = 0.f;
     float  rotStartAngle = 0.f; // angle from pivot to mouse at drag start
@@ -76,6 +64,10 @@ class TransformTool : public AbstractTool {
     float  rotLastAngle  = 0.f; // raw atan2 angle from previous frame (for wraparound)
     float  anchorWorldX  = 0.f; // world-space position of resize anchor (set at mousedown)
     float  anchorWorldY  = 0.f;
+    float  drawCenterX   = 0.f; // exact center for drawing (avoids 1px offset when w/h parity differs at 90°)
+    float  drawCenterY   = 0.f;
+
+    void   syncDrawCenterFromBounds();
 
     // Returns window-space position of the rotate handle circle center.
     void   getRotateHandleWin(int& wx, int& wy) const;
@@ -98,11 +90,15 @@ class TransformTool : public AbstractTool {
     bool hasMoved           () const { return moved; }
     bool isMutating         () const { return isMoving || isRotating || resizing != Handle::NONE; }
     SDL_Rect getFloatingBounds() const { return currentBounds; }
-    float    getRotation()      const { return rotation; }
+    float    getRotation()      const;  // returns snapped-to-45° when rotating with Shift held
+    float    getDrawCenterX()   const { return drawCenterX; }
+    float    getDrawCenterY()   const { return drawCenterY; }
     bool     getFlipX()         const { return flipX; }
     bool     getFlipY()         const { return flipY; }
     // Used by CursorManager to pick the right resize-arrow cursor.
     Handle getHandleForCursor(int cX, int cY) const { return getHandle(cX, cY); }
+    // When resizing, the active handle (updates on flip); NONE when rotating or moving.
+    Handle getResizingHandle() const { return resizing; }
 
   protected:
     // Called by handleMouseMove just before applying a resize to currentBounds.
@@ -152,7 +148,11 @@ class ResizeTool : public TransformTool {
 
     void renderShape(SDL_Renderer* r, const SDL_Rect& bounds,
                      int bs, SDL_Color col, int clipW = 0, int clipH = 0) const;
-    void renderShapeRotated(SDL_Renderer* r, SDL_Color col, int clipW, int clipH) const;
+    // Single render entry: draw shape at (x,y) with size (w,h) and rotation.
+    // Position (x,y) must be the same formula as the bounding box (drawCenter - halfSize)
+    // so shape and box match for any parity. Uses float to avoid rounding offset.
+    void renderShapeAt(SDL_Renderer* r, float x, float y, int w, int h, float rotationRad,
+                       SDL_Color col, int clipW, int clipH) const;
   public:
     int*      liveBrushSize;  // points to toolbar.brushSize — always current
     bool      shapeFilled;
