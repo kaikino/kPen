@@ -35,10 +35,11 @@ class kPen : public ICoordinateMapper {
 
     int canvasW = 1200;
     int canvasH = 800;
+    int winW_   = 0;
+    int winH_   = 0;
 
     std::unique_ptr<AbstractTool> currentTool;
-    ToolType currentType  = ToolType::BRUSH;
-    ToolType originalType = ToolType::BRUSH;
+    ToolType originalType = ToolType::BRUSH;  // tool to restore when leaving SELECT/RESIZE
 
     Toolbar       toolbar;
     CanvasResizer canvasResizer;
@@ -51,10 +52,6 @@ class kPen : public ICoordinateMapper {
 
     UndoManager undoManager;
     ViewController view_;
-
-    std::vector<CanvasState> undoStack;
-    std::vector<CanvasState> redoStack;
-    int nextStateSerial = 1;
 
     void commitActiveTool();
     void resetViewAndGestureState();
@@ -80,6 +77,12 @@ class kPen : public ICoordinateMapper {
     bool         tapConsumed   = false;
     bool         threeFingerPanMode = false;
 
+    int   lastMotionCX    = -1;
+    int   lastMotionCY    = -1;
+    int   lastPickCX      = -1;
+    int   lastPickCY      = -1;
+    SDL_Color lastPickHoverColor = { 0, 0, 0, 0 };
+
     bool  pinchActive     = false;
     float pinchBaseZoom   = 1.f;
     float pinchRawDist    = 0.f;
@@ -94,7 +97,6 @@ class kPen : public ICoordinateMapper {
     // --- Undo / redo ---
     template<typename F> void withCanvas(F f);
     void saveState();
-    void saveState(std::vector<CanvasState>& stack);
     void applyState(CanvasState& s);
     void stampForRedo(AbstractTool* tool);
     void undo();
@@ -112,7 +114,7 @@ class kPen : public ICoordinateMapper {
     std::string currentFilePath;
     int         savedStateId = 0;
     bool hasUnsavedChanges() const {
-        return undoStack.empty() || undoStack.back().serial != savedStateId;
+        return undoManager.getUndoSize() == 0 || undoManager.currentSerial() != savedStateId;
     }
     void updateWindowTitle();
     bool promptSaveIfNeeded();

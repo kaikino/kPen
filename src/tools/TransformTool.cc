@@ -363,6 +363,12 @@ void TransformTool::handleMouseUp() {
     isRotating = false;
 }
 
+void TransformTool::nudge(int dx, int dy) {
+    currentBounds.x += dx;
+    currentBounds.y += dy;
+    syncDrawCenterFromBounds();
+}
+
 void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
     float ccx = drawCenterX, ccy = drawCenterY;
     float rot = getRotation();

@@ -4,7 +4,7 @@
 #include <cmath>
 #include <algorithm>
 
-constexpr int toolGrid[3][3] = {{0,1,2},{3,4,-1},{5,6,7}};
+constexpr int toolGrid[3][3] = {{0,1,2},{3,-1,4},{5,6,7}};
 constexpr ToolType toolTypes[] = {
     ToolType::BRUSH, ToolType::LINE, ToolType::ERASER,
     ToolType::RECT, ToolType::CIRCLE, ToolType::SELECT,
@@ -194,10 +194,7 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
         }
 }
 
-void Toolbar::draw(bool handActive) {
-    int winW, winH;
-    SDL_GetWindowSize(SDL_RenderGetWindow(renderer), &winW, &winH);
-
+void Toolbar::draw(bool handActive, int winW, int winH) {
     SDL_Rect panel = {0, 0, TB_W, winH};
     SDL_SetRenderDrawColor(renderer, 30, 30, 35, 255);
     SDL_RenderFillRect(renderer, &panel);
@@ -205,8 +202,7 @@ void Toolbar::draw(bool handActive) {
     SDL_RenderDrawLine(renderer, TB_W-1, 0, TB_W-1, winH);
 
     const int S = scrollY;
-
-    int cellW = (TB_W - TB_PAD) / 3;
+    const int cellW = toolCellW();
     int ty = toolStartY() - S;
     for (int row=0; row<3; row++) {
         for (int col=0; col<3; col++) {
@@ -231,11 +227,6 @@ void Toolbar::draw(bool handActive) {
         }
     }
     int brushRowY = ty + 3*(ICON_SIZE+ICON_GAP) + 2;
-    static const int BS_FIELD_W = 26;
-    static const int BS_GAP     = 4;
-    static const int BS_ROW1_H  = 20;
-    static const int BS_ROW2_H  = 14;
-    static const int BS_ROW_GAP = 4;
 
     SDL_Rect bsField = { TB_PAD, brushRowY, BS_FIELD_W, BS_ROW1_H };
     brushSizeFieldRect = bsField;
@@ -245,18 +236,19 @@ void Toolbar::draw(bool handActive) {
     SDL_SetRenderDrawColor(renderer, bsFocused ? 70 : 55, bsFocused ? 130 : 55, bsFocused ? 220 : 62, 255);
     SDL_RenderDrawRect(renderer, &bsField);
     SDL_SetRenderDrawColor(renderer, 220, 220, 230, 255);
-    int textW = brushSizeLen * 8 - 2;
+    int bsLen = brushSizeBufLen();
+    int textW = bsLen * 8 - 2;
     int textX = bsField.x + (bsField.w - textW) / 2;
     int textY = bsField.y + (BS_ROW1_H - 10) / 2;
-    drawDigitString(textX, textY, brushSizeBuf, brushSizeLen);
+    drawDigitString(textX, textY, brushSizeBuf, bsLen);
     if (bsFocused) {
-        int curX = textX + brushSizeLen * 8;
+        int curX = textX + bsLen * 8;
         SDL_SetRenderDrawColor(renderer, 200, 200, 220, 255);
         SDL_RenderDrawLine(renderer, curX, bsField.y + 2, curX, bsField.y + BS_ROW1_H - 3);
     }
 
     int previewAreaX = TB_PAD + BS_FIELD_W + BS_GAP;
-    int previewAreaW = TB_W - TB_PAD - previewAreaX;
+    int previewAreaW = contentWidth() - BS_FIELD_W - BS_GAP;
     int previewCX = previewAreaX + previewAreaW / 2;
     int previewCY = brushRowY + BS_ROW1_H / 2;
     int maxR = BS_ROW1_H / 2 - 1;
@@ -276,7 +268,7 @@ void Toolbar::draw(bool handActive) {
 
     // Row 2: full-width slider
     int sliderY = brushRowY + BS_ROW1_H + BS_ROW_GAP;
-    int sX = TB_PAD, sW = TB_W - TB_PAD*2, sH = BS_ROW2_H;
+    int sX = TB_PAD, sW = contentWidth(), sH = BS_ROW2_H;
     int trackY = sliderY + sH/2;
     SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
     SDL_RenderDrawLine(renderer, sX, trackY,   sX+sW, trackY);
@@ -290,7 +282,7 @@ void Toolbar::draw(bool handActive) {
 
     int wTop = brushRowY + BS_ROW1_H + BS_ROW_GAP + BS_ROW2_H + 8;
     int availH = winH - wTop - TB_PAD;
-    int wheelDiam = std::min(TB_W - TB_PAD*2, availH - 20);
+    int wheelDiam = std::min(contentWidth(), availH - 20);
     if (wheelDiam < 10) return;
     int wcx = TB_W/2, wcy = wTop + wheelDiam/2, wr = wheelDiam/2;
     colorWheelCX = wcx; colorWheelCY = wcy; colorWheelR = wr;
@@ -320,7 +312,7 @@ void Toolbar::draw(bool handActive) {
     SDL_SetRenderDrawColor(renderer, 0,   0,   0,   255); SDL_RenderDrawRect(renderer, &cur2);
 
     int bTop = wTop + wheelDiam + 6, bH = 12;
-    int bX = TB_PAD, bW = TB_W - TB_PAD*2;
+    int bX = TB_PAD, bW = contentWidth();
     brightnessRect = {bX, bTop, bW, bH};
     for (int px=bX; px<bX+bW; px++) {
         float t = (float)(px-bX) / bW;
@@ -338,7 +330,7 @@ void Toolbar::draw(bool handActive) {
 
     int csy = bTop + bH + 7;
     SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
-    SDL_RenderDrawLine(renderer, TB_PAD, csy, TB_W-TB_PAD, csy);
+    SDL_RenderDrawLine(renderer, TB_PAD, csy, TB_PAD + contentWidth(), csy);
     csy += 4;
     customGridY = csy;
     int sz = swatchCellSize(), stride = swatchCellStride();
@@ -359,7 +351,7 @@ void Toolbar::draw(bool handActive) {
 
     int psy = csy + 3*stride + 7;
     SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
-    SDL_RenderDrawLine(renderer, TB_PAD, psy, TB_W-TB_PAD, psy);
+    SDL_RenderDrawLine(renderer, TB_PAD, psy, TB_PAD + contentWidth(), psy);
     psy += 4;
     presetGridY = psy;
     for (int i=0; i<27; i++) {
@@ -395,7 +387,7 @@ void Toolbar::draw(bool handActive) {
     maxScrollCache = std::max(0, totalContentH - winH);
 
     if (maxScrollCache > 0) {
-        int sbW = 3, sbX = TB_W - sbW - 1;
+        int sbW = 3, sbX = TB_W - sbW - 1;  // scrollbar within panel
         float ratio = (float)winH / totalContentH;
         int sbH   = std::max(20, (int)(winH * ratio));
         int sbTop = (int)((float)scrollY / totalContentH * winH);
@@ -411,12 +403,11 @@ void Toolbar::draw(bool handActive) {
 // --- Mouse update helpers ---
 
 void Toolbar::updateSliderFromMouse(int x) {
-    int sX = TB_PAD, sW = TB_W - TB_PAD*2;
+    int sX = TB_PAD, sW = contentWidth();
     int clamped = std::max(sX, std::min(sX+sW, x));
     brushSize = 1 + (int)((float)(clamped-sX) / sW * 24.f + 0.5f);
     brushSize = std::max(1, std::min(25, brushSize));
-    int n = snprintf(brushSizeBuf, sizeof(brushSizeBuf), "%d", brushSize);
-    brushSizeLen = (n > 0 && n < (int)sizeof(brushSizeBuf)) ? n : 1;
+    snprintf(brushSizeBuf, sizeof(brushSizeBuf), "%d", brushSize);
 }
 
 void Toolbar::updateWheelFromMouse(int x, int y) {
@@ -446,23 +437,17 @@ void Toolbar::defocusResize(bool commit) {
     resizeFocus = ResizeFocus::NONE;
     SDL_StopTextInput();
     if (commit) {
-        int w = 0; for (int i = 0; i < resizeWLen; i++) w = w * 10 + (resizeWBuf[i] - '0');
-        int h = 0; for (int i = 0; i < resizeHLen; i++) h = h * 10 + (resizeHBuf[i] - '0');
+        int w = 0; for (int i = 0; i < resizeWBufLen(); i++) w = w * 10 + (resizeWBuf[i] - '0');
+        int h = 0; for (int i = 0; i < resizeHBufLen(); i++) h = h * 10 + (resizeHBuf[i] - '0');
         if (w > 0 && h > 0 && (w != resizeLockW || h != resizeLockH))
             commitResize();
         else {
-            // Values are unchanged or invalid — revert display to actual size
-            int n = snprintf(resizeWBuf, sizeof(resizeWBuf), "%d", resizeLockW);
-            resizeWLen = (n > 0 && n < (int)sizeof(resizeWBuf)) ? n : 0;
-            n = snprintf(resizeHBuf, sizeof(resizeHBuf), "%d", resizeLockH);
-            resizeHLen = (n > 0 && n < (int)sizeof(resizeHBuf)) ? n : 0;
+            snprintf(resizeWBuf, sizeof(resizeWBuf), "%d", resizeLockW);
+            snprintf(resizeHBuf, sizeof(resizeHBuf), "%d", resizeLockH);
         }
     } else {
-        // Explicit cancel — always revert
-        int n = snprintf(resizeWBuf, sizeof(resizeWBuf), "%d", resizeLockW);
-        resizeWLen = (n > 0 && n < (int)sizeof(resizeWBuf)) ? n : 0;
-        n = snprintf(resizeHBuf, sizeof(resizeHBuf), "%d", resizeLockH);
-        resizeHLen = (n > 0 && n < (int)sizeof(resizeHBuf)) ? n : 0;
+        snprintf(resizeWBuf, sizeof(resizeWBuf), "%d", resizeLockW);
+        snprintf(resizeHBuf, sizeof(resizeHBuf), "%d", resizeLockH);
     }
 }
 
@@ -471,10 +456,9 @@ void Toolbar::notifyClickOutside() {
     // Also dismiss brush size input
     if (brushSizeFocused) {
         int v = 0;
-        for (int i = 0; i < brushSizeLen; i++) v = v * 10 + (brushSizeBuf[i] - '0');
+        for (int i = 0; i < brushSizeBufLen(); i++) v = v * 10 + (brushSizeBuf[i] - '0');
         brushSize = std::max(1, std::min(99, v > 0 ? v : brushSize));
-        int n = snprintf(brushSizeBuf, sizeof(brushSizeBuf), "%d", brushSize);
-        brushSizeLen = (n > 0 && n < (int)sizeof(brushSizeBuf)) ? n : 1;
+        snprintf(brushSizeBuf, sizeof(brushSizeBuf), "%d", brushSize);
         brushSizeFocused = false;
         SDL_StopTextInput();
     }
@@ -484,8 +468,7 @@ bool Toolbar::isInteractive(int x, int y) const {
     if (!inToolbar(x, y)) return false;
     int sy = y + scrollY;
 
-    // Tool buttons
-    int cellW = (TB_W - TB_PAD) / 3;
+    int cellW = toolCellW();
     for (int row = 0; row < 3; row++) {
         for (int col = 0; col < 3; col++) {
             int bx = TB_PAD/2 + col*cellW;
@@ -522,12 +505,12 @@ bool Toolbar::isInteractive(int x, int y) const {
         int panelY = resizePanelY;
         int py     = panelY + 12;
         int fieldX = TB_PAD + 10;
-        int fieldW = TB_W - TB_PAD * 2 - 10;
+        int fieldW = contentWidth() - 10;
         SDL_Rect wField   = { fieldX, py,           fieldW, 16 };
         SDL_Rect hField   = { fieldX, py + 16 + 4,  fieldW, 16 };
         int btnY  = py + 16 + 4 + 16 + 6;
-        SDL_Rect lockBtn  = { TB_PAD, btnY, TB_W - TB_PAD*2, 14 };
-        SDL_Rect scaleBtn = { TB_PAD, btnY + 14 + 4, TB_W - TB_PAD*2, 14 };
+        SDL_Rect lockBtn  = { TB_PAD, btnY, contentWidth(), 14 };
+        SDL_Rect scaleBtn = { TB_PAD, btnY + 14 + 4, contentWidth(), 14 };
         SDL_Point rpt = {x, y};
         if (SDL_PointInRect(&rpt, &wField)   ||
             SDL_PointInRect(&rpt, &hField)   ||
@@ -550,10 +533,9 @@ bool Toolbar::onMouseDown(int x, int y) {
         SDL_Point bsPt = { x, y };
         if (!SDL_PointInRect(&bsPt, &bsExp)) {
             int v = 0;
-            for (int i = 0; i < brushSizeLen; i++) v = v * 10 + (brushSizeBuf[i] - '0');
+            for (int i = 0; i < brushSizeBufLen(); i++) v = v * 10 + (brushSizeBuf[i] - '0');
             brushSize = std::max(1, std::min(99, v > 0 ? v : brushSize));
-            int n = snprintf(brushSizeBuf, sizeof(brushSizeBuf), "%d", brushSize);
-            brushSizeLen = (n > 0 && n < (int)sizeof(brushSizeBuf)) ? n : 1;
+            snprintf(brushSizeBuf, sizeof(brushSizeBuf), "%d", brushSize);
             brushSizeFocused = false;
             SDL_StopTextInput();
         }
@@ -563,7 +545,7 @@ bool Toolbar::onMouseDown(int x, int y) {
         int panelY = resizePanelY;    // screen space
         int py     = panelY + 12;
         int fieldX = TB_PAD + 10;
-        int fieldW = TB_W - TB_PAD * 2 - 10;
+        int fieldW = contentWidth() - 10;
         static const int RP_FH = 16;
         SDL_Rect resizeFieldsArea = { fieldX, py, fieldW, RP_FH + 4 + RP_FH };
         SDL_Point pt = { x, y };
@@ -571,8 +553,7 @@ bool Toolbar::onMouseDown(int x, int y) {
             defocusResize(true);
     }
 
-    // Tool buttons
-    int cellW = (TB_W - TB_PAD) / 3;
+    int cellW = toolCellW();
     for (int row=0; row<3; row++) {
         for (int col=0; col<3; col++) {
             int idx = toolGrid[row][col];
@@ -618,7 +599,7 @@ bool Toolbar::onMouseDown(int x, int y) {
         if (SDL_PointInRect(&pt2, &bsExp)) {
             if (!brushSizeFocused) {
                 brushSizeFocused = true;
-                brushSizeLen = 0; brushSizeBuf[0] = 0;
+                brushSizeBuf[0] = 0;
                 SDL_StartTextInput();
             }
             return true;
@@ -814,11 +795,11 @@ static const int RP_LABEL_H  = 8;
 
 void Toolbar::drawResizePanel(int panelY) {
     SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
-    SDL_RenderDrawLine(renderer, TB_PAD, panelY + 4, TB_W - TB_PAD, panelY + 4);
+    SDL_RenderDrawLine(renderer, TB_PAD, panelY + 4, TB_PAD + contentWidth(), panelY + 4);
 
     int y = panelY + 12;
     int fieldX = TB_PAD;
-    int fieldW = TB_W - TB_PAD * 2;
+    int fieldW = contentWidth();
     int labelX = fieldX + 2;
     SDL_SetRenderDrawColor(renderer, 140, 140, 155, 255);
     drawGlyph(renderer, labelX, y + (RP_FIELD_H - 10) / 2, 11, 2);
@@ -829,9 +810,9 @@ void Toolbar::drawResizePanel(int panelY) {
     SDL_SetRenderDrawColor(renderer, wFocused ? 70 : 55, wFocused ? 130 : 55, wFocused ? 220 : 62, 255);
     SDL_RenderDrawRect(renderer, &wField);
     SDL_SetRenderDrawColor(renderer, 220, 220, 230, 255);
-    drawDigitString(wField.x + 3, wField.y + (RP_FIELD_H - 10) / 2, resizeWBuf, resizeWLen);
+    drawDigitString(wField.x + 3, wField.y + (RP_FIELD_H - 10) / 2, resizeWBuf, resizeWBufLen());
     if (wFocused) {
-        int cx2 = wField.x + 3 + resizeWLen * 8;
+        int cx2 = wField.x + 3 + resizeWBufLen() * 8;
         SDL_SetRenderDrawColor(renderer, 200, 200, 220, 255);
         SDL_RenderDrawLine(renderer, cx2, wField.y + 2, cx2, wField.y + RP_FIELD_H - 3);
     }
@@ -848,10 +829,10 @@ void Toolbar::drawResizePanel(int panelY) {
     SDL_RenderDrawRect(renderer, &hField);
 
     SDL_SetRenderDrawColor(renderer, 220, 220, 230, 255);
-    drawDigitString(hField.x + 3, hField.y + (RP_FIELD_H - 10) / 2, resizeHBuf, resizeHLen);
+    drawDigitString(hField.x + 3, hField.y + (RP_FIELD_H - 10) / 2, resizeHBuf, resizeHBufLen());
 
     if (hFocused) {
-        int cx2 = hField.x + 3 + resizeHLen * 8;
+        int cx2 = hField.x + 3 + resizeHBufLen() * 8;
         SDL_SetRenderDrawColor(renderer, 200, 200, 220, 255);
         SDL_RenderDrawLine(renderer, cx2, hField.y + 2, cx2, hField.y + RP_FIELD_H - 3);
     }
@@ -924,7 +905,7 @@ bool Toolbar::hitResizePanel(int x, int y, bool isDown) {
     int ry     = panelY + 12;   // top of W field
 
     int fieldX = TB_PAD;
-    int fieldW = TB_W - TB_PAD * 2;
+    int fieldW = contentWidth();
     int halfW2 = (fieldW - 2) / 2;
 
     // W field: { fieldX+10, ry, fieldW-10, RP_FIELD_H }
@@ -972,18 +953,15 @@ bool Toolbar::hitResizePanel(int x, int y, bool isDown) {
 // srcIsW = true means W was just edited, so we update H to match.
 void Toolbar::applyAspectLock(bool srcIsW) {
     if (!resizeLockAspect) return;
-    // Parse both current values
-    int w = 0; for (int i = 0; i < resizeWLen; i++) w = w * 10 + (resizeWBuf[i] - '0');
-    int h = 0; for (int i = 0; i < resizeHLen; i++) h = h * 10 + (resizeHBuf[i] - '0');
+    int w = 0; for (int i = 0; i < resizeWBufLen(); i++) w = w * 10 + (resizeWBuf[i] - '0');
+    int h = 0; for (int i = 0; i < resizeHBufLen(); i++) h = h * 10 + (resizeHBuf[i] - '0');
     if (resizeLockW <= 0 || resizeLockH <= 0) return;
     if (srcIsW && w > 0) {
         int newH = std::max(1, (int)std::round((float)w * resizeLockH / resizeLockW));
-        int n = snprintf(resizeHBuf, sizeof(resizeHBuf), "%d", newH);
-        resizeHLen = (n > 0 && n < (int)sizeof(resizeHBuf)) ? n : 0;
+        snprintf(resizeHBuf, sizeof(resizeHBuf), "%d", newH);
     } else if (!srcIsW && h > 0) {
         int newW = std::max(1, (int)std::round((float)h * resizeLockW / resizeLockH));
-        int n = snprintf(resizeWBuf, sizeof(resizeWBuf), "%d", newW);
-        resizeWLen = (n > 0 && n < (int)sizeof(resizeWBuf)) ? n : 0;
+        snprintf(resizeWBuf, sizeof(resizeWBuf), "%d", newW);
     }
 }
 
@@ -995,37 +973,27 @@ void Toolbar::clampResizeInput(bool srcIsW) {
     auto parseBuf = [](const char* buf, int len) {
         int v = 0; for (int i = 0; i < len; i++) v = v * 10 + (buf[i] - '0'); return v;
     };
-    auto writeBuf = [](char* buf, int& len, int v) {
-        int n = snprintf(buf, 7, "%d", v);
-        len = (n > 0 && n < 7) ? n : 0;
-    };
+    auto writeBuf = [](char* buf, int v) { snprintf(buf, 7, "%d", v); };
 
-    int w = parseBuf(resizeWBuf, resizeWLen);
-    int h = parseBuf(resizeHBuf, resizeHLen);
+    int w = parseBuf(resizeWBuf, resizeWBufLen());
+    int h = parseBuf(resizeHBuf, resizeHBufLen());
 
     if (srcIsW) {
-        // Clamp W itself first
-        if (w > CANVAS_MAX) { w = CANVAS_MAX; writeBuf(resizeWBuf, resizeWLen, w); }
-        // If locked, check the resulting H — only back-calculate W if H is the binding constraint
-        // (i.e. H would exceed max even after W has been clamped to CANVAS_MAX)
+        if (w > CANVAS_MAX) { w = CANVAS_MAX; writeBuf(resizeWBuf, w); }
         if (resizeLockAspect && resizeLockW > 0) {
             int linkedH = (int)std::round((float)w * resizeLockH / resizeLockW);
             if (linkedH > CANVAS_MAX) {
-                // H is the bottleneck — back-calculate the largest W that keeps H in bounds
                 int cappedW = std::max(1, (int)std::floor((float)CANVAS_MAX * resizeLockW / resizeLockH));
-                // Only apply if this is actually more restrictive than the direct cap
-                if (cappedW < w) { w = cappedW; writeBuf(resizeWBuf, resizeWLen, w); }
+                if (cappedW < w) { w = cappedW; writeBuf(resizeWBuf, w); }
             }
         }
     } else {
-        // Clamp H itself first
-        if (h > CANVAS_MAX) { h = CANVAS_MAX; writeBuf(resizeHBuf, resizeHLen, h); }
-        // If locked, check the resulting W — only back-calculate H if W is the binding constraint
+        if (h > CANVAS_MAX) { h = CANVAS_MAX; writeBuf(resizeHBuf, h); }
         if (resizeLockAspect && resizeLockH > 0) {
             int linkedW = (int)std::round((float)h * resizeLockW / resizeLockH);
             if (linkedW > CANVAS_MAX) {
                 int cappedH = std::max(1, (int)std::floor((float)CANVAS_MAX * resizeLockH / resizeLockW));
-                if (cappedH < h) { h = cappedH; writeBuf(resizeHBuf, resizeHLen, h); }
+                if (cappedH < h) { h = cappedH; writeBuf(resizeHBuf, h); }
             }
         }
     }
@@ -1035,20 +1003,21 @@ bool Toolbar::onTextInput(const char* text) {
     // Brush size field takes priority
     if (brushSizeFocused) {
         for (const char* c = text; *c; c++) {
-            if (*c >= '0' && *c <= '9' && brushSizeLen < 2) {
-                brushSizeBuf[brushSizeLen++] = *c;
-                brushSizeBuf[brushSizeLen]   = 0;
+            int len = brushSizeBufLen();
+            if (*c >= '0' && *c <= '9' && len < 2) {
+                brushSizeBuf[len] = *c;
+                brushSizeBuf[len + 1] = 0;
             }
         }
         return true;
     }
     if (resizeFocus == ResizeFocus::NONE) return false;
-    char*  buf = (resizeFocus == ResizeFocus::W) ? resizeWBuf : resizeHBuf;
-    int&   len = (resizeFocus == ResizeFocus::W) ? resizeWLen : resizeHLen;
+    char* buf = (resizeFocus == ResizeFocus::W) ? resizeWBuf : resizeHBuf;
     for (const char* c = text; *c; c++) {
+        int len = (int)std::strlen(buf);
         if (*c >= '0' && *c <= '9' && len < 6) {
-            buf[len++] = *c;
-            buf[len]   = 0;
+            buf[len] = *c;
+            buf[len + 1] = 0;
         }
     }
     clampResizeInput(resizeFocus == ResizeFocus::W);
@@ -1060,16 +1029,15 @@ bool Toolbar::onResizeKey(SDL_Keycode sym) {
     // Brush size field takes priority
     if (brushSizeFocused) {
         if (sym == SDLK_BACKSPACE) {
-            if (brushSizeLen > 0) { brushSizeBuf[--brushSizeLen] = 0; }
+            int len = brushSizeBufLen();
+            if (len > 0) { brushSizeBuf[len - 1] = 0; }
             return true;
         }
         if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER || sym == SDLK_ESCAPE || sym == SDLK_TAB) {
-            // Commit: parse and clamp to [1, 20]
             int v = 0;
-            for (int i = 0; i < brushSizeLen; i++) v = v * 10 + (brushSizeBuf[i] - '0');
+            for (int i = 0; i < brushSizeBufLen(); i++) v = v * 10 + (brushSizeBuf[i] - '0');
             brushSize = std::max(1, std::min(99, v > 0 ? v : brushSize));
-            int n = snprintf(brushSizeBuf, sizeof(brushSizeBuf), "%d", brushSize);
-            brushSizeLen = (n > 0 && n < (int)sizeof(brushSizeBuf)) ? n : 1;
+            snprintf(brushSizeBuf, sizeof(brushSizeBuf), "%d", brushSize);
             brushSizeFocused = false;
             SDL_StopTextInput();
             return true;
@@ -1077,11 +1045,11 @@ bool Toolbar::onResizeKey(SDL_Keycode sym) {
         return false;
     }
     if (resizeFocus == ResizeFocus::NONE) return false;
-    char*  buf = (resizeFocus == ResizeFocus::W) ? resizeWBuf : resizeHBuf;
-    int&   len = (resizeFocus == ResizeFocus::W) ? resizeWLen : resizeHLen;
+    char* buf = (resizeFocus == ResizeFocus::W) ? resizeWBuf : resizeHBuf;
 
     if (sym == SDLK_BACKSPACE) {
-        if (len > 0) { buf[--len] = 0; }
+        int len = (int)std::strlen(buf);
+        if (len > 0) { buf[len - 1] = 0; }
         clampResizeInput(resizeFocus == ResizeFocus::W);
         applyAspectLock(resizeFocus == ResizeFocus::W);
         return true;
@@ -1103,6 +1071,73 @@ bool Toolbar::onResizeKey(SDL_Keycode sym) {
     return false;
 }
 
+bool Toolbar::onArrowKey(int dx, int dy) {
+    const int CUSTOM_COLS = 3, CUSTOM_ROWS = 3;
+    const int PRESET_COLS = 3, PRESET_ROWS = 9;
+    if (selectedCustomSlot >= 0) {
+        int col = selectedCustomSlot % CUSTOM_COLS;
+        int row = selectedCustomSlot / CUSTOM_COLS;
+        if (dy > 0 && row == CUSTOM_ROWS - 1) {
+            // Down from bottom of custom → preset top row, same column
+            int presetSlot = 0 * PRESET_COLS + std::max(0, std::min(PRESET_COLS - 1, col + dx));
+            selectedCustomSlot = -1;
+            selectedPresetSlot = presetSlot;
+            brushColor = PRESETS[selectedPresetSlot];
+            rgbToHsv(brushColor, hue, sat, val);
+            if (onColorChanged) onColorChanged(brushColor);
+            return true;
+        }
+        col = std::max(0, std::min(CUSTOM_COLS - 1, col + dx));
+        row = std::max(0, std::min(CUSTOM_ROWS - 1, row + dy));
+        int next = row * CUSTOM_COLS + col;
+        if (next != selectedCustomSlot) {
+            selectedCustomSlot = next;
+            selectedPresetSlot = -1;
+            brushColor = customColors[selectedCustomSlot];
+            rgbToHsv(brushColor, hue, sat, val);
+            if (onColorChanged) onColorChanged(brushColor);
+            return true;
+        }
+        return false;
+    }
+    if (selectedPresetSlot >= 0) {
+        int col = selectedPresetSlot % PRESET_COLS;
+        int row = selectedPresetSlot / PRESET_COLS;
+        if (dy < 0 && row == 0) {
+            // Up from top of preset → custom bottom row, same column
+            col = std::max(0, std::min(CUSTOM_COLS - 1, col + dx));
+            int customSlot = (CUSTOM_ROWS - 1) * CUSTOM_COLS + col;
+            selectedPresetSlot = -1;
+            selectedCustomSlot = customSlot;
+            brushColor = customColors[selectedCustomSlot];
+            rgbToHsv(brushColor, hue, sat, val);
+            if (onColorChanged) onColorChanged(brushColor);
+            return true;
+        }
+        col = std::max(0, std::min(PRESET_COLS - 1, col + dx));
+        row = std::max(0, std::min(PRESET_ROWS - 1, row + dy));
+        int next = row * PRESET_COLS + col;
+        if (next != selectedPresetSlot) {
+            selectedPresetSlot = next;
+            selectedCustomSlot = -1;
+            brushColor = PRESETS[selectedPresetSlot];
+            rgbToHsv(brushColor, hue, sat, val);
+            if (onColorChanged) onColorChanged(brushColor);
+            return true;
+        }
+        return false;
+    }
+    if (dx != 0 || dy != 0) {
+        selectedCustomSlot = 0;
+        selectedPresetSlot = -1;
+        brushColor = customColors[0];
+        rgbToHsv(brushColor, hue, sat, val);
+        if (onColorChanged) onColorChanged(brushColor);
+        return true;
+    }
+    return false;
+}
+
 Toolbar::CanvasResizeRequest Toolbar::getResizeRequest() {
     CanvasResizeRequest req = pendingResize;
     pendingResize.pending = false;
@@ -1112,22 +1147,18 @@ Toolbar::CanvasResizeRequest Toolbar::getResizeRequest() {
 void Toolbar::syncCanvasSize(int w, int h) {
     resizeLockW = w;
     resizeLockH = h;
-    // Write w into resizeWBuf
-    int n = snprintf(resizeWBuf, sizeof(resizeWBuf), "%d", w);
-    resizeWLen = (n > 0 && n < (int)sizeof(resizeWBuf)) ? n : 0;
-    n = snprintf(resizeHBuf, sizeof(resizeHBuf), "%d", h);
-    resizeHLen = (n > 0 && n < (int)sizeof(resizeHBuf)) ? n : 0;
+    snprintf(resizeWBuf, sizeof(resizeWBuf), "%d", w);
+    snprintf(resizeHBuf, sizeof(resizeHBuf), "%d", h);
 }
 
 void Toolbar::syncBrushSize() {
-    int n = snprintf(brushSizeBuf, sizeof(brushSizeBuf), "%d", brushSize);
-    brushSizeLen = (n > 0 && n < (int)sizeof(brushSizeBuf)) ? n : 1;
+    snprintf(brushSizeBuf, sizeof(brushSizeBuf), "%d", brushSize);
 }
 
 void Toolbar::commitResize() {
     int w = 0, h = 0;
-    for (int i = 0; i < resizeWLen; i++) w = w * 10 + (resizeWBuf[i] - '0');
-    for (int i = 0; i < resizeHLen; i++) h = h * 10 + (resizeHBuf[i] - '0');
+    for (int i = 0; i < resizeWBufLen(); i++) w = w * 10 + (resizeWBuf[i] - '0');
+    for (int i = 0; i < resizeHBufLen(); i++) h = h * 10 + (resizeHBuf[i] - '0');
     if (w > 0 && h > 0) {
         pendingResize = { true, w, h, resizeScaleMode };
     }

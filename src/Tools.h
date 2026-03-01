@@ -39,6 +39,17 @@ class AbstractTool {
     virtual void deactivate(SDL_Renderer* r);
 };
 
+// --- StrokeTool: shared stroke logic for Brush and Eraser ---
+class StrokeTool : public AbstractTool {
+  protected:
+    virtual void stampAt(SDL_Renderer* r, int cx, int cy, int brushSize, int cw, int ch, SDL_Color color) = 0;
+    virtual void drawSegment(SDL_Renderer* r, int x0, int y0, int x1, int y1, int brushSize, int cw, int ch, SDL_Color color) = 0;
+  public:
+    using AbstractTool::AbstractTool;
+    void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+};
+
 // --- TransformTool: shared handle/move logic for Select and Resize ---
 
 class TransformTool : public AbstractTool {
@@ -96,6 +107,7 @@ class TransformTool : public AbstractTool {
     bool     getFlipY()         const { return flipY; }
     Handle getHandleForCursor(int cX, int cY) const { return getHandle(cX, cY); }
     Handle getResizingHandle() const { return resizing; }
+    void nudge(int dx, int dy);
 
   protected:
     virtual void snapBounds(int& /*newX*/, int& /*newY*/, int& /*newW*/, int& /*newH*/) {}
@@ -163,21 +175,21 @@ class ResizeTool : public TransformTool {
 
 // --- Other tools ---
 
-class BrushTool : public AbstractTool {
+class BrushTool : public StrokeTool {
   public:
     bool squareBrush = false;
-    BrushTool(ICoordinateMapper* m, bool square = false) : AbstractTool(m), squareBrush(square) {}
-    void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
-    void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    BrushTool(ICoordinateMapper* m, bool square = false) : StrokeTool(m), squareBrush(square) {}
+    void stampAt(SDL_Renderer* r, int cx, int cy, int brushSize, int cw, int ch, SDL_Color color) override;
+    void drawSegment(SDL_Renderer* r, int x0, int y0, int x1, int y1, int brushSize, int cw, int ch, SDL_Color color) override;
     void onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color) override;
 };
 
-class EraserTool : public AbstractTool {
+class EraserTool : public StrokeTool {
   public:
     bool squareBrush = false;
-    EraserTool(ICoordinateMapper* m, bool square = false) : AbstractTool(m), squareBrush(square) {}
-    void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
-    void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    EraserTool(ICoordinateMapper* m, bool square = false) : StrokeTool(m), squareBrush(square) {}
+    void stampAt(SDL_Renderer* r, int cx, int cy, int brushSize, int cw, int ch, SDL_Color color) override;
+    void drawSegment(SDL_Renderer* r, int x0, int y0, int x1, int y1, int brushSize, int cw, int ch, SDL_Color color) override;
     void onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color) override;
 };
 

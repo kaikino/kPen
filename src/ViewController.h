@@ -1,12 +1,12 @@
 #pragma once
 #include <SDL2/SDL.h>
+#include "Toolbar.h"
 
 class ViewController {
 public:
     static constexpr float MIN_ZOOM  = 0.1f;
     static constexpr float MAX_ZOOM  = 20.f;
     static constexpr float PAN_SLACK = 50.f;
-    static constexpr int TB_W = 84;
     static constexpr int GAP  = 50;
 
     ViewController() = default;

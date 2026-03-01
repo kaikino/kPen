@@ -3,7 +3,7 @@
 #include <algorithm>
 
 SDL_Rect ViewController::getFitViewport(int winW, int winH, int canvasW, int canvasH) {
-    int availW = winW - TB_W;
+    int availW = winW - Toolbar::TB_W;
     int fitW = availW - GAP * 2;
     int fitH = winH - GAP * 2;
     if (fitW < 1) fitW = 1;
@@ -13,10 +13,10 @@ SDL_Rect ViewController::getFitViewport(int winW, int winH, int canvasW, int can
     SDL_Rect v;
     if (windowAspect > canvasAspect) {
         v.h = fitH; v.w = (int)(fitH * canvasAspect);
-        v.x = TB_W + GAP + (fitW - v.w) / 2; v.y = GAP;
+        v.x = Toolbar::TB_W + GAP + (fitW - v.w) / 2; v.y = GAP;
     } else {
         v.w = fitW; v.h = (int)(fitW / canvasAspect);
-        v.x = TB_W + GAP; v.y = GAP + (fitH - v.h) / 2;
+        v.x = Toolbar::TB_W + GAP; v.y = GAP + (fitH - v.h) / 2;
     }
     return v;
 }

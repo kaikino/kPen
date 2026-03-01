@@ -2,6 +2,7 @@
 #define _USE_MATH_DEFINES
 #include <SDL2/SDL.h>
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 #include "Tools.h"
 
@@ -9,11 +10,16 @@ class kPen;
 
 class Toolbar {
   public:
-    static constexpr int TB_W      = 84;
-    static constexpr int TB_PAD    = 6;
-    static constexpr int ICON_SIZE = 24;
-    static constexpr int ICON_GAP  = 3;
+    static constexpr int TB_W       = 84;
+    static constexpr int TB_PAD     = 6;
+    static constexpr int ICON_SIZE  = 24;
+    static constexpr int ICON_GAP   = 3;
     static constexpr int NUM_CUSTOM = 9;
+    static constexpr int BS_FIELD_W = 26;
+    static constexpr int BS_GAP     = 4;
+    static constexpr int BS_ROW1_H  = 20;
+    static constexpr int BS_ROW2_H   = 14;
+    static constexpr int BS_ROW_GAP  = 4;
 
     static constexpr int TRANSPARENT_PRESET_IDX = 0;
     static constexpr SDL_Color PRESETS[27] = {
@@ -48,7 +54,7 @@ class Toolbar {
     std::function<void(SDL_Color)> onColorChanged;
 
     Toolbar(SDL_Renderer* renderer, kPen* app);
-    void draw(bool handActive = false);
+    void draw(bool handActive, int winW, int winH);
 
     bool onMouseDown(int x, int y);
     bool onMouseMotion(int x, int y);
@@ -72,6 +78,7 @@ class Toolbar {
     bool getEffectiveLockAspect() const { return resizeLockAspect || shiftLockAspect; }
     bool onTextInput(const char* text);
     bool onResizeKey(SDL_Keycode sym);
+    bool onArrowKey(int dx, int dy);
     CanvasResizeRequest getResizeRequest();
     void syncCanvasSize(int w, int h);
     void syncBrushSize();
@@ -95,8 +102,8 @@ class Toolbar {
 
     bool brushSizeFocused   = false;
     char brushSizeBuf[3]    = {'8', 0, 0};
-    int  brushSizeLen       = 1;
     mutable SDL_Rect brushSizeFieldRect = {0, 0, 0, 0};
+    int brushSizeBufLen() const { return (int)std::strlen(brushSizeBuf); }
 
     int colorWheelCX = 0, colorWheelCY = 0, colorWheelR = 0;
     SDL_Rect brightnessRect = {0, 0, 0, 0};
@@ -105,8 +112,8 @@ class Toolbar {
 
     char   resizeWBuf[7] = {'1','2','0','0',0,0,0};
     char   resizeHBuf[7] = {'8','0','0',0,0,0,0};
-    int    resizeWLen    = 4;
-    int    resizeHLen    = 3;
+    int resizeWBufLen() const { return (int)std::strlen(resizeWBuf); }
+    int resizeHBufLen() const { return (int)std::strlen(resizeHBuf); }
     enum class ResizeFocus { NONE, W, H } resizeFocus = ResizeFocus::NONE;
     bool   resizeScaleMode = false;
     bool   resizeLockAspect = false;
@@ -123,10 +130,12 @@ class Toolbar {
     void defocusResize(bool commit);
     void commitResize();
 
-    int toolStartY()     const { return TB_PAD; }
-    int sliderSectionY() const { return toolStartY() + 3*(ICON_SIZE+ICON_GAP) + 2 + 20 + 4; }
-    int sliderSectionH() const { return 14; }
-    int swatchCellSize()   const { return (TB_W - TB_PAD*2 - 4) / 3; }
+    int toolStartY()      const { return TB_PAD; }
+    static constexpr int toolCellW()    { return (TB_W - TB_PAD) / 3; }
+    static constexpr int contentWidth() { return TB_W - TB_PAD*2; }
+    int sliderSectionY()  const { return toolStartY() + 3*(ICON_SIZE+ICON_GAP) + 2 + BS_ROW1_H + BS_ROW_GAP; }
+    int sliderSectionH()  const { return BS_ROW2_H; }
+    int swatchCellSize()  const { return (contentWidth() - 4) / 3; }
     int swatchCellStride() const { return swatchCellSize() + 2; }
 
     int hitCustomSwatch(int x, int y) const;

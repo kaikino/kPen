@@ -7,6 +7,8 @@
 namespace DrawingUtils {
     void drawFillCircle(SDL_Renderer* renderer, int centerX, int centerY, int radius);
     void drawLine(SDL_Renderer* renderer, int x1, int y1, int x2, int y2, int size, int w, int h);
+    void drawSquareStamp(SDL_Renderer* r, int cx, int cy, int brushSize, int cw, int ch, SDL_Color color);
+    void drawSquareLine (SDL_Renderer* r, int x0, int y0, int x1, int y1, int brushSize, int cw, int ch, SDL_Color color);
     void drawRect    (SDL_Renderer* renderer, const SDL_Rect* rect, int size, int w, int h);
     void drawFilledRect(SDL_Renderer* renderer, const SDL_Rect* rect, int w, int h);
     void drawOval      (SDL_Renderer* renderer, int x0, int y0, int x1, int y1, int size, int w, int h);

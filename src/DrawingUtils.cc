@@ -86,6 +86,54 @@ namespace DrawingUtils {
         spans.flush(renderer);
     }
 
+    void drawSquareStamp(SDL_Renderer* r, int cx, int cy, int brushSize, int cw, int ch, SDL_Color color) {
+        int half = brushSize / 2;
+        int x0 = std::max(0, cx - half);
+        int y0 = std::max(0, cy - half);
+        int x1 = std::min(cw - 1, cx - half + brushSize - 1);
+        int y1 = std::min(ch - 1, cy - half + brushSize - 1);
+        if (x1 < x0 || y1 < y0) return;
+        if (color.a == 0) {
+            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+        } else {
+            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(r, color.r, color.g, color.b, 255);
+        }
+        SDL_Rect sq = { x0, y0, x1 - x0 + 1, y1 - y0 + 1 };
+        SDL_RenderFillRect(r, &sq);
+        if (color.a == 0) SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    }
+
+    void drawSquareLine(SDL_Renderer* r, int x0, int y0, int x1, int y1, int brushSize, int cw, int ch, SDL_Color color) {
+        if (color.a == 0) {
+            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+        } else {
+            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(r, color.r, color.g, color.b, 255);
+        }
+        int dx = std::abs(x1 - x0), dy = std::abs(y1 - y0);
+        int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+        int err = dx - dy;
+        int half = brushSize / 2;
+        while (true) {
+            int px0 = std::max(0, x0 - half);
+            int py0 = std::max(0, y0 - half);
+            int px1 = std::min(cw - 1, x0 - half + brushSize - 1);
+            int py1 = std::min(ch - 1, y0 - half + brushSize - 1);
+            if (px1 >= px0 && py1 >= py0) {
+                SDL_Rect sq = { px0, py0, px1 - px0 + 1, py1 - py0 + 1 };
+                SDL_RenderFillRect(r, &sq);
+            }
+            if (x0 == x1 && y0 == y1) break;
+            int e2 = 2 * err;
+            if (e2 > -dy) { err -= dy; x0 += sx; }
+            if (e2 < dx)  { err += dx; y0 += sy; }
+        }
+        if (color.a == 0) SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    }
+
     void drawRect(SDL_Renderer* renderer, const SDL_Rect* rect, int size, int w, int h) {
         int li = (size - 1) / 2;
         int ri = size / 2;

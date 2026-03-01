@@ -75,6 +75,10 @@ jobs:
             VERSION="dev-${GITHUB_SHA::7}"
           fi
 
+          PLIST="build/kPen.app/Contents/Info.plist"
+          plutil -replace CFBundleShortVersionString -string "$VERSION" "$PLIST"
+          plutil -replace CFBundleVersion -string "$VERSION" "$PLIST"
+
           mkdir dmg_stage
           cp -r build/kPen.app dmg_stage/
           ln -s /Applications dmg_stage/Applications
