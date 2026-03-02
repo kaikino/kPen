@@ -15,6 +15,7 @@ namespace DrawingUtils {
     void drawFilledOval(SDL_Renderer* renderer, int x0, int y0, int x1, int y1, int w, int h);
     SDL_Rect getOvalCenterBounds(int x0, int y0, int x1, int y1);
     void drawMarchingRect(SDL_Renderer* renderer, const SDL_Rect* rect);
+    void drawMarchingPolyline(SDL_Renderer* renderer, const SDL_Point* points, int count, bool closed, bool whiteOnly = false);
 
     std::vector<uint8_t> encodeJPEG(const uint32_t* argbPixels, int w, int h, int quality = 92);
     std::vector<uint8_t> encodePNG (const uint32_t* argbPixels, int w, int h);

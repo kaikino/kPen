@@ -287,7 +287,7 @@ namespace DrawingUtils {
     }
 
     void drawMarchingRect(SDL_Renderer* renderer, const SDL_Rect* rect) {
-        const int dashLen = 4;
+        const int dashLen = 2;
         int x2 = rect->x + rect->w, y2 = rect->y + rect->h;
         int perim = 2 * (rect->w + rect->h);
         for (int p = 0; p < perim; p++) {
@@ -299,6 +299,40 @@ namespace DrawingUtils {
             bool black = (p / dashLen) % 2 == 0;
             SDL_SetRenderDrawColor(renderer, black?0:255, black?0:255, black?0:255, 255);
             SDL_RenderDrawPoint(renderer, x, y);
+        }
+    }
+
+    void drawMarchingPolyline(SDL_Renderer* renderer, const SDL_Point* points, int count, bool closed, bool whiteOnly) {
+        const int dashLen = 2;
+        if (count < 2) return;
+        int totalOffset = 0;
+        for (int seg = 0; seg < count; seg++) {
+            int i0 = seg;
+            int i1 = seg + 1;
+            if (i1 >= count) {
+                if (!closed) break;
+                i1 = 0;
+            }
+            int x0 = points[i0].x, y0 = points[i0].y;
+            int x1 = points[i1].x, y1 = points[i1].y;
+            int dx = x1 - x0, dy = y1 - y0;
+            double len = std::sqrt((double)(dx * dx + dy * dy));
+            int steps = std::max(1, (int)(len + 0.5));
+            for (int s = 0; s < steps; s++) {
+                int idx = (totalOffset + s) / dashLen;
+                bool drawWhite = (idx % 2) == 1;
+                double t = (steps == 1) ? 0.5 : (double)s / (steps - 1);
+                int x = (int)(x0 + (x1 - x0) * t + 0.5);
+                int y = (int)(y0 + (y1 - y0) * t + 0.5);
+                if (whiteOnly) {
+                    if (drawWhite) SDL_RenderDrawPoint(renderer, x, y);
+                } else {
+                    bool black = idx % 2 == 0;
+                    SDL_SetRenderDrawColor(renderer, black ? 0 : 255, black ? 0 : 255, black ? 0 : 255, 255);
+                    SDL_RenderDrawPoint(renderer, x, y);
+                }
+            }
+            totalOffset += steps;
         }
     }
 

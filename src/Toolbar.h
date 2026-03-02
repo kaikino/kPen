@@ -42,6 +42,7 @@ class Toolbar {
     bool        fillCircle   = false;
     bool        squareBrush  = false;
     bool        squareEraser = false;
+    bool        lassoSelect  = false;
 
     SDL_Color   customColors[NUM_CUSTOM] = {
         {220,220,220,255},{180,180,180,255},{120,120,120,255},

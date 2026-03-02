@@ -27,6 +27,7 @@ public:
     float getScrollbarAlphaH() const { return scrollbarAlphaH_; }
     bool getScrollWheelWasVertical() const { return scrollWheelWasVertical_; }
     void setScrollWheelWasVertical(bool v) { scrollWheelWasVertical_ = v; }
+    void setScrollFromMouseWheel(bool v) { scrollFromMouseWheel_ = v; }
 
     static SDL_Rect getFitViewport(int winW, int winH, int canvasW, int canvasH);
 
@@ -81,6 +82,7 @@ private:
     float scrollbarAlphaV_ = 0.f;
     float scrollbarAlphaH_ = 0.f;
     bool scrollWheelWasVertical_ = true;
+    bool scrollFromMouseWheel_ = false;
 
     void getMaxPan(int winW, int winH, int canvasW, int canvasH,
                    float* maxPanX, float* maxPanY) const;

@@ -61,6 +61,7 @@ void ViewController::zoomAround(float newZoom, int pivotWinX, int pivotWinY,
 
 void ViewController::addPanDelta(float winDx, float winDy,
                                  int winW, int winH, int canvasW, int canvasH) {
+    scrollFromMouseWheel_ = false;
     float maxPanX, maxPanY;
     getMaxPan(winW, winH, canvasW, canvasH, &maxPanX, &maxPanY);
     panX_ = std::max(-maxPanX, std::min(maxPanX, panX_ + winDx));
@@ -70,6 +71,7 @@ void ViewController::addPanDelta(float winDx, float winDy,
 void ViewController::onCanvasScroll(int winX, int winY, float dy, bool ctrl,
                                     int winW, int winH, int canvasW, int canvasH) {
     if (!ctrl) return;
+    scrollFromMouseWheel_ = false;
     SDL_Rect fit = getFitViewport(winW, winH, canvasW, canvasH);
 
     if (!viewScrolling_) {
@@ -306,8 +308,10 @@ void ViewController::tickScrollbarFade(int winW, int winH, int mx, int my, int c
                                        bool handPanning, bool* needsRedraw) {
     bool hoverV, hoverH, hasV, hasH;
     getScrollbarHover(winW, winH, mx, my, canvasW, canvasH, &hoverV, &hoverH, &hasV, &hasH);
-    bool wantVisibleV = hasV && (scrollbarDragV_ || hoverV || (viewScrolling_ && scrollWheelWasVertical_) || handPanning);
-    bool wantVisibleH = hasH && (scrollbarDragH_ || hoverH || (viewScrolling_ && !scrollWheelWasVertical_) || handPanning);
+    bool wheelShowV = viewScrolling_ && (!scrollFromMouseWheel_ || scrollWheelWasVertical_);
+    bool wheelShowH = viewScrolling_ && (!scrollFromMouseWheel_ || !scrollWheelWasVertical_);
+    bool wantVisibleV = hasV && (scrollbarDragV_ || hoverV || wheelShowV || handPanning);
+    bool wantVisibleH = hasH && (scrollbarDragH_ || hoverH || wheelShowH || handPanning);
     const float SB_FADE_IN = 0.22f, SB_FADE_OUT = 0.028f;
     if (wantVisibleV)
         scrollbarAlphaV_ = std::min(1.f, scrollbarAlphaV_ + SB_FADE_IN);
@@ -326,7 +330,8 @@ void ViewController::reset() {
     zoomTarget_ = 1.f;
     panX_ = 0.f;
     panY_ = 0.f;
-    viewScrolling_  = false;
+    viewScrolling_ = false;
+    scrollFromMouseWheel_ = false;
     viewScrollRawX_  = 0.f;
     viewScrollRawY_  = 0.f;
     viewScrollRawZoom_ = 0.f;

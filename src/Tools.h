@@ -119,8 +119,12 @@ class SelectTool : public TransformTool {
     SDL_Texture* selectionTexture = nullptr;
     bool         active           = false;
     bool         dirty            = false;
+    bool         lassoMode_       = false;
+    std::vector<SDL_Point> lassoPoints_;
+    static bool pointInPolygon(int px, int py, const std::vector<SDL_Point>& poly);
+    void commitLassoSelection(SDL_Renderer* r, int canvasW, int canvasH);
   public:
-    using TransformTool::TransformTool;
+    SelectTool(ICoordinateMapper* m, bool lassoMode = false);
     ~SelectTool();
     void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;

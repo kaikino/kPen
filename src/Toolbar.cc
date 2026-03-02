@@ -132,14 +132,45 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
             break;
         }
         case ToolType::SELECT: {
-            int d = 3;
-            for (int i=0; i<s*2; i+=d*2) {
-                SDL_RenderDrawLine(renderer, cx-s+i, cy-s, cx-s+std::min(i+d,s*2), cy-s);
-                SDL_RenderDrawLine(renderer, cx-s+i, cy+s, cx-s+std::min(i+d,s*2), cy+s);
-            }
-            for (int i=0; i<s*2; i+=d*2) {
-                SDL_RenderDrawLine(renderer, cx-s, cy-s+i, cx-s, cy-s+std::min(i+d,s*2));
-                SDL_RenderDrawLine(renderer, cx+s, cy-s+i, cx+s, cy-s+std::min(i+d,s*2));
+            if (lassoSelect) {
+                // Lasso icon: same rect as rect select but with flattened (chamfered) top-left corner
+                const int d = 3;
+                const int ch = s;  // chamfer size for flattened top-left (full side = more flat)
+                SDL_Point lasso[] = {
+                    {cx - s + ch, cy - s},   // top edge start (after chamfer)
+                    {cx + s,     cy - s},   // top-right
+                    {cx + s,     cy + s},   // bottom-right
+                    {cx - s,     cy + s},   // bottom-left
+                    {cx - s,     cy - s + ch},   // left edge end (before chamfer)
+                    {cx - s + ch, cy - s},   // chamfer back to top
+                };
+                const int n = (int)(sizeof(lasso) / sizeof(lasso[0]));
+                for (int i = 0; i < n; i++) {
+                    int x0 = lasso[i].x, y0 = lasso[i].y;
+                    int x1 = lasso[(i + 1) % n].x, y1 = lasso[(i + 1) % n].y;
+                    double dx = (double)(x1 - x0), dy = (double)(y1 - y0);
+                    double len = std::sqrt(dx * dx + dy * dy);
+                    if (len < 0.5) continue;
+                    for (int k = 0; (k * 2 + 1) * d <= len + 0.5; k++) {
+                        double t0 = (k * 2 * d) / len;
+                        double t1 = std::min((double)((k * 2 + 1) * d) / len, 1.0);
+                        int px0 = (int)(x0 + dx * t0 + 0.5);
+                        int py0 = (int)(y0 + dy * t0 + 0.5);
+                        int px1 = (int)(x0 + dx * t1 + 0.5);
+                        int py1 = (int)(y0 + dy * t1 + 0.5);
+                        SDL_RenderDrawLine(renderer, px0, py0, px1, py1);
+                    }
+                }
+            } else {
+                int d = 3;
+                for (int i=0; i<s*2; i+=d*2) {
+                    SDL_RenderDrawLine(renderer, cx-s+i, cy-s, cx-s+std::min(i+d,s*2), cy-s);
+                    SDL_RenderDrawLine(renderer, cx-s+i, cy+s, cx-s+std::min(i+d,s*2), cy+s);
+                }
+                for (int i=0; i<s*2; i+=d*2) {
+                    SDL_RenderDrawLine(renderer, cx-s, cy-s+i, cx-s, cy-s+std::min(i+d,s*2));
+                    SDL_RenderDrawLine(renderer, cx+s, cy-s+i, cx+s, cy-s+std::min(i+d,s*2));
+                }
             }
             break;
         }
@@ -572,6 +603,8 @@ bool Toolbar::onMouseDown(int x, int y) {
                     squareBrush = !squareBrush;
                 else if (t == currentType && t == ToolType::ERASER)
                     squareEraser = !squareEraser;
+                else if (t == currentType && t == ToolType::SELECT)
+                    lassoSelect = !lassoSelect;
                 app->setTool(t);
                 currentType = t;
                 return true;

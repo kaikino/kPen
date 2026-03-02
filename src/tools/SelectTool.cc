@@ -1,9 +1,94 @@
 #include "Tools.h"
 #include "DrawingUtils.h"
 #include <cmath>
+#include <algorithm>
+
+SelectTool::SelectTool(ICoordinateMapper* m, bool lassoMode)
+    : TransformTool(m), lassoMode_(lassoMode) {}
 
 SelectTool::~SelectTool() {
     if (selectionTexture) SDL_DestroyTexture(selectionTexture);
+}
+
+// Robust integer ray-cast: count crossings of horizontal line at py with segment (xj,yj)-(xi,yi).
+static bool rayCrossesSegment(int px, int py, int xi, int yi, int xj, int yj) {
+    if (yi == yj) return false;
+    if (yi > yj) { std::swap(yi, yj); std::swap(xi, xj); }
+    if (py <= yi || py > yj) return false;
+    // intersection x of horizontal at py with segment
+    int dx = xj - xi, dy = yj - yi;
+    int64_t num = static_cast<int64_t>(px - xi) * dy - static_cast<int64_t>(py - yi) * dx;
+    int den = dy;
+    if (den < 0) { num = -num; den = -den; }
+    return num < 0; // ray to +infty: segment is to the left of px
+}
+
+bool SelectTool::pointInPolygon(int px, int py, const std::vector<SDL_Point>& poly) {
+    const int n = static_cast<int>(poly.size());
+    if (n < 3) return false;
+    int crossings = 0;
+    for (int i = 0, j = n - 1; i < n; j = i++) {
+        if (rayCrossesSegment(px, py, poly[i].x, poly[i].y, poly[j].x, poly[j].y))
+            crossings++;
+    }
+    return (crossings & 1) != 0;
+}
+
+void SelectTool::commitLassoSelection(SDL_Renderer* r, int canvasW, int canvasH) {
+    int minX = lassoPoints_[0].x, maxX = lassoPoints_[0].x;
+    int minY = lassoPoints_[0].y, maxY = lassoPoints_[0].y;
+    for (const auto& p : lassoPoints_) {
+        minX = std::min(minX, p.x);
+        maxX = std::max(maxX, p.x);
+        minY = std::min(minY, p.y);
+        maxY = std::max(maxY, p.y);
+    }
+    int rx = std::max(0, minX);
+    int ry = std::max(0, minY);
+    int rx2 = std::min(canvasW, maxX + 1);
+    int ry2 = std::min(canvasH, maxY + 1);
+    int rw = rx2 - rx, rh = ry2 - ry;
+    if (rw <= 0 || rh <= 0) return;
+
+    std::vector<uint32_t> canvasPixels(static_cast<size_t>(rw) * rh);
+    SDL_Rect readRect = { rx, ry, rw, rh };
+    SDL_RenderReadPixels(r, &readRect, SDL_PIXELFORMAT_ARGB8888, canvasPixels.data(), rw * 4);
+
+    std::vector<uint32_t> texPixels(static_cast<size_t>(rw) * rh, 0);
+    for (int py = 0; py < rh; py++) {
+        for (int px = 0; px < rw; px++) {
+            int cx = rx + px, cy = ry + py;
+            if (pointInPolygon(cx, cy, lassoPoints_)) {
+                texPixels[static_cast<size_t>(py) * rw + px] = canvasPixels[static_cast<size_t>(py) * rw + px];
+            }
+        }
+    }
+
+    if (selectionTexture) SDL_DestroyTexture(selectionTexture);
+    selectionTexture = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888,
+                                         SDL_TEXTUREACCESS_TARGET, rw, rh);
+    SDL_SetTextureBlendMode(selectionTexture, SDL_BLENDMODE_BLEND);
+    SDL_UpdateTexture(selectionTexture, nullptr, texPixels.data(), rw * 4);
+
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    for (int py = 0; py < rh; py++) {
+        for (int px = 0; px < rw; px++) {
+            int cx = rx + px, cy = ry + py;
+            if (pointInPolygon(cx, cy, lassoPoints_)) {
+                SDL_Rect one = { cx, cy, 1, 1 };
+                SDL_RenderFillRect(r, &one);
+            }
+        }
+    }
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+
+    currentBounds = { rx, ry, rw, rh };
+    rotation = 0.f;
+    syncDrawCenterFromBounds();
+    active = true;
+    isDrawing = false;
+    lassoPoints_.clear();
 }
 
 void SelectTool::renderWithTransform(SDL_Renderer* r, const SDL_Rect& dst) const {
@@ -20,16 +105,43 @@ void SelectTool::renderWithTransform(SDL_Renderer* r, const SDL_Rect& dst) const
 
 void SelectTool::onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) {
     if (active && handleMouseDown(cX, cY)) return;
-    AbstractTool::onMouseDown(cX, cY, r, brushSize, color); // start rubber-band draw
+    AbstractTool::onMouseDown(cX, cY, r, brushSize, color);
+    if (lassoMode_) {
+        lassoPoints_.clear();
+        lassoPoints_.push_back({ cX, cY });
+    }
 }
 
 void SelectTool::onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) {
-    if (!handleMouseMove(cX, cY) && isDrawing) { lastX = cX; lastY = cY; }
+    if (!handleMouseMove(cX, cY) && isDrawing) {
+        if (lassoMode_) {
+            if (lassoPoints_.empty() ||
+                std::abs(cX - lassoPoints_.back().x) > 2 || std::abs(cY - lassoPoints_.back().y) > 2)
+                lassoPoints_.push_back({ cX, cY });
+        } else {
+            lastX = cX;
+            lastY = cY;
+        }
+    }
 }
 
 bool SelectTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) {
     if (resizing != Handle::NONE || isMoving || isRotating) { handleMouseUp(); return false; }
-    if (!isDrawing || (cX == startX && cY == startY)) { isDrawing = false; return false; }
+    if (!isDrawing) { return false; }
+
+    if (lassoMode_) {
+        if (lassoPoints_.size() < 3) {
+            isDrawing = false;
+            lassoPoints_.clear();
+            return false;
+        }
+        int canvasW, canvasH;
+        mapper->getCanvasSize(&canvasW, &canvasH);
+        commitLassoSelection(r, canvasW, canvasH);
+        return true;
+    }
+
+    if (cX == startX && cY == startY) { isDrawing = false; return false; }
 
     currentBounds = { std::min(startX, cX), std::min(startY, cY),
                       std::max(1, std::abs(cX - startX)), std::max(1, std::abs(cY - startY)) };
@@ -73,22 +185,36 @@ void SelectTool::onOverlayRender(SDL_Renderer* r) {
 
 void SelectTool::onPreviewRender(SDL_Renderer* r, int /*brushSize*/, SDL_Color /*color*/) {
     if (isDrawing) {
-        int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
-        int curX, curY;
-        {
+        if (lassoMode_ && lassoPoints_.size() >= 2) {
+            std::vector<SDL_Point> winPts;
+            winPts.reserve(lassoPoints_.size() + 1);
+            for (const auto& p : lassoPoints_) {
+                int wx, wy;
+                mapper->getWindowCoords(p.x, p.y, &wx, &wy);
+                winPts.push_back({ wx, wy });
+            }
+            int mouseX, mouseY;
+            SDL_GetMouseState(&mouseX, &mouseY);
+            winPts.push_back({ mouseX, mouseY });
+            DrawingUtils::drawMarchingPolyline(r, winPts.data(), static_cast<int>(winPts.size()), true);
+        } else if (!lassoMode_) {
+            int mouseX, mouseY; SDL_GetMouseState(&mouseX, &mouseY);
+            int curX, curY;
+            {
+                int wx1, wy1, wx2, wy2;
+                mapper->getWindowCoords(0, 0, &wx1, &wy1);
+                int cw2, ch2; mapper->getCanvasSize(&cw2, &ch2);
+                mapper->getWindowCoords(cw2, ch2, &wx2, &wy2);
+                int vw = wx2 - wx1, vh = wy2 - wy1;
+                curX = vw > 0 ? (int)std::floor((mouseX - wx1) * ((float)cw2 / vw)) : 0;
+                curY = vh > 0 ? (int)std::floor((mouseY - wy1) * ((float)ch2 / vh)) : 0;
+            }
             int wx1, wy1, wx2, wy2;
-            mapper->getWindowCoords(0, 0, &wx1, &wy1);
-            int cw2, ch2; mapper->getCanvasSize(&cw2, &ch2);
-            mapper->getWindowCoords(cw2, ch2, &wx2, &wy2);
-            int vw = wx2 - wx1, vh = wy2 - wy1;
-            curX = vw > 0 ? (int)std::floor((mouseX - wx1) * ((float)cw2 / vw)) : 0;
-            curY = vh > 0 ? (int)std::floor((mouseY - wy1) * ((float)ch2 / vh)) : 0;
+            mapper->getWindowCoords(std::min(startX, curX), std::min(startY, curY), &wx1, &wy1);
+            mapper->getWindowCoords(std::max(startX, curX), std::max(startY, curY), &wx2, &wy2);
+            SDL_Rect rect = { wx1, wy1, wx2 - wx1, wy2 - wy1 };
+            DrawingUtils::drawMarchingRect(r, &rect);
         }
-        int wx1, wy1, wx2, wy2;
-        mapper->getWindowCoords(std::min(startX, curX), std::min(startY, curY), &wx1, &wy1);
-        mapper->getWindowCoords(std::max(startX, curX), std::max(startY, curY), &wx2, &wy2);
-        SDL_Rect rect = { wx1, wy1, wx2 - wx1, wy2 - wy1 };
-        DrawingUtils::drawMarchingRect(r, &rect);
     }
     if (active) drawHandles(r);
 }
@@ -119,6 +245,7 @@ void SelectTool::activateWithTexture(SDL_Texture* tex, SDL_Rect area) {
     isRotating = false;
     resizing   = Handle::NONE;
     isDrawing  = false;
+    lassoPoints_.clear();
 }
 
 std::vector<uint32_t> SelectTool::getFloatingPixels(SDL_Renderer* r) const {
@@ -144,12 +271,22 @@ std::vector<uint32_t> SelectTool::getFloatingPixels(SDL_Renderer* r) const {
 
 void SelectTool::fillWithColor(SDL_Renderer* r, SDL_Color color) {
     if (!selectionTexture || !active) return;
+    int w = currentBounds.w, h = currentBounds.h;
+    if (w <= 0 || h <= 0) return;
+    std::vector<uint32_t> pixels(static_cast<size_t>(w) * h);
     SDL_Texture* prev = SDL_GetRenderTarget(r);
     SDL_SetRenderTarget(r, selectionTexture);
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
-    SDL_SetRenderDrawColor(r, color.r, color.g, color.b, color.a);
-    SDL_RenderClear(r);
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), w * 4);
     SDL_SetRenderTarget(r, prev);
+    // Only fill pixels that are inside the selection (alpha > 0), preserving lasso mask
+    const uint32_t newARGB = (static_cast<uint32_t>(color.a) << 24) |
+                            (static_cast<uint32_t>(color.r) << 16) |
+                            (static_cast<uint32_t>(color.g) << 8) |
+                            static_cast<uint32_t>(color.b);
+    for (size_t i = 0; i < pixels.size(); i++) {
+        if ((pixels[i] >> 24) != 0)
+            pixels[i] = newARGB;
+    }
+    SDL_UpdateTexture(selectionTexture, nullptr, pixels.data(), w * 4);
     dirty = true;
 }
