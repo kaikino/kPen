@@ -127,6 +127,7 @@ class Toolbar {
     bool hitResizePanel(int x, int sy, bool isDown);
     void drawDigitString(int x, int y, const char* s, int len) const;
     void applyAspectLock(bool srcIsW);
+    void applyAspectFromFocusedField();
     void clampResizeInput(bool srcIsW);
     void defocusResize(bool commit);
     void commitResize();

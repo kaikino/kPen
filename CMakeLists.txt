@@ -45,6 +45,17 @@ if(APPLE)
             "$<TARGET_FILE:kPen>"
         COMMENT "Bundling SDL2 (${SDL2_DYLIB_NAME}) into kPen.app"
     )
+    # App icon
+    if(EXISTS "${CMAKE_SOURCE_DIR}/assets/AppIcon.icns")
+        add_custom_command(TARGET kPen POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_BUNDLE_DIR:kPen>/Contents/Resources"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_SOURCE_DIR}/assets/AppIcon.icns"
+                "$<TARGET_BUNDLE_DIR:kPen>/Contents/Resources/AppIcon.icns"
+            COMMENT "Copying AppIcon.icns into kPen.app"
+        )
+    endif()
 else()
     add_executable(kPen ${SRC_FILES})
     

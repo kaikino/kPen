@@ -291,10 +291,10 @@ void kPen::redo() {
 
 // ── Canvas resize ─────────────────────────────────────────────────────────────
 
-void kPen::resizeCanvas(int newW, int newH, bool scaleContent, int originX, int originY) {
+bool kPen::resizeCanvas(int newW, int newH, bool scaleContent, int originX, int originY) {
     newW = std::max(1, std::min(16384, newW));
     newH = std::max(1, std::min(16384, newH));
-    if (newW == canvasW && newH == canvasH) return;
+    if (newW == canvasW && newH == canvasH) return true;
 
     // Commit any active tool so its pixels are stamped onto the canvas before
     // we snapshot it. We do NOT call saveState — the top-of-stack refresh below
@@ -350,7 +350,7 @@ void kPen::resizeCanvas(int newW, int newH, bool scaleContent, int originX, int 
     if (!newCanvas || !newOverlay) {
         if (newCanvas) SDL_DestroyTexture(newCanvas);
         if (newOverlay) SDL_DestroyTexture(newOverlay);
-        return;
+        return false;
     }
     SDL_DestroyTexture(canvas);
     SDL_DestroyTexture(overlay);
@@ -370,6 +370,7 @@ void kPen::resizeCanvas(int newW, int newH, bool scaleContent, int originX, int 
     // Push post-resize state; one undo restores pre-resize (replaceTopUndo above).
     undoManager.pushUndo(canvasW, canvasH, newPixels);
     toolbar.syncCanvasSize(canvasW, canvasH);
+    return true;
 }
 
 // ── Clipboard / delete helpers ────────────────────────────────────────────────
@@ -614,7 +615,10 @@ void kPen::doOpen() {
     commitActiveTool();
 
     undoManager.clear();
-    resizeCanvas(iw, ih, /*scaleContent=*/false);
+    if (!resizeCanvas(iw, ih, /*scaleContent=*/false)) {
+        tinyfd_messageBox("Open failed", "Could not resize canvas.", "ok", "error", 1);
+        return;
+    }
     if (undoManager.getUndoSize() == 0) saveState();
 
     SDL_UpdateTexture(canvas, nullptr, pixels.data(), iw * 4);
@@ -1491,14 +1495,21 @@ void kPen::run() {
     SDL_Event e;
     Uint32 lastRenderTicks = 0;
     Uint32 lastCursorUpdateTicks = 0;
+    int idleCount = 0;
+    const int idleThreshold = 6;
+    const int idleDelayShort = 16;
+    const int idleDelayLong = 33;
 
     SDL_EventState(SDL_MULTIGESTURE, SDL_ENABLE);
 
     while (running) {
         SDL_GetWindowSize(window, &winW_, &winH_);
+        bool hadEvent = false;
         while (SDL_PollEvent(&e)) {
+            hadEvent = true;
             processEvent(e, running, needsRedraw, overlayDirty);
         }
+        if (hadEvent) idleCount = 0;
 
         // Poll toolbar for a committed canvas resize (Enter key in text field)
         {
@@ -1540,8 +1551,13 @@ void kPen::run() {
             bool ta = toolbar.tickScroll();
             bool va = tickView();
             if (ta || va) needsRedraw = true;
-            else { SDL_Delay(16); continue; }
+            else {
+                idleCount++;
+                SDL_Delay(idleCount > idleThreshold ? idleDelayLong : idleDelayShort);
+                continue;
+            }
         } else {
+            idleCount = 0;
             toolbar.tickScroll();
             tickView();
         }

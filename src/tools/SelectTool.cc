@@ -67,6 +67,11 @@ void SelectTool::commitLassoSelection(SDL_Renderer* r, int canvasW, int canvasH)
     if (selectionTexture) SDL_DestroyTexture(selectionTexture);
     selectionTexture = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888,
                                          SDL_TEXTUREACCESS_TARGET, rw, rh);
+    if (!selectionTexture) {
+        isDrawing = false;
+        lassoPoints_.clear();
+        return;
+    }
     SDL_SetTextureBlendMode(selectionTexture, SDL_BLENDMODE_BLEND);
     SDL_UpdateTexture(selectionTexture, nullptr, texPixels.data(), rw * 4);
 
@@ -157,6 +162,10 @@ bool SelectTool::onMouseUp(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_C
     if (selectionTexture) SDL_DestroyTexture(selectionTexture);
     selectionTexture = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888,
                                          SDL_TEXTUREACCESS_TARGET, rw, rh);
+    if (!selectionTexture) {
+        isDrawing = false;
+        return false;
+    }
     SDL_SetTextureBlendMode(selectionTexture, SDL_BLENDMODE_BLEND);
 
     std::vector<uint32_t> pixels(rw * rh);

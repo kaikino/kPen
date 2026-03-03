@@ -25,7 +25,8 @@ class kPen : public ICoordinateMapper {
     void getCanvasSize(int* w, int* h) override { *w = canvasW; *h = canvasH; }
 
     // Resize canvas; scaleContent=true stretches pixels, false crops/pads. originX/Y = top-left shift in canvas px (negative = grew up/left).
-    void resizeCanvas(int newW, int newH, bool scaleContent, int originX = 0, int originY = 0);
+    // Returns false if new texture creation failed (canvas/overlay unchanged).
+    bool resizeCanvas(int newW, int newH, bool scaleContent, int originX = 0, int originY = 0);
 
   private:
     SDL_Window*   window;

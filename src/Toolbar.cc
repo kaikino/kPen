@@ -575,12 +575,12 @@ bool Toolbar::onMouseDown(int x, int y) {
     if (resizeFocus != ResizeFocus::NONE) {
         int panelY = resizePanelY;    // screen space
         int py     = panelY + 12;
-        int fieldX = TB_PAD + 10;
-        int fieldW = contentWidth() - 10;
-        static const int RP_FH = 16;
-        SDL_Rect resizeFieldsArea = { fieldX, py, fieldW, RP_FH + 4 + RP_FH };
+        // Include W field, H field, and lock/scale buttons so clicking them does not apply dimensions
+        static const int RP_FH = 16, RP_BTN_H_RESIZE = 20;
+        int panelH = RP_FH + 4 + RP_FH + 6 + RP_BTN_H_RESIZE;
+        SDL_Rect resizePanelArea = { TB_PAD, py, contentWidth(), panelH };
         SDL_Point pt = { x, y };
-        if (!SDL_PointInRect(&pt, &resizeFieldsArea))
+        if (!SDL_PointInRect(&pt, &resizePanelArea))
             defocusResize(true);
     }
 
@@ -970,7 +970,11 @@ bool Toolbar::hitResizePanel(int x, int y, bool isDown) {
         return true;
     }
     if (SDL_PointInRect(&pt, &lockBtn)) {
-        if (isDown) resizeLockAspect = !resizeLockAspect;
+        if (isDown) {
+            if (resizeFocus == ResizeFocus::W || resizeFocus == ResizeFocus::H)
+                applyAspectFromFocusedField();
+            resizeLockAspect = !resizeLockAspect;
+        }
         return true;
     }
     if (SDL_PointInRect(&pt, &scaleBtn)) {
@@ -980,6 +984,40 @@ bool Toolbar::hitResizePanel(int x, int y, bool isDown) {
     // All named controls handled above. Return false so onMouseDown's defocusResize
     // (already called before hitResizePanel) took care of unfocusing the text fields.
     return false;
+}
+
+// Use the focused dimension field and set the other from aspect ratio (resizeLockW/H), with CANVAS_MAX.
+void Toolbar::applyAspectFromFocusedField() {
+    static const int CANVAS_MAX = 16384;
+    if (resizeLockW <= 0 || resizeLockH <= 0) return;
+    auto parseBuf = [](const char* buf, int len) {
+        int v = 0; for (int i = 0; i < len; i++) v = v * 10 + (buf[i] - '0'); return v;
+    };
+    auto writeBuf = [](char* buf, int v) { snprintf(buf, 7, "%d", v); };
+
+    if (resizeFocus == ResizeFocus::W) {
+        int w = parseBuf(resizeWBuf, resizeWBufLen());
+        if (w <= 0) return;
+        if (w > CANVAS_MAX) { w = CANVAS_MAX; writeBuf(resizeWBuf, w); }
+        int newH = std::max(1, (int)std::round((float)w * resizeLockH / resizeLockW));
+        if (newH > CANVAS_MAX) {
+            newH = CANVAS_MAX;
+            w = std::max(1, (int)std::round((float)CANVAS_MAX * resizeLockW / resizeLockH));
+            writeBuf(resizeWBuf, w);
+        }
+        writeBuf(resizeHBuf, newH);
+    } else if (resizeFocus == ResizeFocus::H) {
+        int h = parseBuf(resizeHBuf, resizeHBufLen());
+        if (h <= 0) return;
+        if (h > CANVAS_MAX) { h = CANVAS_MAX; writeBuf(resizeHBuf, h); }
+        int newW = std::max(1, (int)std::round((float)h * resizeLockW / resizeLockH));
+        if (newW > CANVAS_MAX) {
+            newW = CANVAS_MAX;
+            h = std::max(1, (int)std::round((float)CANVAS_MAX * resizeLockH / resizeLockW));
+            writeBuf(resizeHBuf, h);
+        }
+        writeBuf(resizeWBuf, newW);
+    }
 }
 
 // Apply aspect-ratio lock: after the "source" field changes, update the linked one.
