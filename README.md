@@ -2,7 +2,7 @@
 
 A lightweight raster drawing app with a fixed toolbar, unlimited undo, and selection tools.
 
----
+<p align="center"><img src="assets/READMEicon.png" alt="kPen icon" width="100%"></p>
 
 ## Installation
 
