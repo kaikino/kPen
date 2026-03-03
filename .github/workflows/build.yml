@@ -117,7 +117,7 @@ jobs:
       - name: Compute macOS DMG SHA256
         id: sha
         run: |
-          DMG=$(find artifacts/kPen-Mac.dmg -name '*.dmg' | head -1)
+          DMG=$(find artifacts/kPen-Mac.dmg -type f -name '*.dmg' | head -1)
           echo "SHA256=$(shasum -a 256 "$DMG" | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
