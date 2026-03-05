@@ -137,6 +137,8 @@ class SelectTool : public TransformTool {
     bool isDirty()           const    { return dirty || hasMoved() || rotation != 0.f; }
     bool isHit(int cX, int cY) const;
     void activateWithTexture(SDL_Texture* tex, SDL_Rect area);
+    /** Commit a rect selection from the current render target (canvas). Same behavior as rect-drag then release. */
+    void commitRectSelection(SDL_Renderer* r, int canvasW, int canvasH, SDL_Rect rect);
     void setBounds(SDL_Rect area) { currentBounds = area; }
     std::vector<uint32_t> getFloatingPixels(SDL_Renderer* r) const;
     void fillWithColor(SDL_Renderer* r, SDL_Color color);

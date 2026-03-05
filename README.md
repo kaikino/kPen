@@ -1,8 +1,8 @@
 # kPen
 
-A lightweight raster drawing app with a fixed toolbar, unlimited undo, and selection tools.
+a lightweight raster drawing app
 
-<p align="center"><img src="assets/readme_icon.png" alt="kPen icon" width="100%"></p>
+![kPen](assets/readme_icon.png)
 
 ## Installation
 
@@ -12,31 +12,37 @@ A lightweight raster drawing app with a fixed toolbar, unlimited undo, and selec
 brew install --cask --no-quarantine kaikino/kpen/kpen
 ```
 
-**Build from source:**
+**Windows** — Download the latest `kPen.exe` from [Releases](https://github.com/kaikino/kPen/releases) and run `kPen.exe`.
 
-Requires CMake 3.10+, C++17, and SDL2.
+**Linux** — Download the latest `kPen` from [Releases](https://github.com/kaikino/kPen/releases) and run the `kPen` binary (`chmod +x kPen && ./kPen`).
+
+**Build from source** — Requires CMake 3.10+, C++17, and SDL2.
+
+- **macOS:** `brew install sdl2`. Output: `build/kPen.app`.
+- **Linux (Debian/Ubuntu):** `sudo apt install cmake libsdl2-dev`. Output: `build/kPen`.
+- **Linux (Fedora):** `sudo dnf install cmake SDL2-devel`. Output: `build/kPen`.
+- **Linux (Arch):** `sudo pacman -S cmake sdl2`. Output: `build/kPen`.
+- **Windows:** Install [CMake](https://cmake.org/download/) and [SDL2](https://github.com/libsdl-org/SDL/releases) (or vcpkg: `vcpkg install sdl2` and pass `-DCMAKE_TOOLCHAIN_FILE=[vcpkg]/scripts/buildsystems/vcpkg.cmake`). Output: `build/Release/kPen.exe`; put `SDL2.dll` next to it if using a prebuilt SDL2.
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/kaikino/kPen.git
 cd kPen
 cmake -B build
 cmake --build build
 ```
-
-On macOS the app is built as `build/kPen.app`. On Windows/Linux the executable is in `build/`.
 
 ---
 
 ## Toolbar
 
 
-| Section            | Description                                                                                                                                                                                       |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Tool grid**      | 3×3 grid with 8 tools (Brush, Line, Eraser, Rect, Circle, Select, Fill, Pick). Click a tool to activate; click the same tool again to toggle its option (see Keybinds).                           |
-| **Brush size**     | Numeric field (1–99). Click to focus and type, or use `,` / `.` keys. Scroll wheel over the field to change size.                                                                                 |
-| **Color wheel**    | Hue/saturation picker. Drag to set hue and saturation.                                                                                                                                            |
-| **Color swatches** | 9 customizable colors and 27 preset colors. Arrow keys to navigate. Drag a swatch onto another to copy the source color into a custom swatch. Select a color while a selection is active to fill. |
-| **Canvas resize**  | Width and height fields, optional “Scale content” checkbox, and “Lock aspect” (or hold Shift while resizing). Enter commits the resize.                                                           |
+| Section            | Description                                                                                                                                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Tool grid**      | 3×3 grid with 8 tools (Brush, Line, Eraser, Rect, Circle, Select, Fill, Pick). Click a tool to activate; click the same tool again to toggle its option (see Keybinds).                                                                           |
+| **Brush size**     | Numeric field (1–99). Click to focus and type, or use `,` / `.` keys. Scroll wheel over the field to change size.                                                                                                                                 |
+| **Color wheel**    | Hue/saturation picker. Drag to set hue and saturation.                                                                                                                                                                                            |
+| **Color swatches** | 9 customizable colors and 27 preset colors. Arrow keys to navigate. Drag a swatch onto another to copy the source color into a custom swatch, or onto the canvas to set the background color. Select a color while a selection is active to fill. |
+| **Canvas resize**  | Width and height fields; button to lock/unlock aspect ratio (or hold Shift while resizing); button to toggle between Scale / Crop; `Enter` commits the resize.                                                                                    |
 
 
 ---
@@ -59,6 +65,8 @@ On macOS the app is built as `build/kPen.app`. On Windows/Linux the executable i
 |               | Reset zoom and pan               | `Cmd+0`                     |
 | **Selection** | Commit and deselect, or exit pan | `Escape`                    |
 |               | Move selection contents          | `←` `↑` `↓` `→`             |
+|               | Lock resize aspect ratio         | `Shift`                     |
+|               | Lock rotation angle              | `Shift`                     |
 |               | Select All                       | `Cmd+A`                     |
 |               | Delete selection contents        | `Delete` / `Backspace`      |
 | **File**      | New                              | `Cmd+N`                     |
@@ -72,5 +80,24 @@ On macOS the app is built as `build/kPen.app`. On Windows/Linux the executable i
 
 ## File and edit
 
-- **File:** New, Open, Save, Save As, Close (see Keybinds). Save supports PNG and JPEG; Open supports PNG, JPEG, BMP, GIF. Window title shows an unsaved indicator when the canvas has changed since last save.
+- **File:** New, Open, Save, Save As, Close (see Keybinds). Save and open supports PNG and JPEG.
 
+---
+
+## Demos
+
+**Tool options** — Click a tool to activate; click again to toggle its option (e.g. brush round/square, rect outline/filled, select rect/lasso).
+
+![kPen tool options](assets/kpen_tools.gif)
+
+**Color wheel and swatches** — Hue/saturation picker and custom/preset swatches; drag a preset swatch to a custom swatch to copy.
+
+![kPen color controls](assets/kpen_color.gif)
+
+**Drawing with different tools** — Brush, shapes, selection, fill, and more.
+
+![kPen drawing tools](assets/kpen_draw.gif)
+
+**Canvas resize** — Button to lock/unlock aspect ratio; button to toggle between Scale / Crop.
+
+![kPen canvas resize](assets/kpen_size.gif)

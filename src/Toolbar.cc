@@ -3,6 +3,7 @@
 #include "kPen.h"
 #include <cmath>
 #include <algorithm>
+#include <cstdio>
 
 constexpr int toolGrid[3][3] = {{0,1,2},{3,-1,4},{5,6,7}};
 constexpr ToolType toolTypes[] = {
@@ -662,15 +663,13 @@ bool Toolbar::onMouseDown(int x, int y) {
     {
         int i = hitCustomSwatch(x, y);
         if (i >= 0) {
-            if (selectedCustomSlot == i) {
-                selectedCustomSlot = -1;
-            } else {
+            if (selectedCustomSlot != i) {
                 selectedCustomSlot = i;
                 selectedPresetSlot = -1;
-                brushColor = customColors[i];
-                rgbToHsv(brushColor, hue, sat, val);
-                if (onColorChanged) onColorChanged(brushColor);
             }
+            brushColor = customColors[i];
+            rgbToHsv(brushColor, hue, sat, val);
+            if (onColorChanged) onColorChanged(brushColor);
             draggingSwatch    = true;
             draggingSwatchIdx = i;
             return true;
@@ -681,19 +680,16 @@ bool Toolbar::onMouseDown(int x, int y) {
     {
         int i = hitPresetSwatch(x, y);
         if (i >= 0 && i < 27) {
-            if (selectedPresetSlot == i) {
-                selectedPresetSlot = -1;
-            } else {
+            if (selectedPresetSlot != i) {
                 selectedPresetSlot = i;
                 selectedCustomSlot = -1;
-                brushColor = PRESETS[i];
-                rgbToHsv(brushColor, hue, sat, val);
-                if (onColorChanged) onColorChanged(brushColor);
             }
-            if (i != 0) {
-                draggingSwatch    = true;
-                draggingSwatchIdx = i + NUM_CUSTOM;
-            }
+            brushColor = PRESETS[i];
+            rgbToHsv(brushColor, hue, sat, val);
+            if (onColorChanged) onColorChanged(brushColor);
+            // Transparent (i==0) is draggable only for canvas fill, not for copying to a custom swatch
+            draggingSwatch    = true;
+            draggingSwatchIdx = i + NUM_CUSTOM;
             return true;
         }
     }
@@ -714,8 +710,12 @@ bool Toolbar::onMouseMotion(int x, int y) {
 
 void Toolbar::onMouseUp(int x, int y) {
     if (draggingSwatch && draggingSwatchIdx >= 0) {
+        SDL_Color droppedColor = (draggingSwatchIdx < NUM_CUSTOM)
+            ? customColors[draggingSwatchIdx]
+            : PRESETS[draggingSwatchIdx - NUM_CUSTOM];
         int i = hitCustomSwatch(x, y);
-        if (i >= 0 && i != draggingSwatchIdx) {
+        const bool isTransparentPreset = (draggingSwatchIdx == NUM_CUSTOM); // preset index 0 = transparent
+        if (i >= 0 && i != draggingSwatchIdx && !isTransparentPreset) {
             if (draggingSwatchIdx < NUM_CUSTOM)
                 customColors[i] = customColors[draggingSwatchIdx];
             else
@@ -724,6 +724,8 @@ void Toolbar::onMouseUp(int x, int y) {
             selectedPresetSlot = -1;
             brushColor = customColors[i];
             rgbToHsv(brushColor, hue, sat, val);
+        } else if (x >= TB_W && onColorDroppedOnCanvas) {
+            onColorDroppedOnCanvas(droppedColor);
         }
     }
     draggingSwatch     = false;
@@ -735,6 +737,15 @@ void Toolbar::onMouseUp(int x, int y) {
 
 bool Toolbar::isDragging() const {
     return draggingWheel || draggingBrightness || draggingSlider || draggingSwatch;
+}
+
+bool Toolbar::getDraggingSwatchColor(SDL_Color* out) const {
+    if (!draggingSwatch || draggingSwatchIdx < 0 || !out) return false;
+    if (draggingSwatchIdx < NUM_CUSTOM)
+        *out = customColors[draggingSwatchIdx];
+    else
+        *out = PRESETS[draggingSwatchIdx - NUM_CUSTOM];
+    return true;
 }
 
 bool Toolbar::onMouseWheel(int x, int y, float dy) {
@@ -785,7 +796,7 @@ bool Toolbar::tickScroll() {
     return false;
 }
 
-static const uint8_t DIGIT_FONT[13][5] = {
+static const uint8_t DIGIT_FONT[15][5] = {
     {0b111, 0b101, 0b101, 0b101, 0b111},
     {0b010, 0b110, 0b010, 0b010, 0b111},  // 1
     {0b111, 0b001, 0b111, 0b100, 0b111},  // 2
@@ -799,6 +810,8 @@ static const uint8_t DIGIT_FONT[13][5] = {
     {0b101, 0b101, 0b010, 0b101, 0b101},
     {0b101, 0b101, 0b101, 0b111, 0b101},
     {0b101, 0b101, 0b111, 0b101, 0b101},
+    {0b000, 0b000, 0b000, 0b010, 0b100},  // 13 comma
+    {0b000, 0b000, 0b111, 0b000, 0b000},  // 14 minus
 };
 
 static void drawGlyph(SDL_Renderer* r, int x, int y, int glyphIdx, int scale = 1) {
@@ -819,6 +832,51 @@ void Toolbar::drawDigitString(int x, int y, const char* s, int len) const {
         int gi = (s[i] >= '0' && s[i] <= '9') ? (s[i] - '0') : 10;
         drawGlyph(renderer, cx, y, gi, 2);
         cx += 8;  // 3*2 + 2 px kerning
+    }
+}
+
+void Toolbar::drawCoordDisplay(int winW, int winH, int mx, int my) const {
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%d, %d", mx, my);
+    if (len <= 0 || len >= (int)sizeof(buf)) return;
+    const int scale = 2;
+    const int charW = 3 * scale + 2;  // 8
+    const int charGap = 1;
+    const int margin = 8;
+    int totalW = 0;
+    for (int i = 0; i < len; i++) {
+        if (buf[i] == ' ') totalW += 4 + charGap;
+        else totalW += charW + charGap;
+    }
+    int x = winW - totalW - margin;
+    int y = winH - 5 * scale - margin;
+    if (x < Toolbar::TB_W) return;  // don't overlap toolbar
+    static const int outlineDx[] = {-1, -1, -1,  0, 0,  1, 1, 1};
+    static const int outlineDy[] = {-1,  0,  1, -1, 1, -1, 0, 1};
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    // Outline (8 directions)
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 220);
+    for (int i = 0; i < len; i++) {
+        int gi = 10;
+        if (buf[i] >= '0' && buf[i] <= '9') gi = buf[i] - '0';
+        else if (buf[i] == ',') gi = 13;
+        else if (buf[i] == '-') gi = 14;
+        else if (buf[i] == ' ') { x += 4 + charGap; continue; }
+        for (int k = 0; k < 8; k++)
+            drawGlyph(renderer, x + outlineDx[k], y + outlineDy[k], gi, scale);
+        x += charW + charGap;
+    }
+    // Text (same as toolbar digit color)
+    x = winW - totalW - margin;
+    SDL_SetRenderDrawColor(renderer, 220, 220, 230, 255);
+    for (int i = 0; i < len; i++) {
+        int gi = 10;
+        if (buf[i] >= '0' && buf[i] <= '9') gi = buf[i] - '0';
+        else if (buf[i] == ',') gi = 13;
+        else if (buf[i] == '-') gi = 14;
+        else if (buf[i] == ' ') { x += 4 + charGap; continue; }
+        drawGlyph(renderer, x, y, gi, scale);
+        x += charW + charGap;
     }
 }
 

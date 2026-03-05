@@ -23,6 +23,24 @@
   #include <windows.h>
 #endif
 
+namespace {
+
+    /** Integer square root: largest s such that s*s <= n. Nonnegative n only. */
+    int isqrt(int n) {
+        if (n <= 0) return 0;
+        int lo = 0, hi = n;
+        while (lo < hi) {
+            int mid = lo + (hi - lo + 1) / 2;
+            if (static_cast<long>(mid) * mid <= static_cast<long>(n))
+                lo = mid;
+            else
+                hi = mid - 1;
+        }
+        return lo;
+    }
+
+} // namespace
+
 namespace DrawingUtils {
 
     void drawFillCircle(SDL_Renderer* renderer, int centerX, int centerY, int radius) {
@@ -39,13 +57,33 @@ namespace DrawingUtils {
     struct SpanBuffer {
         int canvasW, canvasH;
         std::vector<std::vector<std::pair<int,int>>> spans;
-        SpanBuffer(int w, int h) : canvasW(w), canvasH(h), spans(h) {}
+        static constexpr int RESERVE_PER_ROW = 12;
+
+        SpanBuffer() : canvasW(0), canvasH(0) {}
+
+        SpanBuffer(int w, int h) : canvasW(w), canvasH(h), spans(h) {
+            for (auto& row : spans)
+                row.reserve(RESERVE_PER_ROW);
+        }
+
+        void prepare(int w, int h) {
+            canvasW = w;
+            canvasH = h;
+            spans.resize(h);
+            for (auto& row : spans) {
+                row.clear();
+                if (row.capacity() < static_cast<size_t>(RESERVE_PER_ROW))
+                    row.reserve(RESERVE_PER_ROW);
+            }
+        }
+
         void addCircle(int cx, int cy, int radius) {
             int r = std::max(0, radius);
             for (int h = -r; h <= r; h++) {
                 int row = cy + h;
                 if (row < 0 || row >= canvasH) continue;
-                int half = (int)std::sqrt((float)(r * r - h * h));
+                int radicand = r * r - h * h;
+                int half = (radicand <= 0) ? 0 : isqrt(radicand);
                 int x0 = std::max(0, cx - half);
                 int x1 = std::min(canvasW - 1, cx + half);
                 spans[row].push_back({x0, x1});
@@ -63,27 +101,44 @@ namespace DrawingUtils {
                 addCircle(cx + 1, cy + 1, r);
             }
         }
+
         void flush(SDL_Renderer* renderer) {
-            for (int row = 0; row < canvasH; row++)
-                for (auto& seg : spans[row])
-                    SDL_RenderDrawLine(renderer, seg.first, row, seg.second, row);
+            for (int row = 0; row < canvasH; row++) {
+                auto& segs = spans[row];
+                if (segs.empty()) continue;
+                if (segs.size() == 1) {
+                    SDL_RenderDrawLine(renderer, segs[0].first, row, segs[0].second, row);
+                    continue;
+                }
+                std::sort(segs.begin(), segs.end());
+                int n = 0;
+                for (size_t i = 1; i < segs.size(); i++) {
+                    if (segs[i].first <= segs[n].second + 1)
+                        segs[n].second = std::max(segs[n].second, segs[i].second);
+                    else
+                        segs[++n] = segs[i];
+                }
+                for (int i = 0; i <= n; i++)
+                    SDL_RenderDrawLine(renderer, segs[i].first, row, segs[i].second, row);
+            }
         }
     };
 
     void drawLine(SDL_Renderer* renderer, int x1, int y1, int x2, int y2, int size, int w, int h) {
         if (size <= 1) { SDL_RenderDrawLine(renderer, x1, y1, x2, y2); return; }
-        SpanBuffer spans(w, h);
+        static SpanBuffer buf;
+        buf.prepare(w, h);
         int dx = std::abs(x2 - x1), dy = std::abs(y2 - y1);
         int sx = (x1 < x2) ? 1 : -1, sy = (y1 < y2) ? 1 : -1;
         int err = dx - dy;
         while (true) {
-            spans.addBrush(x1, y1, size);
+            buf.addBrush(x1, y1, size);
             if (x1 == x2 && y1 == y2) break;
             int e2 = 2 * err;
             if (e2 > -dy) { err -= dy; x1 += sx; }
             if (e2 < dx)  { err += dx; y1 += sy; }
         }
-        spans.flush(renderer);
+        buf.flush(renderer);
     }
 
     void drawSquareStamp(SDL_Renderer* r, int cx, int cy, int brushSize, int cw, int ch, SDL_Color color) {
@@ -169,6 +224,8 @@ namespace DrawingUtils {
         int cx = (left+right)/2, cy = (top+bottom)/2;
         int rx = cx-left, ry = cy-top;
         long rx2 = (long)rx*rx, ry2 = (long)ry*ry;
+        static SpanBuffer buf;
+        buf.prepare(w, h);
         auto plot = [&](SpanBuffer& spans, int x, int y) {
             auto clampX = [&](int px){ return std::max(left, std::min(right, px)); };
             auto clampY = [&](int py){ return std::max(top,  std::min(bottom, py)); };
@@ -177,22 +234,21 @@ namespace DrawingUtils {
             spans.addBrush(clampX(cx+x), clampY(cy-y), size);
             spans.addBrush(clampX(cx-x), clampY(cy-y), size);
         };
-        SpanBuffer spans(w, h);
         int x = 0, y = ry;
         long d1 = ry2 - rx2*ry + rx2/4;
         long ddx = 2*ry2*x, ddy = 2*rx2*y;
         while (ddx < ddy) {
-            plot(spans, x, y); x++; ddx += 2*ry2;
+            plot(buf, x, y); x++; ddx += 2*ry2;
             if (d1 < 0) { d1 += ddx + ry2; }
             else { y--; ddy -= 2*rx2; d1 += ddx - ddy + ry2; }
         }
         long d2 = ry2*((long)x*x+x) + rx2*((long)(y-1)*(y-1)) - rx2*ry2;
         while (y >= 0) {
-            plot(spans, x, y); y--; ddy -= 2*rx2;
+            plot(buf, x, y); y--; ddy -= 2*rx2;
             if (d2 > 0) { d2 += rx2 - ddy; }
             else { x++; ddx += 2*ry2; d2 += ddx - ddy + rx2; }
         }
-        spans.flush(renderer);
+        buf.flush(renderer);
     }
 
     SDL_Rect getOvalCenterBounds(int x0, int y0, int x1, int y1) {

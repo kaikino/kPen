@@ -46,13 +46,27 @@ kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
     setTool(ToolType::SELECT);
 
     // When the user picks a color while a selection is floating, fill it immediately.
-    // The selection texture is updated in-place; undo is handled naturally when the
-    // selection is committed (deactivate saves state just like any other move/resize).
+    // Transparent is excluded so picking transparent only sets the brush for future drawing.
     toolbar.onColorChanged = [this](SDL_Color color) {
         if (toolbar.currentType != ToolType::SELECT) return;
         auto* st = static_cast<SelectTool*>(currentTool.get());
         if (!st || !st->isSelectionActive()) return;
+        if (color.a == 0) return; // don't fill selection with transparent
         st->fillWithColor(renderer, color);
+    };
+
+    toolbar.onColorDroppedOnCanvas = [this](SDL_Color c) {
+        commitActiveTool();
+        saveState();
+        withCanvas([&]{
+            SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, c.a);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+            SDL_RenderClear(renderer);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        });
+        saveState();
+        savedStateId = undoManager.currentSerial();
+        updateWindowTitle();
     };
 
     saveState();
@@ -519,9 +533,9 @@ static std::string nativeOpenDialog() {
     if (gDialogOpen) return "";
     gDialogOpen = true;
     resetCursorForDialog();
-    const char* filters[] = { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif" };
+    const char* filters[] = { "*.png", "*.jpg", "*.jpeg" };
     const char* result = tinyfd_openFileDialog(
-        "Open image", "", 5, filters, "Image files", 0);
+        "Open image", "", 3, filters, "Image files", 0);
     gDialogOpen = false;
     postDialogCleanup();
     return result ? result : "";
@@ -595,6 +609,18 @@ void kPen::doSave(bool forceSaveAs) {
 void kPen::doOpen() {
     std::string path = nativeOpenDialog();
     if (path.empty()) return;
+
+    // Reject unsupported formats
+    auto lower = [](std::string s){ for (auto& c : s) c = (char)tolower(c); return s; };
+    std::string ext = (path.size() >= 4) ? lower(path.substr(path.size() - 4)) : "";
+    if (ext == ".gif") {
+        tinyfd_messageBox("Open failed", "GIF images cannot be opened.", "ok", "error", 1);
+        return;
+    }
+    if (ext == ".bmp") {
+        tinyfd_messageBox("Open failed", "BMP images cannot be opened.", "ok", "error", 1);
+        return;
+    }
 
     // Read and decode the file
     FILE* f = fopen(path.c_str(), "rb");
@@ -678,23 +704,7 @@ void kPen::dispatchCommand(int code, bool& running, bool& needsRedraw, bool& ove
         case MacMenu::EDIT_SELECT_ALL: {
             setTool(ToolType::SELECT);
             auto* st = static_cast<SelectTool*>(currentTool.get());
-            SDL_Rect all = {0, 0, canvasW, canvasH};
-            std::vector<uint32_t> px(canvasW * canvasH);
-            withCanvas([&]{ SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, px.data(), canvasW*4); });
-            SDL_Texture* selTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, canvasW, canvasH);
-            if (selTex) {
-                SDL_SetTextureBlendMode(selTex, SDL_BLENDMODE_BLEND);
-                void* tp; int pitch;
-                if (SDL_LockTexture(selTex, nullptr, &tp, &pitch) == 0) {
-                    for (int row = 0; row < canvasH; ++row)
-                        memcpy((uint8_t*)tp + row*pitch, px.data() + row*canvasW, canvasW*4);
-                    SDL_UnlockTexture(selTex);
-                    withCanvas([&]{ SDL_SetRenderDrawColor(renderer,0,0,0,0); SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_NONE); SDL_RenderFillRect(renderer,nullptr); SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND); });
-                    st->activateWithTexture(selTex, all);
-                } else {
-                    SDL_DestroyTexture(selTex);
-                }
-            }
+            withCanvas([&]{ st->commitRectSelection(renderer, canvasW, canvasH, {0, 0, canvasW, canvasH}); });
             toolbar.currentType = ToolType::SELECT;
             needsRedraw = true; overlayDirty = true;
             break;
@@ -1389,16 +1399,17 @@ void kPen::renderFrame(bool& overlayDirty) {
         SDL_RenderSetClipRect(renderer, nullptr);
     }
 
-    {
-        SDL_Rect clip = { Toolbar::TB_W, 0, winW_ - Toolbar::TB_W, winH_ };
-        SDL_RenderSetClipRect(renderer, &clip);
-        SDL_RenderCopyF(renderer, canvas, nullptr, &vf);
-        if (hasOverlay) SDL_RenderCopyF(renderer, overlay, nullptr, &vf);
-        SDL_RenderSetClipRect(renderer, nullptr);
-    }
-
+    // Clip to the visible canvas view so we don't render into letterbox areas
+    SDL_Rect viewClip = {
+        (int)std::ceil(vf.x),
+        (int)std::ceil(vf.y),
+        (int)std::floor(vf.x + vf.w) - (int)std::ceil(vf.x),
+        (int)std::floor(vf.y + vf.h) - (int)std::ceil(vf.y)
+    };
+    SDL_RenderSetClipRect(renderer, &viewClip);
+    SDL_RenderCopyF(renderer, canvas, nullptr, &vf);
+    if (hasOverlay) SDL_RenderCopyF(renderer, overlay, nullptr, &vf);
     currentTool->onPreviewRender(renderer, toolbar.brushSize, toolbar.brushColor);
-
     bool toolBusy = currentTool && (
         currentTool->isActive() ||
         ((toolbar.currentType == ToolType::SELECT || toolbar.currentType == ToolType::RESIZE) &&
@@ -1406,6 +1417,7 @@ void kPen::renderFrame(bool& overlayDirty) {
     );
     if (!toolBusy)
         canvasResizer.draw(renderer, canvasW, canvasH);
+    SDL_RenderSetClipRect(renderer, nullptr);
 
     // Scrollbars
     {
@@ -1485,6 +1497,35 @@ void kPen::renderFrame(bool& overlayDirty) {
     }
 
     toolbar.draw(spaceHeld || handToggledOn, winW_, winH_);
+
+    // Mouse coords at bottom-right (canvas coordinates)
+    {
+        int mx, my;
+        SDL_GetMouseState(&mx, &my);
+        int cx, cy;
+        getCanvasCoords(mx, my, &cx, &cy);
+        toolbar.drawCoordDisplay(winW_, winH_, cx, cy);
+    }
+
+    // Swatch drag: show a small color preview at the cursor
+    {
+        SDL_Color dragColor;
+        if (toolbar.getDraggingSwatchColor(&dragColor)) {
+            int mx, my;
+            SDL_GetMouseState(&mx, &my);
+            const int size = 12;
+            const int offset = 4;
+            SDL_Rect preview = { mx + offset, my + offset, size, size };
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 60, 60, 60, 200);
+            SDL_RenderDrawRect(renderer, &preview);
+            Uint8 alpha = (Uint8)((int)dragColor.a * 180 / 255);
+            SDL_SetRenderDrawColor(renderer, dragColor.r, dragColor.g, dragColor.b, alpha);
+            SDL_Rect inner = { preview.x + 1, preview.y + 1, preview.w - 2, preview.h - 2 };
+            SDL_RenderFillRect(renderer, &inner);
+        }
+    }
+
     SDL_RenderPresent(renderer);
 }
 
@@ -1493,16 +1534,32 @@ void kPen::run() {
     bool needsRedraw  = true;
     bool overlayDirty = false;
     SDL_Event e;
-    Uint32 lastRenderTicks = 0;
+    Uint32 lastFrameTicks = 0;
     Uint32 lastCursorUpdateTicks = 0;
     int idleCount = 0;
     const int idleThreshold = 6;
     const int idleDelayShort = 16;
     const int idleDelayLong = 33;
 
+    // Cap loop rate (input polling + rendering) at display refresh, max 120 fps
+    int maxFps = 120;
+    int displayIndex = SDL_GetWindowDisplayIndex(window);
+    SDL_DisplayMode mode = {};
+    if (displayIndex >= 0 && SDL_GetCurrentDisplayMode(displayIndex, &mode) == 0 && mode.refresh_rate > 0)
+        maxFps = std::min(maxFps, mode.refresh_rate);
+    const Uint32 minFrameIntervalMs = (maxFps > 0) ? (1000u / (Uint32)maxFps) : 8u;
+
     SDL_EventState(SDL_MULTIGESTURE, SDL_ENABLE);
 
     while (running) {
+        if (lastFrameTicks != 0) {
+            Uint32 now = SDL_GetTicks();
+            Uint32 elapsed = now - lastFrameTicks;
+            if (elapsed < minFrameIntervalMs)
+                SDL_Delay(minFrameIntervalMs - elapsed);
+        }
+        lastFrameTicks = SDL_GetTicks();
+
         SDL_GetWindowSize(window, &winW_, &winH_);
         bool hadEvent = false;
         while (SDL_PollEvent(&e)) {
@@ -1553,6 +1610,7 @@ void kPen::run() {
             if (ta || va) needsRedraw = true;
             else {
                 idleCount++;
+                lastFrameTicks = SDL_GetTicks();
                 SDL_Delay(idleCount > idleThreshold ? idleDelayLong : idleDelayShort);
                 continue;
             }
@@ -1562,14 +1620,8 @@ void kPen::run() {
             tickView();
         }
 
-        if (needsRedraw && toolBusy) {
-            if (SDL_GetTicks() - lastRenderTicks < 16)
-                continue;
-        }
-
         needsRedraw = false;
 
         renderFrame(overlayDirty);
-        lastRenderTicks = SDL_GetTicks();
     }
 }

@@ -53,6 +53,8 @@ class Toolbar {
     int selectedPresetSlot = -1;
 
     std::function<void(SDL_Color)> onColorChanged;
+    /** Called when the user drops a swatch onto the canvas (fill canvas with that color). */
+    std::function<void(SDL_Color)> onColorDroppedOnCanvas;
 
     Toolbar(SDL_Renderer* renderer, kPen* app);
     void draw(bool handActive, int winW, int winH);
@@ -62,9 +64,13 @@ class Toolbar {
     void onMouseUp(int x, int y);
 
     bool isDragging() const;
+    /** When dragging a swatch, returns true and sets *out to the dragged color. */
+    bool getDraggingSwatchColor(SDL_Color* out) const;
     bool onMouseWheel(int x, int y, float dy);
     bool tickScroll();
     bool inToolbar(int x, int y) const { return x < TB_W; }
+    /** Draw mouse coords at bottom-right of window (winW, winH). */
+    void drawCoordDisplay(int winW, int winH, int mx, int my) const;
     bool isInteractive(int x, int y) const;
 
     // --- Canvas resize panel ---

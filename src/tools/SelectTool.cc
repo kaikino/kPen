@@ -2,6 +2,7 @@
 #include "DrawingUtils.h"
 #include <cmath>
 #include <algorithm>
+#include <cstring>
 
 SelectTool::SelectTool(ICoordinateMapper* m, bool lassoMode)
     : TransformTool(m), lassoMode_(lassoMode) {}
@@ -257,6 +258,42 @@ void SelectTool::activateWithTexture(SDL_Texture* tex, SDL_Rect area) {
     lassoPoints_.clear();
 }
 
+void SelectTool::commitRectSelection(SDL_Renderer* r, int canvasW, int canvasH, SDL_Rect rect) {
+    int rx = std::max(0, rect.x);
+    int ry = std::max(0, rect.y);
+    int rx2 = std::min(canvasW, rect.x + rect.w);
+    int ry2 = std::min(canvasH, rect.y + rect.h);
+    int rw = rx2 - rx, rh = ry2 - ry;
+    if (rw <= 0 || rh <= 0) return;
+
+    if (selectionTexture) SDL_DestroyTexture(selectionTexture);
+    selectionTexture = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888,
+                                         SDL_TEXTUREACCESS_TARGET, rw, rh);
+    if (!selectionTexture) return;
+    SDL_SetTextureBlendMode(selectionTexture, SDL_BLENDMODE_BLEND);
+
+    std::vector<uint32_t> pixels(static_cast<size_t>(rw) * rh);
+    SDL_Rect readRect = { rx, ry, rw, rh };
+    SDL_RenderReadPixels(r, &readRect, SDL_PIXELFORMAT_ARGB8888, pixels.data(), rw * 4);
+    SDL_UpdateTexture(selectionTexture, nullptr, pixels.data(), rw * 4);
+
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    SDL_RenderFillRect(r, &readRect);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+
+    currentBounds = { rx, ry, rw, rh };
+    rotation = 0.f;
+    syncDrawCenterFromBounds();
+    active = true;
+    dirty = true;
+    isMoving = false;
+    isRotating = false;
+    resizing = Handle::NONE;
+    isDrawing = false;
+    lassoPoints_.clear();
+}
+
 std::vector<uint32_t> SelectTool::getFloatingPixels(SDL_Renderer* r) const {
     if (!selectionTexture || currentBounds.w <= 0 || currentBounds.h <= 0)
         return {};
@@ -282,20 +319,49 @@ void SelectTool::fillWithColor(SDL_Renderer* r, SDL_Color color) {
     if (!selectionTexture || !active) return;
     int w = currentBounds.w, h = currentBounds.h;
     if (w <= 0 || h <= 0) return;
-    std::vector<uint32_t> pixels(static_cast<size_t>(w) * h);
-    SDL_Texture* prev = SDL_GetRenderTarget(r);
-    SDL_SetRenderTarget(r, selectionTexture);
-    SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), w * 4);
-    SDL_SetRenderTarget(r, prev);
-    // Only fill pixels that are inside the selection (alpha > 0), preserving lasso mask
     const uint32_t newARGB = (static_cast<uint32_t>(color.a) << 24) |
                             (static_cast<uint32_t>(color.r) << 16) |
                             (static_cast<uint32_t>(color.g) << 8) |
                             static_cast<uint32_t>(color.b);
-    for (size_t i = 0; i < pixels.size(); i++) {
-        if ((pixels[i] >> 24) != 0)
-            pixels[i] = newARGB;
+
+    void* texPixels = nullptr;
+    int pitch = 0;
+    if (SDL_LockTexture(selectionTexture, nullptr, &texPixels, &pitch) == 0) {
+        // STREAMING texture (e.g. Select All): locked buffer is write-only, so read via render target first
+        int texW = 0, texH = 0;
+        SDL_QueryTexture(selectionTexture, nullptr, nullptr, &texW, &texH);
+        std::vector<uint32_t> pixels(static_cast<size_t>(texW) * texH);
+        SDL_Texture* prev = SDL_GetRenderTarget(r);
+        SDL_SetRenderTarget(r, selectionTexture);
+        SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), texW * 4);
+        SDL_SetRenderTarget(r, prev);
+        bool anyOpaque = false;
+        for (size_t i = 0; i < pixels.size(); i++) {
+            if ((pixels[i] >> 24) != 0) { anyOpaque = true; break; }
+        }
+        for (size_t i = 0; i < pixels.size(); i++) {
+            if (anyOpaque ? (pixels[i] >> 24) != 0 : true)
+                pixels[i] = newARGB;
+        }
+        for (int row = 0; row < texH; row++)
+            memcpy(static_cast<uint8_t*>(texPixels) + row * pitch, pixels.data() + row * texW, static_cast<size_t>(texW) * 4);
+        SDL_UnlockTexture(selectionTexture);
+    } else {
+        // TARGET texture (rect/lasso selection): read via render target then update
+        std::vector<uint32_t> pixels(static_cast<size_t>(w) * h);
+        SDL_Texture* prev = SDL_GetRenderTarget(r);
+        SDL_SetRenderTarget(r, selectionTexture);
+        SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), w * 4);
+        SDL_SetRenderTarget(r, prev);
+        bool anyOpaque = false;
+        for (size_t i = 0; i < pixels.size(); i++) {
+            if ((pixels[i] >> 24) != 0) { anyOpaque = true; break; }
+        }
+        for (size_t i = 0; i < pixels.size(); i++) {
+            if (anyOpaque ? (pixels[i] >> 24) != 0 : true)
+                pixels[i] = newARGB;
+        }
+        SDL_UpdateTexture(selectionTexture, nullptr, pixels.data(), w * 4);
     }
-    SDL_UpdateTexture(selectionTexture, nullptr, pixels.data(), w * 4);
     dirty = true;
 }
