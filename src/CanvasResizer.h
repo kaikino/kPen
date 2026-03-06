@@ -24,6 +24,7 @@ class CanvasResizer {
                    bool aspectLock = false);
 
     bool isDragging() const { return activeHandle != Handle::NONE; }
+    void cancelDrag() { activeHandle = Handle::NONE; }
 
     Handle hitTest(int winX, int winY, int canvasW, int canvasH) const;
 

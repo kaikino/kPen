@@ -122,10 +122,46 @@ void kPen::commitActiveTool() {
 
 void kPen::resetViewAndGestureState() {
     view_.reset();
-    multiGestureActive = false;
-    pinchActive        = false;
-    activeFingers      = 0;
+    view_.endScrollGesture();
+    view_.endScrollbarDrag();
+
+    multiGestureActive   = false;
+    lastGestureCX        = 0.f;
+    lastGestureCY        = 0.f;
+    activeFingers        = 0;
+    gestureNeedsRecenter = false;
+    zoomPriorityEvents   = 0;
+
     tapPending         = false;
+    tapSawGesture      = false;
+    tapConsumed        = false;
+    threeFingerPanMode = false;
+
+    spaceHeld         = false;
+    handToggledOn     = false;
+    handPanning       = false;
+    handPanStartWinX  = 0;
+    handPanStartWinY  = 0;
+
+    pinchActive        = false;
+    pinchBaseZoom      = 1.f;
+    pinchRawDist       = 0.f;
+    twoFingerPivotX   = 0.f;
+    twoFingerPivotY   = 0.f;
+    twoFingerPivotSet = false;
+
+    lastMotionCX = -1;
+    lastMotionCY = -1;
+    lastPickCX   = -1;
+    lastPickCY   = -1;
+    lastPickHoverColor = { 0, 0, 0, 0 };
+
+    showResizePreview = false;
+    previewW = 0;
+    previewH = 0;
+    previewOriginX = 0;
+    previewOriginY = 0;
+    canvasResizer.cancelDrag();
 }
 
 bool kPen::tickView() {
@@ -682,6 +718,7 @@ void kPen::dispatchCommand(int code, bool& running, bool& needsRedraw, bool& ove
                 updateWindowTitle();
                 resetViewAndGestureState();
                 needsRedraw = true;
+                overlayDirty = true;
             }
             break;
         case MacMenu::FILE_OPEN:
