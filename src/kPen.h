@@ -56,6 +56,7 @@ class kPen : public ICoordinateMapper {
 
     void commitActiveTool();
     void resetViewAndGestureState();
+    void resetGestureState();
 
     bool spaceHeld      = false;
     bool handToggledOn  = false;
@@ -90,6 +91,8 @@ class kPen : public ICoordinateMapper {
     float twoFingerPivotX   = 0.f;
     float twoFingerPivotY   = 0.f;
     bool  twoFingerPivotSet = false;
+
+    Uint32 lastGestureTicks = 0;
 
     SDL_Rect  getViewport();
     SDL_FRect getViewportF();

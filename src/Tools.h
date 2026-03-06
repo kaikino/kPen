@@ -83,7 +83,9 @@ class TransformTool : public AbstractTool {
     float  drawCenterY   = 0.f;
 
     void   syncDrawCenterFromBounds();
+    void   getBoxWindowCorners(SDL_Point wpts[4]) const;
     void   getRotateHandleWin(int& wx, int& wy) const;
+    void   getRotateHandleWin(int& wx, int& wy, const SDL_Point wpts[4]) const;
     Handle getHandle(int cX, int cY) const;
     void   drawHandles(SDL_Renderer* r) const;
     bool   handleMouseDown(int cX, int cY);
@@ -203,15 +205,35 @@ class ShapeTool : public AbstractTool {
     ToolType type;
     using ShapeReadyCallback = std::function<void(ToolType, SDL_Rect, SDL_Rect, int, int, int, int, int, SDL_Color, bool)>;
     ShapeReadyCallback onShapeReady;
+    std::function<void()> onLineCommitted;
     int       cachedBrushSize = 1;
     SDL_Color cachedColor     = {0, 0, 0, 255};
+    // Line-only: two-handle edit mode (no TransformTool/ResizeTool)
+    bool lineEditMode   = false;
+    int  lineStartX = 0, lineStartY = 0, lineEndX = 0, lineEndY = 0;
+    int  draggingLineHandle = -1;  // -1 none, 0 start, 1 end, 2 moving whole line
+    int  lineStartX0 = 0, lineStartY0 = 0, lineEndX0 = 0, lineEndY0 = 0;
+    int  lineDragStartCX = 0, lineDragStartCY = 0;
+    int lineHitTest(int cX, int cY) const;  // -1 none, 0 start, 1 end, 2 line body
+    void commitLine(SDL_Renderer* r);
   public:
     bool filled = false;
-    ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb, bool filled = false);
+    ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb, bool filled = false,
+              std::function<void()> onLineCommitted = nullptr);
+    void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     bool onMouseUp       (int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onPreviewRender (SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onOverlayRender (SDL_Renderer* r) override;
-    bool hasOverlayContent() override { return isDrawing; }
+    void deactivate(SDL_Renderer* r) override;
+    bool hasOverlayContent() override { return isDrawing || (type == ToolType::LINE && lineEditMode); }
+    bool isLineEditing() const { return type == ToolType::LINE && lineEditMode; }
+    /** True when cursor is over an endpoint handle (resize cursor). */
+    bool isOverLineHandle(int cX, int cY) const;
+    /** True when cursor is over the line segment, not a handle (move cursor). */
+    bool isOverLineBody(int cX, int cY) const;
+    /** Line endpoint canvas coords (only valid when isLineEditing()). */
+    void getLineEndpoints(int& x0, int& y0, int& x1, int& y1) const;
 };
 
 class FillTool : public AbstractTool {

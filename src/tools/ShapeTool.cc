@@ -1,9 +1,80 @@
 #include "Tools.h"
 #include "DrawingUtils.h"
 #include <cmath>
+#include <algorithm>
 
-ShapeTool::ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb, bool fill)
-    : AbstractTool(m), type(t), onShapeReady(std::move(cb)), filled(fill) {}
+ShapeTool::ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb, bool fill,
+                     std::function<void()> onLineCommitted)
+    : AbstractTool(m), type(t), onShapeReady(std::move(cb)), onLineCommitted(std::move(onLineCommitted)), filled(fill) {}
+
+bool ShapeTool::isOverLineHandle(int cX, int cY) const {
+    if (!lineEditMode || type != ToolType::LINE) return false;
+    int h = lineHitTest(cX, cY);
+    return h == 0 || h == 1;
+}
+
+bool ShapeTool::isOverLineBody(int cX, int cY) const {
+    if (!lineEditMode || type != ToolType::LINE) return false;
+    return lineHitTest(cX, cY) == 2;
+}
+
+void ShapeTool::getLineEndpoints(int& x0, int& y0, int& x1, int& y1) const {
+    x0 = lineStartX;
+    y0 = lineStartY;
+    x1 = lineEndX;
+    y1 = lineEndY;
+}
+
+// Handle/segment hit uses window-space distance so grab area matches fixed-size drawn handles
+static const int LINE_HANDLE_RADIUS_WIN = 3;
+
+// Returns -1 none, 0 start handle, 1 end handle, 2 line segment (for commit = click outside)
+int ShapeTool::lineHitTest(int cX, int cY) const {
+    int wx, wy, w0x, w0y, w1x, w1y;
+    mapper->getWindowCoords(cX, cY, &wx, &wy);
+    mapper->getWindowCoords(lineStartX, lineStartY, &w0x, &w0y);
+    mapper->getWindowCoords(lineEndX, lineEndY, &w1x, &w1y);
+    const int R = LINE_HANDLE_RADIUS_WIN;
+    int d0 = (wx - w0x) * (wx - w0x) + (wy - w0y) * (wy - w0y);
+    if (d0 <= R * R) return 0;
+    int d1 = (wx - w1x) * (wx - w1x) + (wy - w1y) * (wy - w1y);
+    if (d1 <= R * R) return 1;
+    int abx = w1x - w0x, aby = w1y - w0y;
+    int apx = wx - w0x, apy = wy - w0y;
+    int abSq = abx * abx + aby * aby;
+    if (abSq == 0) return -1;
+    int t = apx * abx + apy * aby;
+    int distSq;
+    if (t <= 0) distSq = d0;
+    else if (t >= abSq) distSq = d1;
+    else {
+        int qx = w0x + (t * abx) / abSq;
+        int qy = w0y + (t * aby) / abSq;
+        distSq = (wx - qx) * (wx - qx) + (wy - qy) * (wy - qy);
+    }
+    if (distSq <= R * R) return 2;
+    return -1;
+}
+
+void ShapeTool::commitLine(SDL_Renderer* r) {
+    if (!lineEditMode || type != ToolType::LINE) return;
+    int cw, ch;
+    mapper->getCanvasSize(&cw, &ch);
+    SDL_Color col = cachedColor;
+    if (col.a == 0) col = { 0, 0, 0, 255 };
+    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    int iStartX = lineStartX, iStartY = lineStartY, iEndX = lineEndX, iEndY = lineEndY;
+    if (iStartX > iEndX) std::swap(iStartX, iEndX);
+    if (iStartY > iEndY) std::swap(iStartY, iEndY);
+    if (iStartX == iEndX && iStartY == iEndY) {
+        DrawingUtils::drawLine(r, lineStartX, lineStartY, lineStartX, lineStartY, cachedBrushSize, cw, ch);
+    } else {
+        DrawingUtils::drawLine(r, lineStartX, lineStartY, lineEndX, lineEndY, cachedBrushSize, cw, ch);
+    }
+    lineEditMode = false;
+    draggingLineHandle = -1;
+    if (onLineCommitted) onLineCommitted();
+}
 
 static void applyShiftConstraint(ToolType type, int startX, int startY,
                                   int& curX, int& curY) {
@@ -30,7 +101,53 @@ static void applyShiftConstraint(ToolType type, int startX, int startY,
     }
 }
 
+void ShapeTool::onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) {
+    if (type == ToolType::LINE && lineEditMode) {
+        int hit = lineHitTest(cX, cY);
+        if (hit == 0) { draggingLineHandle = 0; return; }
+        if (hit == 1) { draggingLineHandle = 1; return; }
+        if (hit == 2) {
+            draggingLineHandle = 2;
+            lineStartX0 = lineStartX;
+            lineStartY0 = lineStartY;
+            lineEndX0 = lineEndX;
+            lineEndY0 = lineEndY;
+            lineDragStartCX = cX;
+            lineDragStartCY = cY;
+            return;
+        }
+        commitLine(r);
+        return;
+    }
+    AbstractTool::onMouseDown(cX, cY, r, brushSize, color);
+}
+
+void ShapeTool::onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) {
+    if (type == ToolType::LINE && lineEditMode && draggingLineHandle >= 0) {
+        if (draggingLineHandle == 0) {
+            lineStartX = cX;
+            lineStartY = cY;
+        } else if (draggingLineHandle == 1) {
+            lineEndX = cX;
+            lineEndY = cY;
+        } else if (draggingLineHandle == 2) {
+            int dx = cX - lineDragStartCX;
+            int dy = cY - lineDragStartCY;
+            lineStartX = lineStartX0 + dx;
+            lineStartY = lineStartY0 + dy;
+            lineEndX = lineEndX0 + dx;
+            lineEndY = lineEndY0 + dy;
+        }
+        return;
+    }
+    AbstractTool::onMouseMove(cX, cY, r, brushSize, color);
+}
+
 bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brushSize, SDL_Color color) {
+    if (type == ToolType::LINE && lineEditMode) {
+        draggingLineHandle = -1;
+        return false;
+    }
     if (!isDrawing) return false;
     if (cX == startX && cY == startY) { isDrawing = false; return false; }
 
@@ -89,6 +206,17 @@ bool ShapeTool::onMouseUp(int cX, int cY, SDL_Renderer* canvasRenderer, int brus
     }
     isDrawing = false;
 
+    if (type == ToolType::LINE) {
+        lineEditMode = true;
+        lineStartX = sx;
+        lineStartY = sy;
+        lineEndX = ex;
+        lineEndY = ey;
+        cachedBrushSize = brushSize;
+        cachedColor = color;
+        return false;  // don't save state until line is committed
+    }
+
     if (onShapeReady)
         onShapeReady(type, bounds, origBounds, sx, sy, ex, ey, brushSize, color, filled);
 
@@ -131,6 +259,17 @@ static void drawShapeCanvasSpace(SDL_Renderer* r, ToolType type,
 }
 
 void ShapeTool::onOverlayRender(SDL_Renderer* r) {
+    if (type == ToolType::LINE && lineEditMode) {
+        // Overlay is canvas-sized; draw in canvas coordinates so line stays fixed when panning/zooming
+        int cw, ch;
+        mapper->getCanvasSize(&cw, &ch);
+        SDL_Color drawColor = cachedColor;
+        if (drawColor.a == 0) drawColor = { 100, 149, 237, 200 };
+        SDL_SetRenderDrawColor(r, drawColor.r, drawColor.g, drawColor.b, drawColor.a);
+        DrawingUtils::drawLine(r, lineStartX, lineStartY, lineEndX, lineEndY, cachedBrushSize, cw, ch);
+        // Handles are drawn in window space in kPen::renderFrame so they stay fixed size when zooming
+        return;
+    }
     if (!isDrawing) return;
     int mouseX, mouseY;
     SDL_GetMouseState(&mouseX, &mouseY);
@@ -151,10 +290,16 @@ void ShapeTool::onOverlayRender(SDL_Renderer* r) {
     drawShapeCanvasSpace(r, type, startX, startY, curX, curY, cachedBrushSize, cw, ch, filled);
 }
 
+void ShapeTool::deactivate(SDL_Renderer* r) {
+    if (type == ToolType::LINE && lineEditMode)
+        commitLine(r);
+}
+
 void ShapeTool::onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color) {
     cachedBrushSize = brushSize;
     cachedColor     = color;
 
+    if (type == ToolType::LINE && lineEditMode) return;
     if (!isDrawing) return;
     int mouseX, mouseY;
     SDL_GetMouseState(&mouseX, &mouseY);

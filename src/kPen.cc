@@ -122,6 +122,10 @@ void kPen::commitActiveTool() {
 
 void kPen::resetViewAndGestureState() {
     view_.reset();
+    resetGestureState();
+}
+
+void kPen::resetGestureState() {
     view_.endScrollGesture();
     view_.endScrollbarDrag();
 
@@ -162,6 +166,7 @@ void kPen::resetViewAndGestureState() {
     previewOriginX = 0;
     previewOriginY = 0;
     canvasResizer.cancelDrag();
+    lastGestureTicks = 0;
 }
 
 bool kPen::tickView() {
@@ -198,7 +203,7 @@ void kPen::setTool(ToolType t) {
     switch (t) {
         case ToolType::BRUSH:  currentTool = std::make_unique<BrushTool>(this, toolbar.squareBrush); break;
         case ToolType::ERASER: currentTool = std::make_unique<EraserTool>(this, toolbar.squareEraser); break;
-        case ToolType::LINE:   currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE,   cb, false); break;
+        case ToolType::LINE:   currentTool = std::make_unique<ShapeTool>(this, ToolType::LINE,   cb, false, [this]{ saveState(); }); break;
         case ToolType::RECT:   currentTool = std::make_unique<ShapeTool>(this, ToolType::RECT,   cb, toolbar.fillRect); break;
         case ToolType::CIRCLE: currentTool = std::make_unique<ShapeTool>(this, ToolType::CIRCLE, cb, toolbar.fillCircle); break;
         case ToolType::SELECT: currentTool = std::make_unique<SelectTool>(this, toolbar.lassoSelect); break;
@@ -758,6 +763,15 @@ void kPen::processEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool& ov
     if (e.type == SDL_KEYUP) { handleKeyUp(e, needsRedraw); return; }
     if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_RESIZED) { handleWindowEvent(e, needsRedraw); return; }
     if (e.type == SDL_MOUSEWHEEL) { handleMouseWheel(e, needsRedraw, overlayDirty); return; }
+    if (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERUP ||
+        e.type == SDL_FINGERMOTION || e.type == SDL_MULTIGESTURE) {
+        Uint32 ts = 0;
+        if (e.type == SDL_MULTIGESTURE)
+            ts = e.mgesture.timestamp;
+        else
+            ts = e.tfinger.timestamp;
+        lastGestureTicks = ts ? ts : SDL_GetTicks();
+    }
     if (e.type == SDL_FINGERDOWN) { handleFingerDown(e); return; }
     if (e.type == SDL_FINGERUP) { handleFingerUp(e, needsRedraw, overlayDirty); return; }
     if (e.type == SDL_FINGERMOTION) { handleFingerMotion(e); return; }
@@ -1446,6 +1460,28 @@ void kPen::renderFrame(bool& overlayDirty) {
     SDL_RenderSetClipRect(renderer, &viewClip);
     SDL_RenderCopyF(renderer, canvas, nullptr, &vf);
     if (hasOverlay) SDL_RenderCopyF(renderer, overlay, nullptr, &vf);
+    // Line tool: draw endpoint handles in window space so they stay fixed size when zooming
+    if (toolbar.currentType == ToolType::LINE) {
+        auto* st = static_cast<ShapeTool*>(currentTool.get());
+        if (st && st->isLineEditing()) {
+            int x0, y0, x1, y1;
+            st->getLineEndpoints(x0, y0, x1, y1);
+            int wx0, wy0, wx1, wy1;
+            getWindowCoords(x0, y0, &wx0, &wy0);
+            getWindowCoords(x1, y1, &wx1, &wy1);
+            const int handleRadius = 3;
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+            DrawingUtils::drawFillCircle(renderer, wx0, wy0, handleRadius);
+            DrawingUtils::drawFillCircle(renderer, wx1, wy1, handleRadius);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            for (int i = 0; i < 2; i++) {
+                int hx = (i == 0) ? wx0 : wx1;
+                int hy = (i == 0) ? wy0 : wy1;
+                for (int deg = 0; deg < 360; deg += 4)
+                    SDL_RenderDrawPoint(renderer, hx + (int)(handleRadius * std::cos(deg * M_PI / 180.0)), hy + (int)(handleRadius * std::sin(deg * M_PI / 180.0)));
+            }
+        }
+    }
     currentTool->onPreviewRender(renderer, toolbar.brushSize, toolbar.brushColor);
     bool toolBusy = currentTool && (
         currentTool->isActive() ||
@@ -1535,13 +1571,14 @@ void kPen::renderFrame(bool& overlayDirty) {
 
     toolbar.draw(spaceHeld || handToggledOn, winW_, winH_);
 
-    // Mouse coords at bottom-right (canvas coordinates)
+    // Mouse coords at bottom-right (canvas coordinates); hide when mouse is out of canvas bounds
     {
         int mx, my;
         SDL_GetMouseState(&mx, &my);
         int cx, cy;
         getCanvasCoords(mx, my, &cx, &cy);
-        toolbar.drawCoordDisplay(winW_, winH_, cx, cy);
+        if (cx >= 0 && cx < canvasW && cy >= 0 && cy < canvasH)
+            toolbar.drawCoordDisplay(winW_, winH_, cx, cy);
     }
 
     // Swatch drag: show a small color preview at the cursor
@@ -1639,6 +1676,19 @@ void kPen::run() {
             view_.getScrollbarHover(winW_, winH_, mx, my, canvasW, canvasH, &hoverV, &hoverH, &hasV, &hasH);
             if (hoverV || hoverH)
                 tickScrollbarFade(needsRedraw);
+        }
+
+        // If touch / gesture state has been idle for a while, force-reset it so
+        // a fresh two-finger gesture always starts from a clean slate even if
+        // finger-up events were missed while the app was inactive.
+        if (lastGestureTicks != 0) {
+            Uint32 now = SDL_GetTicks();
+            const Uint32 kGestureIdleMs = 800;
+            if (now - lastGestureTicks > kGestureIdleMs &&
+                (activeFingers > 0 || multiGestureActive || pinchActive ||
+                 tapPending || twoFingerPivotSet || threeFingerPanMode)) {
+                resetGestureState();
+            }
         }
 
         if (!needsRedraw) {

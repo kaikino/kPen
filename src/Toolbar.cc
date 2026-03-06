@@ -837,7 +837,7 @@ void Toolbar::drawDigitString(int x, int y, const char* s, int len) const {
 
 void Toolbar::drawCoordDisplay(int winW, int winH, int mx, int my) const {
     char buf[32];
-    int len = snprintf(buf, sizeof(buf), "%d, %d", mx, my);
+    int len = snprintf(buf, sizeof(buf), "%d,%d", mx, my);
     if (len <= 0 || len >= (int)sizeof(buf)) return;
     const int scale = 2;
     const int charW = 3 * scale + 2;  // 8

@@ -37,69 +37,89 @@ bool TransformTool::pointInRotatedBounds(int cX, int cY) const {
         && ly >= boxTop && ly < boxTop + currentBounds.h;
 }
 
-void TransformTool::getRotateHandleWin(int& rhwx, int& rhwy) const {
-    float rot = getRotation();
+void TransformTool::getBoxWindowCorners(SDL_Point wpts[4]) const {
     float ccx = drawCenterX, ccy = drawCenterY;
+    float rot = getRotation();
     float hw = currentBounds.w * 0.5f, hh = currentBounds.h * 0.5f;
     double rotDeg = std::fmod(rot * 180.0 / M_PI, 360.0);
     if (rotDeg < 0.0) rotDeg += 360.0;
     bool parityDiff = (currentBounds.w & 1) != (currentBounds.h & 1);
     bool is90or270 = (std::fabs(rotDeg - 90.0) < 1.0 || std::fabs(rotDeg - 270.0) < 1.0);
-    float pivX = ccx, pivY = ccy;
-    float edgeY = (float)currentBounds.y;
-    if (is90or270 && parityDiff) {
-        pivX = (float)std::round(ccx - hw) + (float)std::round(hw);
-        pivY = (float)std::round(ccy - hh) + (float)std::round(hh);
-        edgeY = (float)std::round(ccy - hh);
-    }
-    float rnx, rny;
-    rotatePt(pivX, edgeY, pivX, pivY, rot, rnx, rny);
-    int nwx, nwy;
-    mapper->getWindowCoords((int)std::round(rnx), (int)std::round(rny), &nwx, &nwy);
-    rhwx = (int)std::round(nwx + std::sin(rot) * ROT_OFFSET);
-    rhwy = (int)std::round(nwy - std::cos(rot) * ROT_OFFSET);
-}
-
-TransformTool::Handle TransformTool::getHandle(int cX, int cY) const {
-    const SDL_Rect& a = currentBounds;
-    float ccx = drawCenterX, ccy = drawCenterY;
-    float rot = getRotation();
-    float hw = a.w * 0.5f, hh = a.h * 0.5f;
-    double rotDeg = std::fmod(rot * 180.0 / M_PI, 360.0);
-    if (rotDeg < 0.0) rotDeg += 360.0;
-    bool parityDiff = (a.w & 1) != (a.h & 1);
-    bool is90or270 = (std::fabs(rotDeg - 90.0) < 1.0 || std::fabs(rotDeg - 270.0) < 1.0);
     float boxLeft, boxTop, pivX, pivY;
     if (is90or270 && parityDiff) {
-        boxLeft = (float)std::round(ccx - hw); boxTop = (float)std::round(ccy - hh);
-        pivX = boxLeft + (float)std::round(hw); pivY = boxTop + (float)std::round(hh);
+        float rx = (float)std::round(ccx - hw), ry = (float)std::round(ccy - hh);
+        boxLeft = rx; boxTop = ry;
+        pivX = rx + (float)std::round(hw);
+        pivY = ry + (float)std::round(hh);
     } else {
         boxLeft = ccx - hw; boxTop = ccy - hh;
         pivX = ccx; pivY = ccy;
     }
-
-    int wX, wY; SDL_GetMouseState(&wX, &wY);
-    {
-        int rhwx, rhwy; getRotateHandleWin(rhwx, rhwy);
-        const int G = GRAB_WIN;
-        if (std::abs(wX - rhwx) <= G && std::abs(wY - rhwy) <= G)
-            return Handle::ROTATE;
-    }
-
-    struct CPt { float x, y; Handle h; };
-    CPt pts[] = {
-        { boxLeft, boxTop, Handle::NW }, { pivX, boxTop, Handle::N  }, { boxLeft + a.w, boxTop, Handle::NE },
-        { boxLeft, pivY, Handle::W  },                 { boxLeft + a.w, pivY, Handle::E  },
-        { boxLeft, boxTop + a.h, Handle::SW }, { pivX, boxTop + a.h, Handle::S  }, { boxLeft + a.w, boxTop + a.h, Handle::SE },
+    float corners[4][2] = {
+        { boxLeft, boxTop },
+        { boxLeft + currentBounds.w, boxTop },
+        { boxLeft + currentBounds.w, boxTop + currentBounds.h },
+        { boxLeft, boxTop + currentBounds.h },
     };
-    const int G = GRAB_WIN;
-    for (auto& p : pts) {
+    for (int i = 0; i < 4; ++i) {
         float rx, ry;
-        rotatePt(p.x, p.y, pivX, pivY, rot, rx, ry);
-        int wpx, wpy;
-        mapper->getWindowCoords((int)std::round(rx), (int)std::round(ry), &wpx, &wpy);
-        if (std::abs(wX - wpx) <= G && std::abs(wY - wpy) <= G)
-            return p.h;
+        rotatePt(corners[i][0], corners[i][1], pivX, pivY, rot, rx, ry);
+        mapper->getWindowCoords((int)std::round(rx), (int)std::round(ry), &wpts[i].x, &wpts[i].y);
+    }
+}
+
+void TransformTool::getRotateHandleWin(int& rhwx, int& rhwy) const {
+    SDL_Point wpts[4];
+    getBoxWindowCorners(wpts);
+    getRotateHandleWin(rhwx, rhwy, wpts);
+}
+
+void TransformTool::getRotateHandleWin(int& rhwx, int& rhwy, const SDL_Point wpts[4]) const {
+    float cx = (wpts[0].x + wpts[1].x) * 0.5f;
+    float cy = (wpts[0].y + wpts[1].y) * 0.5f;
+    float dx = (float)(wpts[1].x - wpts[0].x);
+    float dy = (float)(wpts[1].y - wpts[0].y);
+    float len = std::sqrt(dx * dx + dy * dy);
+    if (len > 0.f) {
+        // Outward normal from top edge (y down): (dy, -dx) points outside/above the shape
+        float nx =  dy / len;
+        float ny = -dx / len;
+        rhwx = (int)std::round(cx + nx * ROT_OFFSET);
+        rhwy = (int)std::round(cy + ny * ROT_OFFSET);
+    } else {
+        rhwx = (int)std::round(cx);
+        rhwy = (int)std::round(cy - ROT_OFFSET);
+    }
+}
+
+TransformTool::Handle TransformTool::getHandle(int cX, int cY) const {
+    SDL_Point wpts[4];
+    getBoxWindowCorners(wpts);
+    int wX, wY;
+    SDL_GetMouseState(&wX, &wY);
+    const int G = GRAB_WIN;
+
+    int rhwx, rhwy;
+    getRotateHandleWin(rhwx, rhwy, wpts);
+    if (std::abs(wX - rhwx) <= G && std::abs(wY - rhwy) <= G)
+        return Handle::ROTATE;
+
+    // Corners from wpts; edge handles at window-space midpoints so they lie on the dotted lines
+    int hx[8], hy[8];
+    hx[0] = wpts[0].x; hy[0] = wpts[0].y;
+    hx[1] = (wpts[0].x + wpts[1].x) / 2; hy[1] = (wpts[0].y + wpts[1].y) / 2;
+    hx[2] = wpts[1].x; hy[2] = wpts[1].y;
+    hx[3] = (wpts[0].x + wpts[3].x) / 2; hy[3] = (wpts[0].y + wpts[3].y) / 2;
+    hx[4] = (wpts[1].x + wpts[2].x) / 2; hy[4] = (wpts[1].y + wpts[2].y) / 2;
+    hx[5] = wpts[3].x; hy[5] = wpts[3].y;
+    hx[6] = (wpts[2].x + wpts[3].x) / 2; hy[6] = (wpts[2].y + wpts[3].y) / 2;
+    hx[7] = wpts[2].x; hy[7] = wpts[2].y;
+    static const Handle handleOrder[] = {
+        Handle::NW, Handle::N, Handle::NE, Handle::W, Handle::E, Handle::SW, Handle::S, Handle::SE
+    };
+    for (int i = 0; i < 8; ++i) {
+        if (std::abs(wX - hx[i]) <= G && std::abs(wY - hy[i]) <= G)
+            return handleOrder[i];
     }
     return Handle::NONE;
 }
@@ -370,23 +390,9 @@ void TransformTool::nudge(int dx, int dy) {
 }
 
 void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
-    float ccx = drawCenterX, ccy = drawCenterY;
-    float rot = getRotation();
-    float hw = currentBounds.w * 0.5f, hh = currentBounds.h * 0.5f;
-    double rotDeg = std::fmod(rot * 180.0 / M_PI, 360.0);
-    if (rotDeg < 0.0) rotDeg += 360.0;
-    bool parityDiff = (currentBounds.w & 1) != (currentBounds.h & 1);
-    bool is90or270 = (std::fabs(rotDeg - 90.0) < 1.0 || std::fabs(rotDeg - 270.0) < 1.0);
-    float boxLeft, boxTop, pivX, pivY;
-    if (is90or270 && parityDiff) {
-        float rx = (float)std::round(ccx - hw), ry = (float)std::round(ccy - hh);
-        boxLeft = rx; boxTop = ry;
-        pivX = rx + (float)std::round(hw);
-        pivY = ry + (float)std::round(hh);
-    } else {
-        boxLeft = ccx - hw; boxTop = ccy - hh;
-        pivX = ccx; pivY = ccy;
-    }
+    SDL_Point wpts[4];
+    getBoxWindowCorners(wpts);
+
     auto drawDashed = [&](int ax, int ay, int bx, int by) {
         int dx = bx - ax, dy = by - ay;
         int steps = std::max(std::abs(dx), std::abs(dy));
@@ -400,31 +406,13 @@ void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
             SDL_RenderDrawPoint(winRenderer, px, py);
         }
     };
-    {
-        float corners[4][2] = {
-            { boxLeft, boxTop },
-            { boxLeft + currentBounds.w, boxTop },
-            { boxLeft + currentBounds.w, boxTop + currentBounds.h },
-            { boxLeft, boxTop + currentBounds.h },
-        };
-        SDL_Point wpts[4];
-        for (int i = 0; i < 4; ++i) {
-            float rx, ry;
-            rotatePt(corners[i][0], corners[i][1], pivX, pivY, rot, rx, ry);
-            mapper->getWindowCoords((int)std::round(rx), (int)std::round(ry), &wpts[i].x, &wpts[i].y);
-        }
-        drawDashed(wpts[0].x, wpts[0].y, wpts[1].x, wpts[1].y);
-        drawDashed(wpts[1].x, wpts[1].y, wpts[2].x, wpts[2].y);
-        drawDashed(wpts[2].x, wpts[2].y, wpts[3].x, wpts[3].y);
-        drawDashed(wpts[3].x, wpts[3].y, wpts[0].x, wpts[0].y);
-    }
+    drawDashed(wpts[0].x, wpts[0].y, wpts[1].x, wpts[1].y);
+    drawDashed(wpts[1].x, wpts[1].y, wpts[2].x, wpts[2].y);
+    drawDashed(wpts[2].x, wpts[2].y, wpts[3].x, wpts[3].y);
+    drawDashed(wpts[3].x, wpts[3].y, wpts[0].x, wpts[0].y);
+
     const int hs = 4;
-    struct CPt { float x, y; };
-    CPt pts[] = {
-        { boxLeft, boxTop }, { pivX, boxTop }, { boxLeft + currentBounds.w, boxTop },
-        { boxLeft, pivY },                     { boxLeft + currentBounds.w, pivY },
-        { boxLeft, boxTop + currentBounds.h }, { pivX, boxTop + currentBounds.h }, { boxLeft + currentBounds.w, boxTop + currentBounds.h },
-    };
+    float rot = getRotation();
     float sinR = std::sin(rot), cosR = std::cos(rot);
     float uWx =  cosR * hs, uWy =  sinR * hs;
     float vWx = -sinR * hs, vWy =  cosR * hs;
@@ -448,34 +436,37 @@ void TransformTool::drawHandles(SDL_Renderer* winRenderer) const {
         }
     };
 
-    for (auto& p : pts) {
-        float rx, ry;
-        rotatePt(p.x, p.y, pivX, pivY, rot, rx, ry);
-        int wpx, wpy;
-        mapper->getWindowCoords((int)std::round(rx), (int)std::round(ry), &wpx, &wpy);
+    // Same 8 positions as getHandle: corners from wpts, edge handles at window-space midpoints
+    int wpx[8], wpy[8];
+    wpx[0] = wpts[0].x; wpy[0] = wpts[0].y;
+    wpx[1] = (wpts[0].x + wpts[1].x) / 2; wpy[1] = (wpts[0].y + wpts[1].y) / 2;
+    wpx[2] = wpts[1].x; wpy[2] = wpts[1].y;
+    wpx[3] = (wpts[0].x + wpts[3].x) / 2; wpy[3] = (wpts[0].y + wpts[3].y) / 2;
+    wpx[4] = (wpts[1].x + wpts[2].x) / 2; wpy[4] = (wpts[1].y + wpts[2].y) / 2;
+    wpx[5] = wpts[3].x; wpy[5] = wpts[3].y;
+    wpx[6] = (wpts[2].x + wpts[3].x) / 2; wpy[6] = (wpts[2].y + wpts[3].y) / 2;
+    wpx[7] = wpts[2].x; wpy[7] = wpts[2].y;
 
+    for (int i = 0; i < 8; ++i) {
+        float px = (float)wpx[i], py = (float)wpy[i];
         SDL_Point corners[4] = {
-            { (int)std::round(wpx - uWx - vWx), (int)std::round(wpy - uWy - vWy) },
-            { (int)std::round(wpx + uWx - vWx), (int)std::round(wpy + uWy - vWy) },
-            { (int)std::round(wpx + uWx + vWx), (int)std::round(wpy + uWy + vWy) },
-            { (int)std::round(wpx - uWx + vWx), (int)std::round(wpy - uWy + vWy) },
+            { (int)std::round(px - uWx - vWx), (int)std::round(py - uWy - vWy) },
+            { (int)std::round(px + uWx - vWx), (int)std::round(py + uWy - vWy) },
+            { (int)std::round(px + uWx + vWx), (int)std::round(py + uWy + vWy) },
+            { (int)std::round(px - uWx + vWx), (int)std::round(py - uWy + vWy) },
         };
         SDL_SetRenderDrawColor(winRenderer, 255, 255, 255, 255);
         fillQuad(corners);
         SDL_SetRenderDrawColor(winRenderer, 0, 0, 0, 255);
-        for (int i = 0; i < 4; i++)
-            SDL_RenderDrawLine(winRenderer, corners[i].x, corners[i].y,
-                               corners[(i+1)%4].x, corners[(i+1)%4].y);
+        for (int j = 0; j < 4; j++)
+            SDL_RenderDrawLine(winRenderer, corners[j].x, corners[j].y,
+                               corners[(j+1)%4].x, corners[(j+1)%4].y);
     }
     {
-        float rnx, rny;
-        rotatePt(ccx, ccy - hh, ccx, ccy, rot, rnx, rny);
-        int nwx, nwy;
-        mapper->getWindowCoords((int)std::round(rnx), (int)std::round(rny), &nwx, &nwy);
-
+        int nwx = (wpts[0].x + wpts[1].x) / 2;
+        int nwy = (wpts[0].y + wpts[1].y) / 2;
         int rhwx, rhwy;
-        getRotateHandleWin(rhwx, rhwy);
-
+        getRotateHandleWin(rhwx, rhwy, wpts);
         drawDashed(nwx, nwy, rhwx, rhwy);
         SDL_SetRenderDrawColor(winRenderer, 255, 255, 255, 255);
         DrawingUtils::drawFillCircle(winRenderer, rhwx, rhwy, hs);

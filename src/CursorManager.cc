@@ -786,7 +786,22 @@ void CursorManager::update(ICoordinateMapper* mapper,
             }
             break;
         }
-        case ToolType::LINE:
+        case ToolType::LINE: {
+            ShapeTool* st = static_cast<ShapeTool*>(currentTool);
+            if (st && st->isLineEditing() && overCanvas) {
+                int cX, cY;
+                mapper->getCanvasCoords(mouseWinX, mouseWinY, &cX, &cY);
+                if (st->isOverLineBody(cX, cY))
+                    setCursor(curSizeAll);   // move whole line
+                else if (st->isOverLineHandle(cX, cY))
+                    setCursor(curHand);    // drag endpoint
+                else
+                    setCursor(curCross);
+            } else {
+                setCursor(curCross);
+            }
+            break;
+        }
         case ToolType::RECT:
         case ToolType::CIRCLE:
             setCursor(curCross);
