@@ -46,12 +46,11 @@ kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
     setTool(ToolType::SELECT);
 
     // When the user picks a color while a selection is floating, fill it immediately.
-    // Transparent is excluded so picking transparent only sets the brush for future drawing.
+    // Transparent is shown as translucent blue and committed as transparent (same as shape tools).
     toolbar.onColorChanged = [this](SDL_Color color) {
         if (toolbar.currentType != ToolType::SELECT) return;
         auto* st = static_cast<SelectTool*>(currentTool.get());
         if (!st || !st->isSelectionActive()) return;
-        if (color.a == 0) return; // don't fill selection with transparent
         st->fillWithColor(renderer, color);
     };
 
@@ -845,6 +844,30 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
             }
             break;
         }
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER: {
+            // Commit selection/resize (stamp and exit tool) — same as clicking on canvas
+            if (toolbar.currentType == ToolType::SELECT) {
+                auto* st = static_cast<SelectTool*>(currentTool.get());
+                if (st->isSelectionActive()) {
+                    bool dirty = st->isDirty();
+                    withCanvas([&]{ st->deactivate(renderer); });
+                    if (dirty) saveState();
+                    needsRedraw = true;
+                    overlayDirty = true;
+                }
+            } else if (toolbar.currentType == ToolType::RESIZE) {
+                auto* rt = static_cast<ResizeTool*>(currentTool.get());
+                bool renders = rt->willRender();
+                withCanvas([&]{ rt->deactivate(renderer); });
+                if (renders) saveState();
+                currentTool.reset();
+                setTool(originalType);
+                needsRedraw = true;
+                overlayDirty = true;
+            }
+            break;
+        }
         case SDLK_b:
             if (originalType == ToolType::BRUSH)  toolbar.squareBrush = !toolbar.squareBrush;
             setTool(ToolType::BRUSH);  needsRedraw = true; break;
@@ -1569,6 +1592,11 @@ void kPen::renderFrame(bool& overlayDirty) {
         SDL_RenderDrawRect(renderer, &ghost2);
     }
 
+    {
+        int mx, my;
+        SDL_GetMouseState(&mx, &my);
+        toolbar.setMousePosition(mx, my);
+    }
     toolbar.draw(spaceHeld || handToggledOn, winW_, winH_);
 
     // Mouse coords at bottom-right (canvas coordinates); hide when mouse is out of canvas bounds

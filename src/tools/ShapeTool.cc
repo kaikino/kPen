@@ -61,8 +61,12 @@ void ShapeTool::commitLine(SDL_Renderer* r) {
     int cw, ch;
     mapper->getCanvasSize(&cw, &ch);
     SDL_Color col = cachedColor;
-    if (col.a == 0) col = { 0, 0, 0, 255 };
-    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    if (col.a == 0) {
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+    } else {
+        SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    }
     int iStartX = lineStartX, iStartY = lineStartY, iEndX = lineEndX, iEndY = lineEndY;
     if (iStartX > iEndX) std::swap(iStartX, iEndX);
     if (iStartY > iEndY) std::swap(iStartY, iEndY);
@@ -71,6 +75,7 @@ void ShapeTool::commitLine(SDL_Renderer* r) {
     } else {
         DrawingUtils::drawLine(r, lineStartX, lineStartY, lineEndX, lineEndY, cachedBrushSize, cw, ch);
     }
+    if (col.a == 0) SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     lineEditMode = false;
     draggingLineHandle = -1;
     if (onLineCommitted) onLineCommitted();

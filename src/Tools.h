@@ -122,6 +122,7 @@ class SelectTool : public TransformTool {
     bool         active           = false;
     bool         dirty            = false;
     bool         lassoMode_       = false;
+    bool         fillColorIsTransparent_ = false;  // fill displayed as translucent blue, committed as transparent
     std::vector<SDL_Point> lassoPoints_;
     static bool pointInPolygon(int px, int py, const std::vector<SDL_Point>& poly);
     void commitLassoSelection(SDL_Renderer* r, int canvasW, int canvasH);

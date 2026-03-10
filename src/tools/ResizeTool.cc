@@ -114,7 +114,7 @@ void ResizeTool::onOverlayRender(SDL_Renderer* r) {
     int cw, ch; mapper->getCanvasSize(&cw, &ch);
     SDL_Color drawColor = *liveColor;
     if (drawColor.a == 0) {
-        drawColor = { 100, 149, 237, 128 };
+        drawColor = { 100, 149, 237, 200 };  // same translucent blue as line/selection transparent preview
     }
     const SDL_Rect b = currentBounds;
     float hw = b.w * 0.5f, hh = b.h * 0.5f;

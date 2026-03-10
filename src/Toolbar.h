@@ -58,6 +58,8 @@ class Toolbar {
 
     Toolbar(SDL_Renderer* renderer, kPen* app);
     void draw(bool handActive, int winW, int winH);
+    /** Call with current mouse position so tooltip can be shown when hovering a tool. */
+    void setMousePosition(int x, int y);
 
     bool onMouseDown(int x, int y);
     bool onMouseMotion(int x, int y);
@@ -129,6 +131,12 @@ class Toolbar {
     int    resizeLockH = 800;
     CanvasResizeRequest pendingResize;
     mutable int resizePanelY = 0;
+
+    int    tooltipMouseX = -1;
+    int    tooltipMouseY = -1;
+    int    tooltipHoveredIndex = -1;
+    Uint32 tooltipHoverStartTicks = 0;
+    static constexpr Uint32 TOOLTIP_DELAY_MS = 0;
     void drawResizePanel(int panelY);
     bool hitResizePanel(int x, int sy, bool isDown);
     void drawDigitString(int x, int y, const char* s, int len) const;
@@ -146,9 +154,11 @@ class Toolbar {
     int swatchCellSize()  const { return (contentWidth() - 4) / 3; }
     int swatchCellStride() const { return swatchCellSize() + 2; }
 
+    int getToolIndexAt(int x, int y) const;
     int hitCustomSwatch(int x, int y) const;
     int hitPresetSwatch(int x, int y) const;
     void drawIcon(int cx, int cy, ToolType t, bool active);
+    void drawTooltip(int winW, int winH);
     void updateSliderFromMouse(int x);
     void updateWheelFromMouse(int x, int y);
     void updateBrightnessFromMouse(int x);

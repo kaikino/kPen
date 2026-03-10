@@ -1,9 +1,11 @@
 #define _USE_MATH_DEFINES
 #include "Toolbar.h"
 #include "kPen.h"
+#include <SDL2/SDL_timer.h>
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 
 constexpr int toolGrid[3][3] = {{0,1,2},{3,-1,4},{5,6,7}};
 constexpr ToolType toolTypes[] = {
@@ -12,10 +14,36 @@ constexpr ToolType toolTypes[] = {
     ToolType::FILL, ToolType::PICK
 };
 
+static const char* const toolNames[] = {
+    "Brush", "Line", "Eraser", "Rectangle", "Circle", "Select", "Fill", "Eyedropper"
+};
+
 Toolbar::Toolbar(SDL_Renderer* renderer, kPen* app)
     : renderer(renderer), app(app)
 {
     rgbToHsv(brushColor, hue, sat, val);
+}
+
+void Toolbar::setMousePosition(int x, int y) {
+    tooltipMouseX = x;
+    tooltipMouseY = y;
+}
+
+int Toolbar::getToolIndexAt(int x, int y) const {
+    if (x >= TB_W) return -1;
+    const int cellW = toolCellW();
+    const int ty = toolStartY() - scrollY;
+    for (int row = 0; row < 3; row++) {
+        for (int col = 0; col < 3; col++) {
+            int idx = toolGrid[row][col];
+            if (idx < 0) continue;
+            int bx = TB_PAD / 2 + col * cellW;
+            int by = ty + row * (ICON_SIZE + ICON_GAP);
+            if (x >= bx && x < bx + cellW - 2 && y >= by && y < by + ICON_SIZE)
+                return idx;
+        }
+    }
+    return -1;
 }
 
 SDL_Color Toolbar::hsvToRgb(float h, float s, float v) {
@@ -40,6 +68,199 @@ void Toolbar::rgbToHsv(SDL_Color c, float& h, float& s, float& v) {
     else if (mx == g) h = ((b-r)/d + 2) / 6.f;
     else              h = ((r-g)/d + 4) / 6.f;
     if (h < 0) h += 1.f;
+}
+
+// 5x7 font: 7 rows per char, 5 LSBs per row (row-major). Index 0=space, 1-26=A-Z, 27-36=0-9, 37=comma.
+static const uint8_t FONT_5X7[38][7] = {
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, // space
+    { 0x04, 0x0A, 0x11, 0x11, 0x1F, 0x11, 0x11 }, // A
+    { 0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E }, // B
+    { 0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E }, // C
+    { 0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E }, // D
+    { 0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F }, // E
+    { 0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10 }, // F
+    { 0x0E, 0x11, 0x10, 0x13, 0x11, 0x11, 0x0F }, // G
+    { 0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11 }, // H
+    { 0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E }, // I
+    { 0x01, 0x01, 0x01, 0x01, 0x11, 0x11, 0x0E }, // J
+    { 0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11 }, // K
+    { 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F }, // L
+    { 0x11, 0x1B, 0x15, 0x11, 0x11, 0x11, 0x11 }, // M
+    { 0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11 }, // N
+    { 0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E }, // O
+    { 0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10 }, // P
+    { 0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D }, // Q
+    { 0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11 }, // R
+    { 0x0F, 0x10, 0x10, 0x0E, 0x01, 0x11, 0x1E }, // S
+    { 0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04 }, // T
+    { 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E }, // U
+    { 0x11, 0x11, 0x11, 0x0A, 0x0A, 0x04, 0x04 }, // V
+    { 0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11 }, // W
+    { 0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11 }, // X
+    { 0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04 }, // Y
+    { 0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F }, // Z
+    // 27-36: 0-9
+    { 0x1F, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1F }, // 0
+    { 0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x1F }, // 1
+    { 0x1F, 0x01, 0x01, 0x1F, 0x10, 0x10, 0x1F }, // 2
+    { 0x1F, 0x01, 0x01, 0x0F, 0x01, 0x01, 0x1F }, // 3
+    { 0x11, 0x11, 0x11, 0x1F, 0x01, 0x01, 0x01 }, // 4
+    { 0x1F, 0x10, 0x10, 0x1F, 0x01, 0x01, 0x1F }, // 5
+    { 0x1F, 0x10, 0x10, 0x1F, 0x11, 0x11, 0x1F }, // 6
+    { 0x1F, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01 }, // 7
+    { 0x1F, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x1F }, // 8
+    { 0x1F, 0x11, 0x11, 0x1F, 0x01, 0x01, 0x1F }, // 9
+    { 0x00, 0x00, 0x00, 0x00, 0x04, 0x04, 0x08 }, // comma (37)
+};
+
+static void formatRgb(char* buf, size_t size, const SDL_Color& c) {
+    snprintf(buf, size, "%d,%d,%d", (int)c.r, (int)c.g, (int)c.b);
+}
+
+static void drawTooltipString(SDL_Renderer* r, int x, int y, const char* s) {
+    const int scale = 1;
+    const int charW = 5 * scale + 2;
+    int cx = x;
+    for (; *s; s++) {
+        char c = *s;
+        int gi = 0;
+        if (c >= 'A' && c <= 'Z') gi = 1 + (c - 'A');
+        else if (c >= 'a' && c <= 'z') gi = 1 + (c - 'a');
+        else if (c >= '0' && c <= '9') gi = 27 + (c - '0');
+        else if (c == ',') gi = 37;
+        if (gi < 0 || gi > 37) continue;
+        const uint8_t* rows = FONT_5X7[gi];
+        for (int row = 0; row < 7; row++) {
+            for (int col = 0; col < 5; col++) {
+                if (rows[row] & (1 << (4 - col))) {
+                    SDL_Rect px = { cx + col * scale, y + row * scale, scale, scale };
+                    SDL_RenderFillRect(r, &px);
+                }
+            }
+        }
+        cx += charW;
+    }
+}
+
+void Toolbar::drawTooltip(int winW, int winH) {
+    if (tooltipMouseX < 0 || tooltipMouseY < 0) return;
+    if (draggingSwatch) return;
+    Uint32 now = SDL_GetTicks();
+
+    int toolIdx = getToolIndexAt(tooltipMouseX, tooltipMouseY);
+    int customIdx = hitCustomSwatch(tooltipMouseX, tooltipMouseY);
+    int presetIdx = hitPresetSwatch(tooltipMouseX, tooltipMouseY);
+    bool overWheel = false;
+    if (colorWheelR > 0) {
+        float dx = (float)(tooltipMouseX - colorWheelCX);
+        float dy = (float)(tooltipMouseY - colorWheelCY);
+        overWheel = (dx*dx + dy*dy <= (float)(colorWheelR * colorWheelR));
+    }
+    bool overBrightness = false;
+    if (brightnessRect.w > 0 && brightnessRect.h > 0) {
+        SDL_Rect bExp = { brightnessRect.x - 2, brightnessRect.y - 4,
+                          brightnessRect.w + 4, brightnessRect.h + 8 };
+        SDL_Point bp = { tooltipMouseX, tooltipMouseY };
+        overBrightness = SDL_PointInRect(&bp, &bExp) != 0;
+    }
+    bool overLockBtn = false, overScaleBtn = false;
+    if (resizePanelY != 0) {
+        static const int RP_FH = 16, RP_BH = 20;  // match drawResizePanel / hitResizePanel
+        int panelY = resizePanelY;
+        int ry = panelY + 12;
+        int fieldX = TB_PAD;
+        int fieldW = contentWidth();
+        int halfW2 = (fieldW - 2) / 2;
+        int hY = ry + RP_FH + 4;
+        int btnY = hY + RP_FH + 6;
+        SDL_Rect lockBtn  = { fieldX, btnY, halfW2, RP_BH };
+        SDL_Rect scaleBtn = { fieldX + halfW2 + 2, btnY, halfW2, RP_BH };
+        SDL_Point pt = { tooltipMouseX, tooltipMouseY };
+        overLockBtn  = SDL_PointInRect(&pt, &lockBtn) != 0;
+        overScaleBtn = SDL_PointInRect(&pt, &scaleBtn) != 0;
+    }
+
+    int hoverKey = -1;
+    const char* label = nullptr;
+    char rgbBuf[20];
+
+    if (draggingWheel) {
+        hoverKey = 3000;
+        formatRgb(rgbBuf, sizeof(rgbBuf), brushColor);
+        label = rgbBuf;
+    } else if (toolIdx >= 0) {
+        hoverKey = toolIdx;
+        label = toolNames[toolIdx];
+    } else if (customIdx >= 0) {
+        hoverKey = 1000 + customIdx;
+        formatRgb(rgbBuf, sizeof(rgbBuf), customColors[customIdx]);
+        label = rgbBuf;
+    } else if (presetIdx >= 0) {
+        hoverKey = 2000 + presetIdx;
+        if (presetIdx == TRANSPARENT_PRESET_IDX)
+            label = "Transparent";
+        else {
+            formatRgb(rgbBuf, sizeof(rgbBuf), PRESETS[presetIdx]);
+            label = rgbBuf;
+        }
+    } else if (overBrightness) {
+        hoverKey = 4000;
+        float t = (float)(tooltipMouseX - brightnessRect.x) / (float)brightnessRect.w;
+        t = std::max(0.f, std::min(1.f, t));
+        SDL_Color c = hsvToRgb(hue, sat, t);
+        formatRgb(rgbBuf, sizeof(rgbBuf), c);
+        label = rgbBuf;
+    } else if (overWheel) {
+        hoverKey = 3000;
+        float dx = (float)(tooltipMouseX - colorWheelCX);
+        float dy = (float)(tooltipMouseY - colorWheelCY);
+        float dist = std::sqrt(dx*dx + dy*dy);
+        float h = fmod(atan2(dy, dx) / (2.f * (float)M_PI) + 1.f, 1.f);
+        float s = (colorWheelR > 0) ? std::min(1.f, dist / (float)colorWheelR) : 0.f;
+        SDL_Color c = hsvToRgb(h, s, val);
+        formatRgb(rgbBuf, sizeof(rgbBuf), c);
+        label = rgbBuf;
+    } else if (overLockBtn) {
+        hoverKey = 5000;
+        label = resizeLockAspect ? "Unlock Aspect" : "Lock Aspect";
+    } else if (overScaleBtn) {
+        hoverKey = 6000;
+        label = resizeScaleMode ? "Crop Contents" : "Scale Contents";
+    }
+
+    if (hoverKey != tooltipHoveredIndex) {
+        tooltipHoveredIndex = hoverKey;
+        tooltipHoverStartTicks = now;
+    }
+    if (hoverKey < 0) return;
+    if (now - tooltipHoverStartTicks < TOOLTIP_DELAY_MS) return;
+
+    const int scale = 1;
+    const int charW = 5 * scale + 2;
+    int textW = 0;
+    for (const char* p = label; *p; p++) textW += charW;
+    int textH = 7 * scale;
+    const int padH = 2;
+    const int padV = 2;
+    int boxW = textW + padH * 2;
+    int boxH = textH + padV * 2;
+    int offsetX = 14;
+    int offsetY = 14;
+    int tipX = tooltipMouseX + offsetX;
+    int tipY = tooltipMouseY + offsetY;
+    if (tipX + boxW > winW) tipX = tooltipMouseX - boxW - 4;
+    if (tipY + boxH > winH) tipY = tooltipMouseY - boxH - 4;
+    if (tipX < 0) tipX = 4;
+    if (tipY < 0) tipY = 4;
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 40, 40, 45, 245);
+    SDL_Rect box = { tipX, tipY, boxW, boxH };
+    SDL_RenderFillRect(renderer, &box);
+    SDL_SetRenderDrawColor(renderer, 100, 100, 110, 255);
+    SDL_RenderDrawRect(renderer, &box);
+    SDL_SetRenderDrawColor(renderer, 230, 230, 240, 255);
+    drawTooltipString(renderer, tipX + padH, tipY + padV, label);
 }
 
 int Toolbar::hitCustomSwatch(int x, int y) const {
@@ -430,6 +651,8 @@ void Toolbar::draw(bool handActive, int winW, int winH) {
         SDL_SetRenderDrawColor(renderer, 100, 100, 115, 255);
         SDL_RenderFillRect(renderer, &sbThumb);
     }
+
+    drawTooltip(winW, winH);
 }
 
 // --- Mouse update helpers ---

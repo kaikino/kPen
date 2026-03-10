@@ -4,6 +4,10 @@
 #include <algorithm>
 #include <cstring>
 
+// When user picks transparent, we store this preview color for display; on commit we treat it as transparent.
+static constexpr uint32_t TRANSPARENT_FILL_PREVIEW_ARGB =
+    (static_cast<uint32_t>(200) << 24) | (100u << 16) | (149u << 8) | 237u;  // CornflowerBlue, same as line overlay
+
 SelectTool::SelectTool(ICoordinateMapper* m, bool lassoMode)
     : TransformTool(m), lassoMode_(lassoMode) {}
 
@@ -93,6 +97,7 @@ void SelectTool::commitLassoSelection(SDL_Renderer* r, int canvasW, int canvasH)
     rotation = 0.f;
     syncDrawCenterFromBounds();
     active = true;
+    fillColorIsTransparent_ = false;
     isDrawing = false;
     lassoPoints_.clear();
 }
@@ -232,6 +237,46 @@ void SelectTool::onPreviewRender(SDL_Renderer* r, int /*brushSize*/, SDL_Color /
 void SelectTool::deactivate(SDL_Renderer* r) {
     if (!active) return;
     if (selectionTexture) {
+        if (fillColorIsTransparent_) {
+            int w = currentBounds.w, h = currentBounds.h;
+            std::vector<uint32_t> pixels(static_cast<size_t>(w) * h);
+            SDL_Texture* prev = SDL_GetRenderTarget(r);
+            SDL_SetRenderTarget(r, selectionTexture);
+            SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), w * 4);
+            SDL_SetRenderTarget(r, prev);
+
+            // Clear only canvas pixels that correspond to the transparent-fill (blue preview),
+            // before we overwrite those with 0 in the texture.
+            int cw, ch;
+            mapper->getCanvasSize(&cw, &ch);
+            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+            for (int j = 0; j < h; j++) {
+                for (int i = 0; i < w; i++) {
+                    if (pixels[static_cast<size_t>(j) * w + i] != TRANSPARENT_FILL_PREVIEW_ARGB)
+                        continue;
+                    float px = currentBounds.x + (i + 0.5f) / (float)w * currentBounds.w;
+                    float py = currentBounds.y + (j + 0.5f) / (float)h * currentBounds.h;
+                    float outX, outY;
+                    rotatePt(px, py, drawCenterX, drawCenterY, getRotation(), outX, outY);
+                    int ix = (int)std::round(outX), iy = (int)std::round(outY);
+                    if (ix >= 0 && ix < cw && iy >= 0 && iy < ch)
+                        SDL_RenderDrawPoint(r, ix, iy);
+                }
+            }
+            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+
+            for (size_t i = 0; i < pixels.size(); i++) {
+                if (pixels[i] == TRANSPARENT_FILL_PREVIEW_ARGB) pixels[i] = 0;
+            }
+            SDL_Texture* tmp = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w, h);
+            if (tmp) {
+                SDL_SetTextureBlendMode(tmp, SDL_BLENDMODE_BLEND);
+                SDL_UpdateTexture(tmp, nullptr, pixels.data(), w * 4);
+                SDL_DestroyTexture(selectionTexture);
+                selectionTexture = tmp;
+            }
+        }
         renderWithTransform(r, currentBounds);
         SDL_DestroyTexture(selectionTexture);
         selectionTexture = nullptr;
@@ -251,6 +296,7 @@ void SelectTool::activateWithTexture(SDL_Texture* tex, SDL_Rect area) {
     syncDrawCenterFromBounds();
     active = true;
     dirty  = true;
+    fillColorIsTransparent_ = false;
     isMoving   = false;
     isRotating = false;
     resizing   = Handle::NONE;
@@ -287,6 +333,7 @@ void SelectTool::commitRectSelection(SDL_Renderer* r, int canvasW, int canvasH, 
     syncDrawCenterFromBounds();
     active = true;
     dirty = true;
+    fillColorIsTransparent_ = false;
     isMoving = false;
     isRotating = false;
     resizing = Handle::NONE;
@@ -312,6 +359,11 @@ std::vector<uint32_t> SelectTool::getFloatingPixels(SDL_Renderer* r) const {
     SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, pixels.data(), w * 4);
     SDL_SetRenderTarget(r, prev);
     SDL_DestroyTexture(tmp);
+    if (fillColorIsTransparent_) {
+        for (size_t i = 0; i < pixels.size(); i++) {
+            if (pixels[i] == TRANSPARENT_FILL_PREVIEW_ARGB) pixels[i] = 0;
+        }
+    }
     return pixels;
 }
 
@@ -319,10 +371,13 @@ void SelectTool::fillWithColor(SDL_Renderer* r, SDL_Color color) {
     if (!selectionTexture || !active) return;
     int w = currentBounds.w, h = currentBounds.h;
     if (w <= 0 || h <= 0) return;
-    const uint32_t newARGB = (static_cast<uint32_t>(color.a) << 24) |
-                            (static_cast<uint32_t>(color.r) << 16) |
-                            (static_cast<uint32_t>(color.g) << 8) |
-                            static_cast<uint32_t>(color.b);
+    fillColorIsTransparent_ = (color.a == 0);
+    const uint32_t newARGB = fillColorIsTransparent_
+        ? TRANSPARENT_FILL_PREVIEW_ARGB
+        : ((static_cast<uint32_t>(color.a) << 24) |
+           (static_cast<uint32_t>(color.r) << 16) |
+           (static_cast<uint32_t>(color.g) << 8) |
+           static_cast<uint32_t>(color.b));
 
     void* texPixels = nullptr;
     int pitch = 0;
