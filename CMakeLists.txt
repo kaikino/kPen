@@ -3,6 +3,38 @@ project(kPen)
 
 set(CMAKE_CXX_STANDARD 17)
 
+# App version from Git: use latest tag by version number (e.g. v1.1.1) so it updates after tagging.
+# Avoid OUTPUT_VARIABLE names that might collide with CMake internals (e.g. GIT_TAG).
+set(KPEN_VERSION_STRING "0.0.0")
+if(UNIX)
+    # Latest tag by semantic version (v1.0.0, v1.0.6, v1.1.1 -> v1.1.1)
+    execute_process(
+        COMMAND sh -c "git tag -l 'v*' 2>/dev/null | sort -V | tail -1"
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE KPEN_GIT_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+else()
+    execute_process(
+        COMMAND git describe --tags --abbrev=0
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE KPEN_GIT_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+endif()
+if(KPEN_GIT_TAG MATCHES "^v(.+)$")
+    set(KPEN_VERSION_STRING "${CMAKE_MATCH_1}")
+elseif(KPEN_GIT_TAG)
+    set(KPEN_VERSION_STRING "${KPEN_GIT_TAG}")
+endif()
+message(STATUS "kPen version: ${KPEN_VERSION_STRING}")
+configure_file(${CMAKE_SOURCE_DIR}/src/version.h.in ${CMAKE_BINARY_DIR}/version.h)
+if(APPLE)
+    configure_file(${CMAKE_SOURCE_DIR}/Info.plist.in ${CMAKE_BINARY_DIR}/Info.plist)
+endif()
+
 if(APPLE)
     list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew")
 endif()
@@ -21,7 +53,7 @@ if(APPLE)
     add_executable(kPen MACOSX_BUNDLE ${SRC_FILES})
     set_target_properties(kPen PROPERTIES
         MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/Info.plist"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_BINARY_DIR}/Info.plist"
     )
     target_link_libraries(kPen SDL2::SDL2 "-framework AppKit")
 
@@ -69,4 +101,4 @@ else()
     endif()
 endif()
 
-target_include_directories(kPen PRIVATE src)
+target_include_directories(kPen PRIVATE src ${CMAKE_BINARY_DIR})

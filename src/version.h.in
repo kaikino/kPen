@@ -1,0 +1,4 @@
+#ifndef KPEN_VERSION_H
+#define KPEN_VERSION_H
+#define KPEN_VERSION_STRING "@KPEN_VERSION_STRING@"
+#endif

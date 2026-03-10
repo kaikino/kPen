@@ -1637,6 +1637,13 @@ void kPen::run() {
     bool overlayDirty = false;
     SDL_Event e;
     Uint32 lastFrameTicks = 0;
+    {
+        static bool didLaunchUpdateCheck = false;
+        if (!didLaunchUpdateCheck) {
+            didLaunchUpdateCheck = true;
+            MacMenu::checkForUpdatesAsync();
+        }
+    }
     Uint32 lastCursorUpdateTicks = 0;
     int idleCount = 0;
     const int idleThreshold = 6;
