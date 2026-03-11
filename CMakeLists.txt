@@ -39,6 +39,14 @@ if(APPLE)
     list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew")
 endif()
 
+# Windows: app icon from kPenAppIcon.ico (generate from kPenAppIcon.png in CI)
+set(KPEN_RC_SOURCES "")
+if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/assets/kPenAppIcon.ico")
+    file(COPY "${CMAKE_SOURCE_DIR}/assets/kPenAppIcon.ico" DESTINATION ${CMAKE_BINARY_DIR})
+    configure_file(${CMAKE_SOURCE_DIR}/cmake/kPen.rc.in ${CMAKE_BINARY_DIR}/kPen.rc COPYONLY)
+    list(APPEND KPEN_RC_SOURCES ${CMAKE_BINARY_DIR}/kPen.rc)
+endif()
+
 find_package(SDL2 REQUIRED)
 include_directories(${SDL2_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS}/SDL2)
 
@@ -95,7 +103,7 @@ if(APPLE)
         )
     endif()
 else()
-    add_executable(kPen ${SRC_FILES})
+    add_executable(kPen ${SRC_FILES} ${KPEN_RC_SOURCES})
     
     if(WIN32)
         target_link_libraries(kPen PRIVATE 
@@ -117,5 +125,7 @@ if(WIN32)
     set(CPACK_PACKAGE_NAME "kPen")
     set(CPACK_PACKAGE_VERSION "${KPEN_VERSION_STRING}")
     set(CPACK_PACKAGE_EXECUTABLES "kPen;kPen")
+    # Install to "kPen" (no version in path) so upgrades use the same folder
+    set(CPACK_PACKAGE_INSTALL_DIRECTORY "kPen")
     include(CPack)
 endif()

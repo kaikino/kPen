@@ -12,9 +12,9 @@ a lightweight raster drawing app
 brew install --cask --no-quarantine kaikino/kpen/kpen
 ```
 
-**Windows** — Download the latest `kPen.exe` from [Releases](https://github.com/kaikino/kPen/releases) and run `kPen.exe`.
+**Windows** — Download and run the latest installer from [Releases](https://github.com/kaikino/kPen/releases).
 
-**Linux** — Download the latest `kPen` from [Releases](https://github.com/kaikino/kPen/releases) and run the `kPen` binary (`chmod +x kPen && ./kPen`).
+**Linux (Experimental!)** — Download the latest `kPen` from [Releases](https://github.com/kaikino/kPen/releases) and run the `kPen` binary (`chmod +x kPen && ./kPen`).
 
 **Build from source** — Requires CMake 3.10+, C++17, and SDL2.
 

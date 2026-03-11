@@ -38,12 +38,16 @@ jobs:
       - name: Windows — Build
         if: matrix.os == 'windows-latest'
         run: |
+          # Version from tag when building a release (checkout is shallow so git describe often fails)
+          $version = "0.0.0"
+          if ($env:GITHUB_REF -match "^refs/tags/v(.+)$") { $version = $Matches[1] }
           # We point to the toolchain file and ensure we use the static triplet
           cmake -B build -S . `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
             -DCMAKE_CXX_FLAGS="/DSDL_MAIN_HANDLED" `
-            -DCMAKE_EXE_LINKER_FLAGS="/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
+            -DCMAKE_EXE_LINKER_FLAGS="/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup" `
+            -DKPEN_VERSION_STRING="$version"
           cmake --build build --config Release
 
       - name: Windows — Package (NSIS installer)
@@ -132,7 +136,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/kPen-Windows.exe/kPen-${{ steps.version.outputs.VERSION }}-win64.exe
+            artifacts/kPen-Windows.exe/*.exe
             artifacts/kPen-Mac.dmg/*.dmg
             artifacts/kPen-Linux/kPen
           generate_release_notes: true
