@@ -8,6 +8,15 @@
 #include <cstdio>
 #include <string>
 #include "menu/MacMenu.h"
+#include "menu/WinMenu.h"
+#include "menu/WinUpdate.h"
+#ifdef _WIN32
+#define NOMINMAX
+#include "version.h"
+#include <windows.h>
+#include <shellapi.h>
+#include <cstdlib>
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -26,6 +35,7 @@ kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE | SDL_RENDERER_PRESENTVSYNC);
     cursorManager.init();  // must be after SDL_CreateWindow
     MacMenu::install();    // native macOS menu bar (no-op on other platforms)
+    WinMenu::install(window);  // native Windows menu bar (no-op on other platforms)
 
     toolbar = Toolbar(renderer, this);
 
@@ -750,6 +760,17 @@ void kPen::dispatchCommand(int code, bool& running, bool& needsRedraw, bool& ove
             needsRedraw = true; overlayDirty = true;
             break;
         }
+#ifdef _WIN32
+        case MacMenu::ABOUT: {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "kPen\nVersion %s", KPEN_VERSION_STRING);
+            MessageBoxA(nullptr, buf, "About kPen", MB_OK);
+            break;
+        }
+        case MacMenu::CHECK_FOR_UPDATES:
+            WinUpdate::startCheckAsync();
+            break;
+#endif
         default: break;
     }
 }
@@ -785,6 +806,36 @@ void kPen::handleQuit(bool& running) {
 }
 
 void kPen::handleUserEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty) {
+#ifdef _WIN32
+    if (e.user.code == WinUpdate::WIN_UPDATE_RESULT && e.user.data1) {
+        WinUpdate::WinUpdateResult* r = static_cast<WinUpdate::WinUpdateResult*>(e.user.data1);
+        if (r->has_update == 1) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Update available: %s\n\nDownload and install now?", r->version);
+            int choice = MessageBoxA(nullptr, msg, "kPen Update", MB_YESNO | MB_ICONQUESTION);
+            if (choice == IDYES)
+                WinUpdate::startDownloadAndInstall(r->url);
+        } else if (r->has_update == 0) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "You're on the latest version.\n\nkPen %s", r->version[0] ? r->version : KPEN_VERSION_STRING);
+            MessageBoxA(nullptr, msg, "kPen", MB_OK);
+        } else {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Could not check for updates.\n\n%s", r->error_msg[0] ? r->error_msg : "Please check your network.");
+            MessageBoxA(nullptr, msg, "kPen", MB_OK);
+        }
+        delete r;
+        return;
+    }
+    if (e.user.code == WinUpdate::WIN_INSTALL_LAUNCH && e.user.data1) {
+        char* path = static_cast<char*>(e.user.data1);
+        MessageBoxA(nullptr, "Download complete. The installer will run and kPen will close.", "kPen Update", MB_OK);
+        ShellExecuteA(nullptr, "open", path, nullptr, nullptr, SW_SHOWNORMAL);
+        free(path);
+        running = false;
+        return;
+    }
+#endif
     dispatchCommand(e.user.code, running, needsRedraw, overlayDirty);
 }
 
@@ -1637,6 +1688,13 @@ void kPen::run() {
     bool overlayDirty = false;
     SDL_Event e;
     Uint32 lastFrameTicks = 0;
+    {
+        static bool didLaunchUpdateCheck = false;
+        if (!didLaunchUpdateCheck) {
+            didLaunchUpdateCheck = true;
+            MacMenu::checkForUpdatesAsync();
+        }
+    }
     Uint32 lastCursorUpdateTicks = 0;
     int idleCount = 0;
     const int idleThreshold = 6;

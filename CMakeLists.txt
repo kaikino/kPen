@@ -3,6 +3,38 @@ project(kPen)
 
 set(CMAKE_CXX_STANDARD 17)
 
+# App version from Git: use latest tag by version number (e.g. v1.1.1) so it updates after tagging.
+# Avoid OUTPUT_VARIABLE names that might collide with CMake internals (e.g. GIT_TAG).
+set(KPEN_VERSION_STRING "0.0.0")
+if(UNIX)
+    # Latest tag by semantic version (v1.0.0, v1.0.6, v1.1.1 -> v1.1.1)
+    execute_process(
+        COMMAND sh -c "git tag -l 'v*' 2>/dev/null | sort -V | tail -1"
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE KPEN_GIT_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+else()
+    execute_process(
+        COMMAND git describe --tags --abbrev=0
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE KPEN_GIT_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+endif()
+if(KPEN_GIT_TAG MATCHES "^v(.+)$")
+    set(KPEN_VERSION_STRING "${CMAKE_MATCH_1}")
+elseif(KPEN_GIT_TAG)
+    set(KPEN_VERSION_STRING "${KPEN_GIT_TAG}")
+endif()
+message(STATUS "kPen version: ${KPEN_VERSION_STRING}")
+configure_file(${CMAKE_SOURCE_DIR}/src/version.h.in ${CMAKE_BINARY_DIR}/version.h)
+if(APPLE)
+    configure_file(${CMAKE_SOURCE_DIR}/Info.plist.in ${CMAKE_BINARY_DIR}/Info.plist)
+endif()
+
 if(APPLE)
     list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew")
 endif()
@@ -13,6 +45,12 @@ include_directories(${SDL2_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS}/SDL2)
 # Collect all .cc sources; add .mm only on Apple
 file(GLOB_RECURSE SRC_FILES "src/*.cc")
 
+# WinMenu and WinUpdate only on Windows (native menu bar + update check)
+if(NOT WIN32)
+    list(REMOVE_ITEM SRC_FILES "src/menu/WinMenu.cc")
+    list(REMOVE_ITEM SRC_FILES "src/menu/WinUpdate.cc")
+endif()
+
 list(APPEND SRC_FILES "src/menu/tinyfiledialogs.c")
 
 if(APPLE)
@@ -21,7 +59,7 @@ if(APPLE)
     add_executable(kPen MACOSX_BUNDLE ${SRC_FILES})
     set_target_properties(kPen PROPERTIES
         MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/Info.plist"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_BINARY_DIR}/Info.plist"
     )
     target_link_libraries(kPen SDL2::SDL2 "-framework AppKit")
 
@@ -63,10 +101,21 @@ else()
         target_link_libraries(kPen PRIVATE 
             $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
             $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
+            winhttp
         )
     else()
         target_link_libraries(kPen SDL2::SDL2)
     endif()
 endif()
 
-target_include_directories(kPen PRIVATE src)
+target_include_directories(kPen PRIVATE src ${CMAKE_BINARY_DIR})
+
+# Windows: install rules and CPack NSIS installer
+if(WIN32)
+    install(TARGETS kPen RUNTIME DESTINATION bin)
+    set(CPACK_GENERATOR "NSIS")
+    set(CPACK_PACKAGE_NAME "kPen")
+    set(CPACK_PACKAGE_VERSION "${KPEN_VERSION_STRING}")
+    set(CPACK_PACKAGE_EXECUTABLES "kPen;kPen")
+    include(CPack)
+endif()

@@ -15,7 +15,7 @@ jobs:
         include:
           - os: windows-latest
             artifact: kPen-Windows.exe
-            artifact_path: build/Release/kPen.exe
+            artifact_path: build/kPen-*-win64.exe
 
           - os: ubuntu-latest
             artifact: kPen-Linux
@@ -45,6 +45,14 @@ jobs:
             -DCMAKE_CXX_FLAGS="/DSDL_MAIN_HANDLED" `
             -DCMAKE_EXE_LINKER_FLAGS="/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
           cmake --build build --config Release
+
+      - name: Windows — Package (NSIS installer)
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install nsis -y
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          cd build
+          cpack -C Release -G NSIS
 
       # ── Linux ─────────────────────────────────────────────────────────────────
       - name: Linux — Install SDL2 & Build
@@ -77,7 +85,7 @@ jobs:
 
           PLIST="build/kPen.app/Contents/Info.plist"
           plutil -replace CFBundleShortVersionString -string "$VERSION" "$PLIST"
-          plutil -replace CFBundleVersion -string "$VERSION" "$PLIST"
+          # Do not set CFBundleVersion — About shows version once (ShortVersionString only)
 
           mkdir dmg_stage
           cp -r build/kPen.app dmg_stage/
@@ -124,7 +132,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/kPen-Windows.exe/kPen.exe
+            artifacts/kPen-Windows.exe/kPen-${{ steps.version.outputs.VERSION }}-win64.exe
             artifacts/kPen-Mac.dmg/*.dmg
             artifacts/kPen-Linux/kPen
           generate_release_notes: true

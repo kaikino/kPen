@@ -11,9 +11,12 @@ namespace MacMenu {
 #ifdef __APPLE__
     void install();
     void useArrowCursor();  // immediately set macOS arrow cursor, bypassing SDL
+    /** Run the same update check as the menu item (async, after a short delay). Call once at app start. */
+    void checkForUpdatesAsync();
 #else
     inline void install() {}          // no-op on non-macOS
     inline void useArrowCursor() {}   // no-op on non-macOS
+    inline void checkForUpdatesAsync() {}
 #endif
 
     // Event codes — placed in SDL_UserEvent.code
@@ -30,5 +33,7 @@ namespace MacMenu {
         EDIT_PASTE    = 1014,
         EDIT_SELECT_ALL = 1015,
         QUIT          = 1099,
+        CHECK_FOR_UPDATES = 1100,
+        ABOUT         = 1101,
     };
 }
