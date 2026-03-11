@@ -556,11 +556,19 @@ static void resetCursorForDialog() {
 // SDL_USEREVENT (from the menu bar) and the SDL_KEYDOWN (Cmd+key) that
 // triggered the same action.  Flushing them here prevents the second
 // event from re-opening the dialog once gDialogOpen is cleared.
+// Also flush touch/gesture events so stale FINGERUP/MULTIGESTURE from
+// during the modal don't get processed afterward and corrupt gesture state
+// (especially when running as .app where the modal blocks the SDL loop).
 // We also re-apply the arrow cursor: macOS restores SDL's last-known
 // cursor when the window regains focus, overwriting the pre-dialog reset.
 static void postDialogCleanup() {
+    SDL_PumpEvents();
     SDL_FlushEvent(SDL_KEYDOWN);
     SDL_FlushEvent(SDL_USEREVENT);
+    SDL_FlushEvent(SDL_FINGERDOWN);
+    SDL_FlushEvent(SDL_FINGERUP);
+    SDL_FlushEvent(SDL_FINGERMOTION);
+    SDL_FlushEvent(SDL_MULTIGESTURE);
     // Re-apply the arrow natively: macOS restores SDL's last-known cursor
     // when the window regains focus, overwriting the pre-dialog reset.
     MacMenu::useArrowCursor();
@@ -1297,6 +1305,24 @@ void kPen::handleMouseButtonDown(SDL_Event& e, bool& needsRedraw, bool& overlayD
             return;
         }
     }
+    // If clicking on canvas dimension handles while Select or Resize tool is active, commit the tool first
+    if (canvasResizer.hitTest(e.button.x, e.button.y, canvasW, canvasH) != CanvasResizer::Handle::NONE) {
+        if (toolbar.currentType == ToolType::SELECT) {
+            auto* st = static_cast<SelectTool*>(currentTool.get());
+            if (st && st->isSelectionActive()) {
+                if (st->isDirty()) saveState();
+                commitActiveTool();
+                needsRedraw = true;
+                overlayDirty = true;
+            }
+        } else if (toolbar.currentType == ToolType::RESIZE && currentTool) {
+            auto* rt = static_cast<ResizeTool*>(currentTool.get());
+            if (rt->willRender()) saveState();
+            commitActiveTool();
+            needsRedraw = true;
+            overlayDirty = true;
+        }
+    }
     if (canvasResizer.onMouseDown(e.button.x, e.button.y, canvasW, canvasH)) {
         needsRedraw = true; return;
     }
@@ -1534,6 +1560,11 @@ void kPen::renderFrame(bool& overlayDirty) {
     SDL_RenderSetClipRect(renderer, &viewClip);
     SDL_RenderCopyF(renderer, canvas, nullptr, &vf);
     if (hasOverlay) SDL_RenderCopyF(renderer, overlay, nullptr, &vf);
+    SDL_RenderSetClipRect(renderer, nullptr);
+
+    // Clip to content area (exclude toolbar) so handles/bounding boxes can show in letterbox but not in toolbar
+    SDL_Rect contentClip = { Toolbar::TB_W, 0, winW_ - Toolbar::TB_W, winH_ };
+    SDL_RenderSetClipRect(renderer, &contentClip);
     // Line tool: draw endpoint handles in window space so they stay fixed size when zooming
     if (toolbar.currentType == ToolType::LINE) {
         auto* st = static_cast<ShapeTool*>(currentTool.get());

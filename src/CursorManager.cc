@@ -758,7 +758,20 @@ void CursorManager::update(ICoordinateMapper* mapper,
             if (rt->isMutating()) toolActive = true;
         }
     }
-    if (currentType != ToolType::HAND && !overCanvas && !toolActive) {
+    // When outside canvas, still show handle cursor if over a selection/resize handle (handles are in window space, can be in letterbox)
+    bool overTransformHandle = false;
+    if ((currentType == ToolType::SELECT || currentType == ToolType::RESIZE) && currentTool) {
+        if (currentType == ToolType::SELECT) {
+            SelectTool* st = static_cast<SelectTool*>(currentTool);
+            if (st->isSelectionActive() && st->getHandleForCursor(0, 0) != TransformTool::Handle::NONE)
+                overTransformHandle = true;
+        } else {
+            ResizeTool* rt = static_cast<ResizeTool*>(currentTool);
+            if (rt->getHandleForCursor(0, 0) != TransformTool::Handle::NONE)
+                overTransformHandle = true;
+        }
+    }
+    if (currentType != ToolType::HAND && !overCanvas && !toolActive && !overTransformHandle) {
         setCursor(curArrow);
         return;
     }
