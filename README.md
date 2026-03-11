@@ -9,7 +9,13 @@ a lightweight raster drawing app
 **macOS (Homebrew):**
 
 ```bash
-brew install --cask --no-quarantine kaikino/kpen/kpen
+brew install --cask kaikino/kpen/kpen
+xattr -rd com.apple.quarantine /Applications/kPen.app
+```
+or download the latest `.dmg` from [Releases](https://github.com/kaikino/kPen/releases) and place in Applications folder then run:
+
+```bash
+xattr -rd com.apple.quarantine /Applications/kPen.app
 ```
 
 **Windows** — Download and run the latest installer from [Releases](https://github.com/kaikino/kPen/releases).

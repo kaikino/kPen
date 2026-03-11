@@ -172,7 +172,7 @@ static NSComparisonResult compareVersions(NSString* a, NSString* b) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSTask* brewTask = [[NSTask alloc] init];
         brewTask.launchPath = brewPath;
-        brewTask.arguments = @[ @"install", @"--cask", @"--no-quarantine", @"kaikino/kpen/kpen" ];
+        brewTask.arguments = @[ @"install", @"--cask", @"kaikino/kpen/kpen" ];
         brewTask.standardOutput = [NSPipe pipe];
         brewTask.standardError = [NSPipe pipe];
         [brewTask launch];
@@ -192,12 +192,19 @@ static NSComparisonResult compareVersions(NSString* a, NSString* b) {
                 [successAlert runModal];
                 NSString* appPath = @"/Applications/kPen.app";
                 if ([[NSFileManager defaultManager] fileExistsAtPath:appPath]) {
-                    NSTask* openTask = [[NSTask alloc] init];
-                    openTask.launchPath = @"/usr/bin/open";
-                    openTask.arguments = @[ appPath ];
-                    [openTask launch];
+                    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                        NSTask* openTask = [[NSTask alloc] init];
+                        openTask.launchPath = @"/usr/bin/open";
+                        openTask.arguments = @[ appPath ];
+                        [openTask launch];
+                        [openTask waitUntilExit];
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            [NSApp terminate:nil];
+                        });
+                    });
+                } else {
+                    [NSApp terminate:nil];
                 }
-                [NSApp terminate:nil];
             } else {
                 NSAlert* alert = [[NSAlert alloc] init];
                 alert.messageText = @"Update failed";
