@@ -216,8 +216,9 @@ class ShapeTool : public AbstractTool {
     int  lineStartX0 = 0, lineStartY0 = 0, lineEndX0 = 0, lineEndY0 = 0;
     int  lineDragStartCX = 0, lineDragStartCY = 0;
     int lineHitTest(int cX, int cY) const;  // -1 none, 0 start, 1 end, 2 line body
-    void commitLine(SDL_Renderer* r);
   public:
+    /** Commit current line to canvas (no-op if not in line edit mode). Call from e.g. Enter key. */
+    void commitLine(SDL_Renderer* r);
     bool filled = false;
     ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb, bool filled = false,
               std::function<void()> onLineCommitted = nullptr);

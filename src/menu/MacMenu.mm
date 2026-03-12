@@ -27,14 +27,14 @@
 
 @interface KPenMenuTarget : NSObject
 - (void)menuAction:(NSMenuItem*)sender;
-- (void)checkForUpdatesShowingUpToDateMessage:(BOOL)showUpToDate;
+- (void)checkForUpdatesShowingUpToDateMessage:(BOOL)showUpToDate showErrorOnFailure:(BOOL)showError;
 - (void)runBrewUpdateAndRelaunch;
 @end
 
 @implementation KPenMenuTarget
 - (void)menuAction:(NSMenuItem*)sender {
     if (sender.tag == MacMenu::CHECK_FOR_UPDATES) {
-        [self checkForUpdatesShowingUpToDateMessage:YES];
+        [self checkForUpdatesShowingUpToDateMessage:YES showErrorOnFailure:YES];
         return;
     }
     SDL_Event ev;
@@ -64,33 +64,39 @@ static NSComparisonResult compareVersions(NSString* a, NSString* b) {
     return NSOrderedSame;
 }
 
-- (void)checkForUpdatesShowingUpToDateMessage:(BOOL)showUpToDate {
+- (void)checkForUpdatesShowingUpToDateMessage:(BOOL)showUpToDate showErrorOnFailure:(BOOL)showError {
     NSString* currentVersion = trimVersion([NSString stringWithUTF8String:KPEN_VERSION_STRING]);
     NSURL* url = [NSURL URLWithString:@"https://api.github.com/repos/kaikino/kpen/releases/latest"];
     NSURLSessionDataTask* task = [[NSURLSession sharedSession] dataTaskWithURL:url completionHandler:^(NSData* data, NSURLResponse* response, NSError* error) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (error || !data) {
-                NSAlert* alert = [[NSAlert alloc] init];
-                alert.messageText = @"Could not check for updates";
-                alert.informativeText = [error localizedDescription] ?: @"Please check your network connection.";
-                [alert runModal];
+                if (showError) {
+                    NSAlert* alert = [[NSAlert alloc] init];
+                    alert.messageText = @"Could not check for updates";
+                    alert.informativeText = [error localizedDescription] ?: @"Please check your network connection.";
+                    [alert runModal];
+                }
                 return;
             }
             NSError* jsonError = nil;
             id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
             if (![json isKindOfClass:[NSDictionary class]]) {
-                NSAlert* alert = [[NSAlert alloc] init];
-                alert.messageText = @"Could not check for updates";
-                alert.informativeText = @"Invalid response from server.";
-                [alert runModal];
+                if (showError) {
+                    NSAlert* alert = [[NSAlert alloc] init];
+                    alert.messageText = @"Could not check for updates";
+                    alert.informativeText = @"Invalid response from server.";
+                    [alert runModal];
+                }
                 return;
             }
             NSString* tagName = [(NSDictionary*)json objectForKey:@"tag_name"];
             if (![tagName isKindOfClass:[NSString class]] || tagName.length == 0) {
-                NSAlert* alert = [[NSAlert alloc] init];
-                alert.messageText = @"Could not check for updates";
-                alert.informativeText = @"No version information in response.";
-                [alert runModal];
+                if (showError) {
+                    NSAlert* alert = [[NSAlert alloc] init];
+                    alert.messageText = @"Could not check for updates";
+                    alert.informativeText = @"No version information in response.";
+                    [alert runModal];
+                }
                 return;
             }
             NSString* latestVersion = trimVersion([tagName hasPrefix:@"v"] ? [tagName substringFromIndex:1] : tagName);
@@ -243,7 +249,7 @@ void MacMenu::checkForUpdatesAsync() {
     if (!gTarget) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
                   dispatch_get_main_queue(), ^{
-        [gTarget checkForUpdatesShowingUpToDateMessage:NO];  // no dialog when already up to date at launch
+        [gTarget checkForUpdatesShowingUpToDateMessage:NO showErrorOnFailure:NO];  // silent at launch; only show dialogs when user chooses Check for Updates
     });
 }
 

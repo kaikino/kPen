@@ -817,6 +817,10 @@ void kPen::handleUserEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool&
 #ifdef _WIN32
     if (e.user.code == WinUpdate::WIN_UPDATE_RESULT && e.user.data1) {
         WinUpdate::WinUpdateResult* r = static_cast<WinUpdate::WinUpdateResult*>(e.user.data1);
+        if (r->silent && r->has_update != 1) {
+            delete r;
+            return;
+        }
         if (r->has_update == 1) {
             char msg[256];
             snprintf(msg, sizeof(msg), "Update available: %s\n\nDownload and install now?", r->version);
@@ -905,7 +909,7 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
         }
         case SDLK_RETURN:
         case SDLK_KP_ENTER: {
-            // Commit selection/resize (stamp and exit tool) — same as clicking on canvas
+            // Commit selection/resize/line (stamp and exit or commit line)
             if (toolbar.currentType == ToolType::SELECT) {
                 auto* st = static_cast<SelectTool*>(currentTool.get());
                 if (st->isSelectionActive()) {
@@ -924,6 +928,14 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
                 setTool(originalType);
                 needsRedraw = true;
                 overlayDirty = true;
+            } else if (toolbar.currentType == ToolType::LINE && currentTool) {
+                auto* shape = static_cast<ShapeTool*>(currentTool.get());
+                if (shape->isLineEditing()) {
+                    withCanvas([&]{ shape->commitLine(renderer); });
+                    saveState();
+                    needsRedraw = true;
+                    overlayDirty = true;
+                }
             }
             break;
         }
@@ -1719,12 +1731,12 @@ void kPen::run() {
     bool overlayDirty = false;
     SDL_Event e;
     Uint32 lastFrameTicks = 0;
-    {
-        static bool didLaunchUpdateCheck = false;
-        if (!didLaunchUpdateCheck) {
-            didLaunchUpdateCheck = true;
-            MacMenu::checkForUpdatesAsync();
-        }
+    static bool didLaunchUpdateCheck = false;
+    static Uint32 winLaunchCheckStart = 0;
+    if (!didLaunchUpdateCheck) {
+        didLaunchUpdateCheck = true;
+        winLaunchCheckStart = SDL_GetTicks();
+        MacMenu::checkForUpdatesAsync();
     }
     Uint32 lastCursorUpdateTicks = 0;
     int idleCount = 0;
@@ -1743,6 +1755,12 @@ void kPen::run() {
     SDL_EventState(SDL_MULTIGESTURE, SDL_ENABLE);
 
     while (running) {
+#ifdef _WIN32
+        if (winLaunchCheckStart != 0 && (SDL_GetTicks() - winLaunchCheckStart >= 1500)) {
+            winLaunchCheckStart = 0;
+            WinUpdate::startCheckAsyncAtLaunch();
+        }
+#endif
         if (lastFrameTicks != 0) {
             Uint32 now = SDL_GetTicks();
             Uint32 elapsed = now - lastFrameTicks;

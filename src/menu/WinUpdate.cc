@@ -149,10 +149,11 @@ bool downloadToFile(const char* url, const wchar_t* filePath, std::string* outEr
     return ok;
 }
 
-void checkThread() {
+void checkThread(bool userInitiated) {
     WinUpdate::WinUpdateResult* result = new WinUpdate::WinUpdateResult();
     memset(result, 0, sizeof(*result));
     result->has_update = -1;
+    result->silent = userInitiated ? 0 : 1;
     std::string body, err;
     if (!httpGet(L"api.github.com", L"/repos/kaikino/kpen/releases/latest", &body, &err)) {
         snprintf(result->error_msg, sizeof(result->error_msg), "%s", err.c_str());
@@ -245,7 +246,12 @@ void downloadThread(const std::string& url) {
 namespace WinUpdate {
 
 void startCheckAsync() {
-    std::thread t(checkThread);
+    std::thread t(checkThread, true);
+    t.detach();
+}
+
+void startCheckAsyncAtLaunch() {
+    std::thread t(checkThread, false);
     t.detach();
 }
 

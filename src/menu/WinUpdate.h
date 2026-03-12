@@ -23,12 +23,16 @@ enum : int {
 
 struct WinUpdateResult {
     int has_update;   // 1 = update available, 0 = up to date, -1 = error
+    int silent;       // 1 = only show dialog when update available (launch check), 0 = show all
     char version[32];
     char url[512];
     char error_msg[128];
 };
 
+/** User chose "Check for Updates" — show dialog for update / up to date / error. */
 void startCheckAsync();
+/** Auto check at app start — only show dialog when an update is available. */
+void startCheckAsyncAtLaunch();
 void startDownloadAndInstall(const char* url);
 
 } // namespace WinUpdate
@@ -37,6 +41,7 @@ void startDownloadAndInstall(const char* url);
 
 namespace WinUpdate {
 inline void startCheckAsync() {}
+inline void startCheckAsyncAtLaunch() {}
 inline void startDownloadAndInstall(const char*) {}
 }
 
