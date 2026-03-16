@@ -3,7 +3,6 @@
 #include <SDL2/SDL.h>
 #include <functional>
 #include <vector>
-#include "DrawingUtils.h"
 
 enum class ToolType { BRUSH, ERASER, LINE, RECT, CIRCLE, SELECT, FILL, PICK, RESIZE, HAND };
 
@@ -219,6 +218,10 @@ class ShapeTool : public AbstractTool {
   public:
     /** Commit current line to canvas (no-op if not in line edit mode). Call from e.g. Enter key. */
     void commitLine(SDL_Renderer* r);
+    /** Exit line edit mode without committing (e.g. Escape / Delete). */
+    void discardLine();
+    /** When isLineEditing(), render the line to a buffer and set *outBounds and *outPixels. Returns false if not in line edit mode or on error. */
+    bool getLineAsImage(SDL_Renderer* r, SDL_Rect* outBounds, std::vector<uint32_t>* outPixels) const;
     bool filled = false;
     ShapeTool(ICoordinateMapper* m, ToolType t, ShapeReadyCallback cb, bool filled = false,
               std::function<void()> onLineCommitted = nullptr);

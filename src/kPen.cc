@@ -456,7 +456,7 @@ void kPen::deleteSelection() {
     }
 }
 
-// Copy the pixels from the active SelectTool or ResizeTool to the OS clipboard
+// Copy the pixels from the active SelectTool, ResizeTool, or Line tool to the OS clipboard
 // as a native image (PNG on macOS, DIB+PNG on Windows) so other apps can paste it.
 void kPen::copySelectionToClipboard() {
     SDL_Rect bounds = {0, 0, 0, 0};
@@ -471,6 +471,9 @@ void kPen::copySelectionToClipboard() {
         auto* rt = static_cast<ResizeTool*>(currentTool.get());
         bounds = rt->getFloatingBounds();
         pixels = rt->getFloatingPixels(renderer);
+    } else if (toolbar.currentType == ToolType::LINE && currentTool) {
+        auto* shape = static_cast<ShapeTool*>(currentTool.get());
+        if (!shape->getLineAsImage(renderer, &bounds, &pixels)) return;
     } else {
         return;
     }
@@ -752,7 +755,49 @@ void kPen::dispatchCommand(int code, bool& running, bool& needsRedraw, bool& ove
         case MacMenu::QUIT:
             if (promptSaveIfNeeded()) { running = false; }
             break;
-        case MacMenu::EDIT_UNDO:  undo(); needsRedraw = true; break;
+        case MacMenu::EDIT_UNDO: {
+            // Cmd+Z with selection/resize/line active: commit (paste) then undo immediately = cancel
+            if (toolbar.currentType == ToolType::SELECT && currentTool) {
+                auto* st = static_cast<SelectTool*>(currentTool.get());
+                if (st->isSelectionActive()) {
+                    withCanvas([&]{ st->deactivate(renderer); });
+                    saveState();
+                    currentTool.reset();
+                    setTool(originalType);
+                    undo();
+                    needsRedraw = true;
+                    overlayDirty = true;
+                    break;
+                }
+            }
+            if (toolbar.currentType == ToolType::RESIZE && currentTool) {
+                auto* rt = static_cast<ResizeTool*>(currentTool.get());
+                if (rt->willRender()) {
+                    withCanvas([&]{ rt->deactivate(renderer); });
+                    saveState();
+                    currentTool.reset();
+                    setTool(originalType);
+                    undo();
+                    needsRedraw = true;
+                    overlayDirty = true;
+                    break;
+                }
+            }
+            if (toolbar.currentType == ToolType::LINE && currentTool) {
+                auto* shape = static_cast<ShapeTool*>(currentTool.get());
+                if (shape->isLineEditing()) {
+                    withCanvas([&]{ shape->commitLine(renderer); });
+                    // commitLine() already called saveState() via onLineCommitted — do not push again
+                    undo();
+                    needsRedraw = true;
+                    overlayDirty = true;
+                    break;
+                }
+            }
+            undo();
+            needsRedraw = true;
+            break;
+        }
         case MacMenu::EDIT_REDO:  redo(); needsRedraw = true; break;
         case MacMenu::EDIT_CUT:
             copySelectionToClipboard(); deleteSelection(); needsRedraw = true; break;
@@ -886,6 +931,16 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
 
     switch (e.key.keysym.sym) {
         case SDLK_ESCAPE: {
+            if (toolbar.currentType == ToolType::LINE && currentTool) {
+                auto* shape = static_cast<ShapeTool*>(currentTool.get());
+                if (shape->isLineEditing()) {
+                    withCanvas([&]{ shape->commitLine(renderer); });
+                    saveState();
+                    needsRedraw = true;
+                    overlayDirty = true;
+                    break;
+                }
+            }
             if (toolbar.currentType == ToolType::SELECT) {
                 auto* st = static_cast<SelectTool*>(currentTool.get());
                 if (st->isSelectionActive()) {
@@ -959,10 +1014,22 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
             break;
         case SDLK_SPACE: spaceHeld = true; break;
         case SDLK_BACKSPACE:
-        case SDLK_DELETE:
+        case SDLK_DELETE: {
+            if (toolbar.currentType == ToolType::LINE && currentTool) {
+                auto* shape = static_cast<ShapeTool*>(currentTool.get());
+                if (shape->isLineEditing()) {
+                    shape->discardLine();
+                    needsRedraw = true;
+                    overlayDirty = true;
+                    break;
+                }
+            }
+            bool hadSelectionOrResize = (toolbar.currentType == ToolType::SELECT || toolbar.currentType == ToolType::RESIZE);
             deleteSelection();
             needsRedraw = true;
+            if (hadSelectionOrResize) overlayDirty = true;
             break;
+        }
         case SDLK_COMMA:  // , = brush size down
             toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
             toolbar.syncBrushSize();

@@ -81,6 +81,60 @@ void ShapeTool::commitLine(SDL_Renderer* r) {
     if (onLineCommitted) onLineCommitted();
 }
 
+void ShapeTool::discardLine() {
+    if (!lineEditMode || type != ToolType::LINE) return;
+    lineEditMode = false;
+    draggingLineHandle = -1;
+}
+
+bool ShapeTool::getLineAsImage(SDL_Renderer* r, SDL_Rect* outBounds, std::vector<uint32_t>* outPixels) const {
+    if (!lineEditMode || type != ToolType::LINE || !outBounds || !outPixels) return false;
+    int pad = cachedBrushSize + 1;
+    int xMin = std::min(lineStartX, lineEndX) - pad;
+    int yMin = std::min(lineStartY, lineEndY) - pad;
+    int xMax = std::max(lineStartX, lineEndX) + pad;
+    int yMax = std::max(lineStartY, lineEndY) + pad;
+    int w = xMax - xMin + 1;
+    int h = yMax - yMin + 1;
+    if (w <= 0 || h <= 0) return false;
+    SDL_Texture* tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w, h);
+    if (!tex) return false;
+    SDL_Texture* prevTarget = SDL_GetRenderTarget(r);
+    SDL_SetRenderTarget(r, tex);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+    SDL_RenderClear(r);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    SDL_Color col = cachedColor;
+    if (col.a == 0) {
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+    } else {
+        SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+    }
+    int lx0 = lineStartX - xMin, ly0 = lineStartY - yMin;
+    int lx1 = lineEndX - xMin, ly1 = lineEndY - yMin;
+    if (lx0 == lx1 && ly0 == ly1) {
+        DrawingUtils::drawLine(r, lx0, ly0, lx0, ly0, cachedBrushSize, w, h);
+    } else {
+        DrawingUtils::drawLine(r, lx0, ly0, lx1, ly1, cachedBrushSize, w, h);
+    }
+    if (col.a == 0) SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    outPixels->resize(static_cast<size_t>(w) * h);
+    if (SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, outPixels->data(), w * 4) != 0) {
+        SDL_SetRenderTarget(r, prevTarget);
+        SDL_DestroyTexture(tex);
+        return false;
+    }
+    SDL_SetRenderTarget(r, prevTarget);
+    SDL_DestroyTexture(tex);
+    outBounds->x = xMin;
+    outBounds->y = yMin;
+    outBounds->w = w;
+    outBounds->h = h;
+    return true;
+}
+
 static void applyShiftConstraint(ToolType type, int startX, int startY,
                                   int& curX, int& curY) {
     int dx = curX - startX;
