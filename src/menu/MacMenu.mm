@@ -201,7 +201,7 @@ static NSComparisonResult compareVersions(NSString* a, NSString* b) {
                     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
                         NSTask* openTask = [[NSTask alloc] init];
                         openTask.launchPath = @"/usr/bin/open";
-                        openTask.arguments = @[ appPath ];
+                        openTask.arguments = @[ @"-n", appPath ];  // -n = new instance so it starts when we're already running from /Applications
                         [openTask launch];
                         [openTask waitUntilExit];
                         dispatch_async(dispatch_get_main_queue(), ^{
