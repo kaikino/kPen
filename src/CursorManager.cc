@@ -453,14 +453,18 @@ void CursorManager::buildBrushCursors(ICoordinateMapper* mapper, int brushSize, 
 
     if (squareBrush) {
         fillSquare  (bb.data(), canvasDim, canvasDim, cx, cy, r, bc);
-        outlineSquare(bb.data(), canvasDim, canvasDim, cx, cy, r, C_WHITE);
+        outlineSquare(bb.data(), canvasDim, canvasDim, cx, cy, r, C_BLACK);
+        outlineSquare(bb.data(), canvasDim, canvasDim, cx, cy, r + 1, C_WHITE);
         fillSquare  (eb.data(), canvasDim, canvasDim, cx, cy, r, ERASER_FILL);
-        outlineSquare(eb.data(), canvasDim, canvasDim, cx, cy, r, C_WHITE);
+        outlineSquare(eb.data(), canvasDim, canvasDim, cx, cy, r, C_BLACK);
+        outlineSquare(eb.data(), canvasDim, canvasDim, cx, cy, r + 1, C_WHITE);
     } else {
         fillCircle  (bb.data(), canvasDim, canvasDim, cx, cy, r, bc);
-        outlineCircle(bb.data(), canvasDim, canvasDim, cx, cy, r, C_WHITE);
+        outlineCircle(bb.data(), canvasDim, canvasDim, cx, cy, r, C_BLACK);
+        outlineCircle(bb.data(), canvasDim, canvasDim, cx, cy, r + 1, C_WHITE);
         fillCircle  (eb.data(), canvasDim, canvasDim, cx, cy, r, ERASER_FILL);
-        outlineCircle(eb.data(), canvasDim, canvasDim, cx, cy, r, C_WHITE);
+        outlineCircle(eb.data(), canvasDim, canvasDim, cx, cy, r, C_BLACK);
+        outlineCircle(eb.data(), canvasDim, canvasDim, cx, cy, r + 1, C_WHITE);
     }
 
     curBrush  = makeColorCursor(bb.data(), canvasDim, canvasDim, hotX, hotY);
