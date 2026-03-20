@@ -130,7 +130,7 @@ class kPen : public ICoordinateMapper {
     void processEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty);
     void handleQuit(bool& running);
     void handleUserEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty);
-    void handleTextInput(SDL_Event& e, bool& needsRedraw);
+    void handleTextInput(SDL_Event& e, bool& needsRedraw, bool& overlayDirty);
     void handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty);
     void handleKeyUp(SDL_Event& e, bool& needsRedraw);
     void handleWindowEvent(SDL_Event& e, bool& needsRedraw);

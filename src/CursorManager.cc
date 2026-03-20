@@ -654,6 +654,7 @@ CursorManager::CursorManager() {
 void CursorManager::init() {
     curArrow    = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
     curCross    = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
+    curIbeam    = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_IBEAM);
     curHand     = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
     curSizeAll  = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEALL);
     curSizeNS   = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENS);
@@ -673,6 +674,7 @@ void CursorManager::init() {
 CursorManager::~CursorManager() {
     SDL_FreeCursor(curArrow);
     SDL_FreeCursor(curCross);
+    SDL_FreeCursor(curIbeam);
     SDL_FreeCursor(curHand);
     SDL_FreeCursor(curSizeAll);
     SDL_FreeCursor(curSizeNS);
@@ -834,6 +836,9 @@ void CursorManager::update(ICoordinateMapper* mapper,
             if (curPick) setCursor(curPick);
             break;
         }
+        case ToolType::TEXT:
+            if (curIbeam) setCursor(curIbeam);
+            break;
         case ToolType::SELECT: {
             auto* st = static_cast<SelectTool*>(currentTool);
             if (!st || !st->isSelectionActive()) { setCursor(curCross); break; }

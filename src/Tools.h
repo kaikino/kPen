@@ -2,9 +2,10 @@
 
 #include <SDL2/SDL.h>
 #include <functional>
+#include <string>
 #include <vector>
 
-enum class ToolType { BRUSH, ERASER, LINE, RECT, CIRCLE, SELECT, FILL, PICK, RESIZE, HAND };
+enum class ToolType { BRUSH, ERASER, LINE, RECT, CIRCLE, SELECT, FILL, PICK, TEXT, RESIZE, HAND };
 
 class ICoordinateMapper {
   public:
@@ -239,6 +240,33 @@ class ShapeTool : public AbstractTool {
     bool isOverLineBody(int cX, int cY) const;
     /** Line endpoint canvas coords (only valid when isLineEditing()). */
     void getLineEndpoints(int& x0, int& y0, int& x1, int& y1) const;
+};
+
+class TextTool : public AbstractTool {
+    std::string buffer;
+    int         anchorX = 0, anchorY = 0;
+    bool        editing_ = false;
+    int         cachedBrushSize = 8;
+    SDL_Color   cachedColor     = {0, 0, 0, 255};
+    std::function<void()> onAfterStamp;
+    void        stopEditing();
+    bool        stampToCanvas(SDL_Renderer* r);
+    static constexpr int kMaxChars = 256;
+  public:
+    TextTool(ICoordinateMapper* m, std::function<void()> onAfterStamp);
+    void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    bool onMouseUp  (int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onOverlayRender(SDL_Renderer* r) override;
+    bool hasOverlayContent() override { return editing_; }
+    void deactivate(SDL_Renderer* r) override;
+    bool isEditing() const { return editing_; }
+    void commitEdit(SDL_Renderer* r);
+    void discardEdit();
+    /** Returns true if any character was appended. */
+    bool onTextInput(const char* text);
+    /** Backspace/Delete while editing; returns true if consumed. */
+    bool onKeyDown(SDL_Keycode key);
 };
 
 class FillTool : public AbstractTool {

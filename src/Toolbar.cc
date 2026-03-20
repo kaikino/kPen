@@ -7,15 +7,15 @@
 #include <cstdio>
 #include <cstring>
 
-constexpr int toolGrid[3][3] = {{0,1,2},{3,-1,4},{5,6,7}};
+constexpr int toolGrid[3][3] = {{0,1,2},{3,8,4},{5,6,7}};
 constexpr ToolType toolTypes[] = {
     ToolType::BRUSH, ToolType::LINE, ToolType::ERASER,
     ToolType::RECT, ToolType::CIRCLE, ToolType::SELECT,
-    ToolType::FILL, ToolType::PICK
+    ToolType::FILL, ToolType::PICK, ToolType::TEXT
 };
 
 static const char* const toolNames[] = {
-    "Brush", "Line", "Eraser", "Rectangle", "Circle", "Select", "Fill", "Eyedropper"
+    "Brush", "Line", "Eraser", "Rectangle", "Circle", "Select", "Fill", "Eyedropper", "Text"
 };
 
 Toolbar::Toolbar(SDL_Renderer* renderer, kPen* app)
@@ -439,6 +439,12 @@ void Toolbar::drawIcon(int cx, int cy, ToolType t, bool active) {
             SDL_RenderDrawPoint(renderer, nx - 1, ny);
             SDL_RenderDrawPoint(renderer, nx - 1, ny + 1);
             SDL_RenderDrawPoint(renderer, nx - 2, ny + 2);
+            break;
+        }
+        case ToolType::TEXT: {
+            int topY = cy - 6;
+            SDL_RenderDrawLine(renderer, cx - 6, topY, cx + 6, topY);
+            SDL_RenderDrawLine(renderer, cx, topY, cx, cy + 6);
             break;
         }
         case ToolType::RESIZE:
