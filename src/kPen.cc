@@ -1,8 +1,10 @@
 #define _USE_MATH_DEFINES
 #include "kPen.h"
+#include "FontRegistry.h"
 #include "DrawingUtils.h"
 #include "CanvasResizer.h"
 #include "ViewController.h"
+#include <SDL2/SDL_ttf.h>
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
@@ -38,6 +40,21 @@ kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
     WinMenu::install(window);  // native Windows menu bar (no-op on other platforms)
 
     toolbar = Toolbar(renderer, this);
+
+    // Initialization of SDL_ttf library
+    if (TTF_Init() != 0)
+        fprintf(stderr, "kPen: TTF_Init failed: %s\n", TTF_GetError());
+    {
+        // In FontRegistry, we will also scan the kPen application ditrectory
+        // for any other font files.
+        std::vector<std::string> extra;
+        if (char* base = SDL_GetBasePath()) {
+            extra.push_back(std::string(base) + "assets");
+            SDL_free(base);
+        }
+        systemFontPaths_ = FontRegistry_scanSystemFonts(extra);
+        toolbar.setFontPathList(&systemFontPaths_);
+    }
 
     canvas  = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                 SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
@@ -1107,15 +1124,25 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
             if (hadSelectionOrResize) overlayDirty = true;
             break;
         }
+        // `.` and `,` increase and decrease brush size, respectively, while
+        // using the text tool. This is only done when the text tool is not
+        // focused (user hasn't clicked on canvas with text tool yet), so that
+        // these keys aren't stolen for brush adjustment while typing. When
+        // brush size is adjusted, a redraw is triggered, refreshing the
+        // overlay when the current tool uses it.
         case SDLK_COMMA:  // , = brush size down
-            toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
-            toolbar.syncBrushSize();
+            if (!toolbar.isTextSizeFieldFocused()) {
+                toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
+                toolbar.syncBrushSize();
+            }
             needsRedraw = true;
             if (currentTool->hasOverlayContent()) overlayDirty = true;
             break;
         case SDLK_PERIOD:  // . = brush size up
-            toolbar.brushSize = std::min(99, toolbar.brushSize + 1);
-            toolbar.syncBrushSize();
+            if (!toolbar.isTextSizeFieldFocused()) {
+                toolbar.brushSize = std::min(99, toolbar.brushSize + 1);
+                toolbar.syncBrushSize();
+            }
             needsRedraw = true;
             if (currentTool->hasOverlayContent()) overlayDirty = true;
             break;

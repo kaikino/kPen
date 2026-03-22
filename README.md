@@ -22,13 +22,13 @@ xattr -rd com.apple.quarantine /Applications/kPen.app
 
 **Linux (Experimental!)** — Download the latest `kPen` from [Releases](https://github.com/kaikino/kPen/releases) and run the `kPen` binary (`chmod +x kPen && ./kPen`).
 
-**Build from source** — Requires CMake 3.10+, C++17, and SDL2.
+**Build from source** — Requires CMake 3.10+, C++17, SDL2, and SDL2_ttf.
 
-- **macOS:** `brew install sdl2`. Output: `build/kPen.app`.
-- **Linux (Debian/Ubuntu):** `sudo apt install cmake libsdl2-dev`. Output: `build/kPen`.
-- **Linux (Fedora):** `sudo dnf install cmake SDL2-devel`. Output: `build/kPen`.
-- **Linux (Arch):** `sudo pacman -S cmake sdl2`. Output: `build/kPen`.
-- **Windows:** Install [CMake](https://cmake.org/download/) and [SDL2](https://github.com/libsdl-org/SDL/releases) (or vcpkg: `vcpkg install sdl2` and pass `-DCMAKE_TOOLCHAIN_FILE=[vcpkg]/scripts/buildsystems/vcpkg.cmake`). Output: `build/Release/kPen.exe`; put `SDL2.dll` next to it if using a prebuilt SDL2.
+- **macOS:** `brew install sdl2 sdl2_ttf`. Output: `build/kPen.app`.
+- **Linux (Debian/Ubuntu):** `sudo apt install cmake libsdl2-dev libsdl2-ttf-dev`. Output: `build/kPen`.
+- **Linux (Fedora):** `sudo dnf install cmake SDL2-devel SDL2_ttf-devel`. Output: `build/kPen`.
+- **Linux (Arch):** `sudo pacman -S cmake sdl2 sdl2_ttf`. Output: `build/kPen`.
+- **Windows:** Install [CMake](https://cmake.org/download/), [SDL2](https://github.com/libsdl-org/SDL/releases), and SDL2_ttf (or vcpkg: `vcpkg install sdl2 sdl2-ttf` and pass `-DCMAKE_TOOLCHAIN_FILE=[vcpkg]/scripts/buildsystems/vcpkg.cmake`). Output: `build/Release/kPen.exe`; place `SDL2.dll` and `SDL2_ttf.dll` next to the executable if using prebuilt libs.
 
 ```bash
 git clone https://github.com/kaikino/kPen.git
@@ -44,7 +44,7 @@ cmake --build build
 
 | Section            | Description                                                                                                                                                                                                                                       |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Tool grid**      | 3×3 grid with 8 tools (Brush, Line, Eraser, Rect, Circle, Select, Fill, Pick). Click a tool to activate; click the same tool again to toggle its option (see Keybinds).                                                                           |
+| **Tool grid**      | 3×3 grid with 9 tools (Brush, Line, Eraser, Text, Rect, Circle, Select, Fill, Pick). Click a tool to activate; click the same tool again to toggle its option (see Keybinds).                                                                           |
 | **Brush size**     | Numeric field (1–99). Click to focus and type, or use `,` / `.` keys. Scroll wheel over the field to change size.                                                                                                                                 |
 | **Color wheel**    | Hue/saturation picker. Drag to set hue and saturation.                                                                                                                                                                                            |
 | **Color swatches** | 9 customizable colors and 27 preset colors. Arrow keys to navigate. Drag a swatch onto another to copy the source color into a custom swatch, or onto the canvas to set the background color. Select a color while a selection is active to fill. |
@@ -61,12 +61,13 @@ cmake --build build
 | **Tools**     | Brush (round / square)           | `B`                         |
 |               | Line                             | `L`                         |
 |               | Eraser (round / square)          | `E`                         |
+|               | Text                             | `T`                         |
 |               | Rect (outline / filled)          | `R`                         |
 |               | Circle (outline / filled)        | `O`                         |
 |               | Select (rectangle / lasso)       | `S`                         |
 |               | Fill                             | `F`                         |
 |               | Color pick                       | `I`                         |
-|               | Brush size down / up             | `,` / `.`                   |
+|               | Brush / text size down / up      | `,` / `.`                   |
 | **View**      | Pan hold / toggle                | `Space` / `H`               |
 |               | Reset zoom and pan               | `Cmd+0`                     |
 | **Selection** | Commit and deselect, or exit pan | `Escape`                    |

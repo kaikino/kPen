@@ -1,97 +1,23 @@
 #include "Tools.h"
+#include "kPen.h"
 #include <SDL2/SDL.h>
-#include <algorithm>
-#include <cstdint>
+#include <SDL2/SDL_ttf.h>
 
-// 5×7 bitmap font (matches toolbar tooltips). Index 0=space, 1–26=A–Z, 27–36=0–9, 37=comma.
-static const uint8_t FONT_5X7[38][7] = {
-    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
-    { 0x04, 0x0A, 0x11, 0x11, 0x1F, 0x11, 0x11 },
-    { 0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E },
-    { 0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E },
-    { 0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E },
-    { 0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F },
-    { 0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10 },
-    { 0x0E, 0x11, 0x10, 0x13, 0x11, 0x11, 0x0F },
-    { 0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11 },
-    { 0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E },
-    { 0x01, 0x01, 0x01, 0x01, 0x11, 0x11, 0x0E },
-    { 0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11 },
-    { 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F },
-    { 0x11, 0x1B, 0x15, 0x11, 0x11, 0x11, 0x11 },
-    { 0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11 },
-    { 0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E },
-    { 0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10 },
-    { 0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D },
-    { 0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11 },
-    { 0x0F, 0x10, 0x10, 0x0E, 0x01, 0x11, 0x1E },
-    { 0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04 },
-    { 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E },
-    { 0x11, 0x11, 0x11, 0x0A, 0x0A, 0x04, 0x04 },
-    { 0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11 },
-    { 0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11 },
-    { 0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04 },
-    { 0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F },
-    { 0x1F, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1F },
-    { 0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x1F },
-    { 0x1F, 0x01, 0x01, 0x1F, 0x10, 0x10, 0x1F },
-    { 0x1F, 0x01, 0x01, 0x0F, 0x01, 0x01, 0x1F },
-    { 0x11, 0x11, 0x11, 0x1F, 0x01, 0x01, 0x01 },
-    { 0x1F, 0x10, 0x10, 0x1F, 0x01, 0x01, 0x1F },
-    { 0x1F, 0x10, 0x10, 0x1F, 0x11, 0x11, 0x1F },
-    { 0x1F, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01 },
-    { 0x1F, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x1F },
-    { 0x1F, 0x11, 0x11, 0x1F, 0x01, 0x01, 0x1F },
-    { 0x00, 0x00, 0x00, 0x00, 0x04, 0x04, 0x08 },
-};
+TextTool::TextTool(kPen* pen, std::function<void()> onAfterStamp)
+    : AbstractTool(pen), pen_(pen), onAfterStamp(std::move(onAfterStamp)) {}
 
-static int glyphIndex(char c) {
-    if (c == ' ') return 0;
-    if (c == '.' || c == ',') return 37;
-    if (c >= 'A' && c <= 'Z') return 1 + (c - 'A');
-    if (c >= '0' && c <= '9') return 27 + (c - '0');
-    return -1;
+static void utf8PopBack(std::string& s) {
+    if (s.empty()) return;
+    size_t i = s.size() - 1;
+    while (i > 0 && (static_cast<unsigned char>(s[i]) & 0xC0) == 0x80) --i;
+    s.resize(i);
 }
 
-static int textScaleForBrush(int brushSize) {
-    return std::max(1, std::min(6, brushSize / 2));
+static SDL_BlendMode eraseGlyphBlendMode() {
+    return SDL_ComposeCustomBlendMode(
+        SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD,
+        SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD);
 }
-
-static int glyphAdvance(int scale) { return 5 * scale + scale; }
-
-static int stringWidthPx(const std::string& s, int scale) {
-    int adv = glyphAdvance(scale);
-    int w = 0;
-    for (char c : s) {
-        if (glyphIndex(c) >= 0) w += adv;
-    }
-    return w;
-}
-
-static void drawGlyphPixels(SDL_Renderer* r, int ox, int oy, int gi,
-                            int scale, SDL_Color col) {
-    if (gi < 0 || gi > 37) return;
-    if (col.a == 0) {
-        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
-        SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
-    } else {
-        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
-    }
-    for (int row = 0; row < 7; row++) {
-        uint8_t bits = FONT_5X7[gi][row];
-        for (int gx = 0; gx < 5; gx++) {
-            if (bits & (1 << (4 - gx))) {
-                SDL_Rect rect = { ox + gx * scale, oy + row * scale, scale, scale };
-                SDL_RenderFillRect(r, &rect);
-            }
-        }
-    }
-    if (col.a == 0) SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-}
-
-TextTool::TextTool(ICoordinateMapper* m, std::function<void()> onAfterStamp)
-    : AbstractTool(m), onAfterStamp(std::move(onAfterStamp)) {}
 
 void TextTool::stopEditing() {
     if (!editing_) return;
@@ -120,41 +46,86 @@ void TextTool::onPreviewRender(SDL_Renderer*, int brushSize, SDL_Color color) {
     cachedColor = color;
 }
 
-void TextTool::onOverlayRender(SDL_Renderer* r) {
-    if (!editing_) return;
-    int scale = textScaleForBrush(cachedBrushSize);
-    int x = anchorX;
-    SDL_Color col = cachedColor;
-    for (char ch : buffer) {
-        int gi = glyphIndex(ch);
-        if (gi < 0) continue;
-        drawGlyphPixels(r, x, anchorY, gi, scale, col);
-        x += glyphAdvance(scale);
+void TextTool::drawUtf8Line(SDL_Renderer* r, bool forOverlay) {
+    if (!pen_ || buffer.empty()) return;
+
+    std::string path = pen_->toolbar.currentTextFontPath();
+    int pt = pen_->toolbar.textFontPt;
+    int style = TTF_STYLE_NORMAL;
+    if (pen_->toolbar.textBold) style |= TTF_STYLE_BOLD;
+    if (pen_->toolbar.textItalic) style |= TTF_STYLE_ITALIC;
+
+    TTF_Font* font = pen_->fontCache_.get(path, pt, style);
+    if (!font) return;
+
+    SDL_Color fg = cachedColor;
+    if (forOverlay && fg.a == 0)
+        fg = { 100, 149, 237, 255 };
+    else if (!forOverlay && fg.a != 0)
+        fg.a = 255;
+
+    SDL_Surface* surf = nullptr;
+    if (forOverlay || cachedColor.a != 0)
+        surf = TTF_RenderUTF8_Blended(font, buffer.c_str(), fg);
+    else
+        surf = TTF_RenderUTF8_Blended(font, buffer.c_str(), SDL_Color{ 255, 255, 255, 255 });
+
+    if (!surf) return;
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(r, surf);
+    SDL_FreeSurface(surf);
+    if (!tex) return;
+
+    if (!forOverlay && cachedColor.a == 0) {
+        SDL_BlendMode eraseBm = eraseGlyphBlendMode();
+        if (SDL_SetTextureBlendMode(tex, eraseBm) != 0)
+            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    } else {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
     }
+
+    int tw = 0, th = 0;
+    SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+    SDL_Rect dst{ anchorX, anchorY, tw, th };
+    SDL_RenderCopy(r, tex, nullptr, &dst);
+    SDL_DestroyTexture(tex);
+}
+
+void TextTool::onOverlayRender(SDL_Renderer* r) {
+    if (!editing_ || !pen_) return;
+    drawUtf8Line(r, true);
+
+    std::string path = pen_->toolbar.currentTextFontPath();
+    int pt = pen_->toolbar.textFontPt;
+    int style = TTF_STYLE_NORMAL;
+    if (pen_->toolbar.textBold) style |= TTF_STYLE_BOLD;
+    if (pen_->toolbar.textItalic) style |= TTF_STYLE_ITALIC;
+    TTF_Font* font = pen_->fontCache_.get(path, pt, style);
+
+    int caretX = anchorX;
+    int caretH = font ? TTF_FontHeight(font) : 14;
+    if (font && !buffer.empty()) {
+        int w = 0;
+        if (TTF_SizeUTF8(font, buffer.c_str(), &w, nullptr) == 0)
+            caretX += w;
+    }
+
     bool blinkOn = ((SDL_GetTicks() / 530) % 2) == 0;
     if (blinkOn) {
-        int caretx = anchorX + stringWidthPx(buffer, scale);
         SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+        SDL_Color col = cachedColor;
         if (col.a == 0)
             SDL_SetRenderDrawColor(r, 100, 149, 237, 200);
         else
             SDL_SetRenderDrawColor(r, col.r, col.g, col.b, 255);
-        int ch = 7 * scale;
-        SDL_Rect caret = { caretx, anchorY, std::max(1, scale), ch };
+        int cw = std::max(1, pt / 12);
+        SDL_Rect caret{ caretX, anchorY, cw, std::max(1, caretH) };
         SDL_RenderFillRect(r, &caret);
     }
 }
 
 bool TextTool::stampToCanvas(SDL_Renderer* r) {
     if (buffer.empty()) return false;
-    int scale = textScaleForBrush(cachedBrushSize);
-    int x = anchorX;
-    for (char ch : buffer) {
-        int gi = glyphIndex(ch);
-        if (gi < 0) continue;
-        drawGlyphPixels(r, x, anchorY, gi, scale, cachedColor);
-        x += glyphAdvance(scale);
-    }
+    drawUtf8Line(r, false);
     return true;
 }
 
@@ -178,14 +149,24 @@ void TextTool::deactivate(SDL_Renderer* r) {
 bool TextTool::onTextInput(const char* text) {
     if (!editing_ || !text) return false;
     bool any = false;
-    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(text); *p; ++p) {
+    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(text); *p;) {
         unsigned char c = *p;
-        if (c < 32 || c > 126) continue;
-        char ch = static_cast<char>(c);
-        if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
-        if (glyphIndex(ch) < 0) continue;
-        if ((int)buffer.size() >= kMaxChars) break;
-        buffer.push_back(ch);
+        if (c < 32 && c != '\t') {
+            ++p;
+            continue;
+        }
+        size_t runeLen = 1;
+        if (c >= 0xF0)
+            runeLen = 4;
+        else if (c >= 0xE0)
+            runeLen = 3;
+        else if (c >= 0xC0)
+            runeLen = 2;
+
+        if ((int)buffer.size() + (int)runeLen > kMaxBytes) break;
+        for (size_t i = 0; i < runeLen && p[i]; i++)
+            buffer.push_back(static_cast<char>(p[i]));
+        p += runeLen;
         any = true;
     }
     return any;
@@ -194,7 +175,7 @@ bool TextTool::onTextInput(const char* text) {
 bool TextTool::onKeyDown(SDL_Keycode key) {
     if (!editing_) return false;
     if (key == SDLK_BACKSPACE || key == SDLK_DELETE) {
-        if (!buffer.empty()) buffer.pop_back();
+        utf8PopBack(buffer);
         return true;
     }
     return false;

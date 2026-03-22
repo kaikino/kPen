@@ -7,6 +7,8 @@
 
 enum class ToolType { BRUSH, ERASER, LINE, RECT, CIRCLE, SELECT, FILL, PICK, TEXT, RESIZE, HAND };
 
+class kPen;
+
 class ICoordinateMapper {
   public:
     virtual void getCanvasCoords(int winX, int winY, int* canX, int* canY) = 0;
@@ -243,6 +245,7 @@ class ShapeTool : public AbstractTool {
 };
 
 class TextTool : public AbstractTool {
+    kPen*       pen_ = nullptr;
     std::string buffer;
     int         anchorX = 0, anchorY = 0;
     bool        editing_ = false;
@@ -251,9 +254,10 @@ class TextTool : public AbstractTool {
     std::function<void()> onAfterStamp;
     void        stopEditing();
     bool        stampToCanvas(SDL_Renderer* r);
-    static constexpr int kMaxChars = 256;
+    void        drawUtf8Line(SDL_Renderer* r, bool forOverlay);
+    static constexpr int kMaxBytes = 1024;
   public:
-    TextTool(ICoordinateMapper* m, std::function<void()> onAfterStamp);
+    TextTool(kPen* pen, std::function<void()> onAfterStamp);
     void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     bool onMouseUp  (int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color) override;
