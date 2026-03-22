@@ -67,7 +67,7 @@ cmake --build build
 |               | Select (rectangle / lasso)       | `S`                         |
 |               | Fill                             | `F`                         |
 |               | Color pick                       | `I`                         |
-|               | Brush / text size down / up      | `,` / `.`                   |
+|               | Brush down / up                  | `,` / `.`                   |
 | **View**      | Pan hold / toggle                | `Space` / `H`               |
 |               | Reset zoom and pan               | `Cmd+0`                     |
 | **Selection** | Commit and deselect, or exit pan | `Escape`                    |
