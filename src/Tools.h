@@ -1,10 +1,14 @@
 #pragma once
 
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
 #include <functional>
+#include <string>
 #include <vector>
 
-enum class ToolType { BRUSH, ERASER, LINE, RECT, CIRCLE, SELECT, FILL, PICK, RESIZE, HAND };
+enum class ToolType { BRUSH, ERASER, LINE, RECT, CIRCLE, SELECT, FILL, PICK, TEXT, RESIZE, HAND };
+
+class kPen;
 
 class ICoordinateMapper {
   public:
@@ -239,6 +243,46 @@ class ShapeTool : public AbstractTool {
     bool isOverLineBody(int cX, int cY) const;
     /** Line endpoint canvas coords (only valid when isLineEditing()). */
     void getLineEndpoints(int& x0, int& y0, int& x1, int& y1) const;
+};
+
+/** Text placement: drag a box (or click for default size), type wrapped UTF-8, resize/rotate like ResizeTool. */
+class TextTool : public TransformTool {
+    kPen*       pen_ = nullptr;
+    std::string buffer;
+    int         caretByte = 0;
+    bool        editing_ = false;
+    int         cachedBrushSize = 8;
+    SDL_Color   cachedColor     = {0, 0, 0, 255};
+    std::function<void()> onAfterStamp;
+
+    void        stopEditing();
+    bool        stampToCanvas(SDL_Renderer* r);
+    void        renderTextOntoCanvas(SDL_Renderer* canvasRenderer, SDL_Color fg, bool forOverlay) const;
+    void        placeCaretFromCanvas(int cX, int cY);
+    void        beginEditingWithRect(SDL_Rect box);
+    void        clampBoundsToCanvas();
+    static void applyShiftSquare(int startX, int startY, int& curX, int& curY);
+    bool        buildLayoutLines(TTF_Font* font, int wrapPx, std::vector<std::pair<int, int>>& lines) const;
+    static constexpr int kMaxBytes = 1024;
+    static constexpr int kPad = 4;
+    static constexpr int kDefaultBoxW = 200;
+    static constexpr int kDefaultBoxH = 100;
+    static constexpr int kMinBoxW = 24;
+    static constexpr int kMinBoxH = 24;
+  public:
+    TextTool(kPen* pen, std::function<void()> onAfterStamp);
+    void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    bool onMouseUp  (int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onOverlayRender(SDL_Renderer* r) override;
+    bool hasOverlayContent() override { return isDrawing || editing_; }
+    void deactivate(SDL_Renderer* r) override;
+    bool isEditing() const { return editing_; }
+    void commitEdit(SDL_Renderer* r);
+    void discardEdit();
+    bool onTextInput(const char* text);
+    bool onKeyDown(SDL_Keycode key);
 };
 
 class FillTool : public AbstractTool {

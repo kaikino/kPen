@@ -29,6 +29,7 @@ public:
 private:
     SDL_Cursor* curArrow    = nullptr;
     SDL_Cursor* curCross    = nullptr;
+    SDL_Cursor* curIbeam    = nullptr;
     SDL_Cursor* curHand     = nullptr;
     SDL_Cursor* curSizeAll  = nullptr;
     SDL_Cursor* curSizeNS   = nullptr;

@@ -654,6 +654,7 @@ CursorManager::CursorManager() {
 void CursorManager::init() {
     curArrow    = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
     curCross    = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
+    curIbeam    = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_IBEAM);
     curHand     = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
     curSizeAll  = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEALL);
     curSizeNS   = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENS);
@@ -673,6 +674,7 @@ void CursorManager::init() {
 CursorManager::~CursorManager() {
     SDL_FreeCursor(curArrow);
     SDL_FreeCursor(curCross);
+    SDL_FreeCursor(curIbeam);
     SDL_FreeCursor(curHand);
     SDL_FreeCursor(curSizeAll);
     SDL_FreeCursor(curSizeNS);
@@ -753,25 +755,34 @@ void CursorManager::update(ICoordinateMapper* mapper,
     // Treat SELECT/RESIZE as "active" when mutating (resizing/rotating/moving) so we still show
     // the correct resize cursor with flip even when the mouse leaves the canvas during drag.
     bool toolActive = currentTool && currentTool->isActive();
-    if (!toolActive && currentTool && (currentType == ToolType::SELECT || currentType == ToolType::RESIZE)) {
+    if (!toolActive && currentTool && (currentType == ToolType::SELECT || currentType == ToolType::RESIZE ||
+                                      currentType == ToolType::TEXT)) {
         if (currentType == ToolType::SELECT) {
             SelectTool* st = static_cast<SelectTool*>(currentTool);
             if (st->isMutating()) toolActive = true;
         } else if (currentType == ToolType::RESIZE) {
             ResizeTool* rt = static_cast<ResizeTool*>(currentTool);
             if (rt->isMutating()) toolActive = true;
+        } else if (currentType == ToolType::TEXT) {
+            TextTool* tt = static_cast<TextTool*>(currentTool);
+            if (tt->isEditing() && tt->isMutating()) toolActive = true;
         }
     }
     // When outside canvas, still show handle cursor if over a selection/resize handle (handles are in window space, can be in letterbox)
     bool overTransformHandle = false;
-    if ((currentType == ToolType::SELECT || currentType == ToolType::RESIZE) && currentTool) {
+    if ((currentType == ToolType::SELECT || currentType == ToolType::RESIZE || currentType == ToolType::TEXT) &&
+        currentTool) {
         if (currentType == ToolType::SELECT) {
             SelectTool* st = static_cast<SelectTool*>(currentTool);
             if (st->isSelectionActive() && st->getHandleForCursor(0, 0) != TransformTool::Handle::NONE)
                 overTransformHandle = true;
-        } else {
+        } else if (currentType == ToolType::RESIZE) {
             ResizeTool* rt = static_cast<ResizeTool*>(currentTool);
             if (rt->getHandleForCursor(0, 0) != TransformTool::Handle::NONE)
+                overTransformHandle = true;
+        } else {
+            TextTool* tt = static_cast<TextTool*>(currentTool);
+            if (tt->isEditing() && tt->getHandleForCursor(0, 0) != TransformTool::Handle::NONE)
                 overTransformHandle = true;
         }
     }
@@ -832,6 +843,54 @@ void CursorManager::update(ICoordinateMapper* mapper,
             if (pickHoverColor && pickHoverColor->a != 0) tipColor = *pickHoverColor;
             buildPickCursor(tipColor);
             if (curPick) setCursor(curPick);
+            break;
+        }
+        case ToolType::TEXT: {
+            auto* tt = static_cast<TextTool*>(currentTool);
+            if (!tt) {
+                if (curIbeam) setCursor(curIbeam);
+                break;
+            }
+            if (tt->isActive()) {
+                setCursor(curCross);
+                break;
+            }
+            if (!tt->isEditing()) {
+                if (curIbeam) setCursor(curIbeam);
+                break;
+            }
+            float rot = tt->getRotation();
+            bool flipX = true;
+            bool flipY = true;
+            int cX, cY;
+            mapper->getCanvasCoords(mouseWinX, mouseWinY, &cX, &cY);
+            TransformTool::Handle h;
+            if (tt->isMutating()) {
+                TransformTool::Handle activeResize = tt->getResizingHandle();
+                if (activeResize != TransformTool::Handle::NONE) {
+                    h = activeResize;
+                } else {
+                    if (!dragHandleLocked) {
+                        dragHandleLocked = true;
+                        lockedHandle = tt->getHandleForCursor(cX, cY);
+                    }
+                    h = lockedHandle;
+                }
+            } else {
+                dragHandleLocked = false;
+                h = tt->getHandleForCursor(cX, cY);
+            }
+            if (h == TransformTool::Handle::ROTATE) {
+                buildRotateCursor(rot);
+                if (curRotate) setCursor(curRotate);
+                break;
+            }
+            SDL_Cursor* rc = getResizeCursor(h, rot, flipX, flipY);
+            if (rc) {
+                setCursor(rc);
+            } else {
+                setCursor(tt->isHit(cX, cY) ? curIbeam : curArrow);
+            }
             break;
         }
         case ToolType::SELECT: {

@@ -1,8 +1,10 @@
 #define _USE_MATH_DEFINES
 #include "kPen.h"
+#include "FontRegistry.h"
 #include "DrawingUtils.h"
 #include "CanvasResizer.h"
 #include "ViewController.h"
+#include <SDL2/SDL_ttf.h>
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
@@ -38,6 +40,21 @@ kPen::kPen() : toolbar(nullptr, this), canvasResizer(this) {
     WinMenu::install(window);  // native Windows menu bar (no-op on other platforms)
 
     toolbar = Toolbar(renderer, this);
+
+    // Initialization of SDL_ttf library
+    if (TTF_Init() != 0)
+        fprintf(stderr, "kPen: TTF_Init failed: %s\n", TTF_GetError());
+    {
+        // In FontRegistry, we will also scan the kPen application ditrectory
+        // for any other font files.
+        std::vector<std::string> extra;
+        if (char* base = SDL_GetBasePath()) {
+            extra.push_back(std::string(base) + "assets");
+            SDL_free(base);
+        }
+        systemFontPaths_ = FontRegistry_scanSystemFonts(extra);
+        toolbar.setFontPathList(&systemFontPaths_);
+    }
 
     canvas  = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                 SDL_TEXTUREACCESS_TARGET, canvasW, canvasH);
@@ -193,8 +210,11 @@ template<typename F> void kPen::withCanvas(F f) {
     SDL_SetRenderTarget(renderer, canvas); f(); SDL_SetRenderTarget(renderer, nullptr);
 }
 
+// Handles the tool switching logic.
 void kPen::setTool(ToolType t) {
     handToggledOn = false;  // clicking a tool or switching tool turns off hand
+    if (t == ToolType::TEXT)
+        toolbar.defocusBrushSizeField();
     if (currentTool) {
         withCanvas([&]{ currentTool->deactivate(renderer); });
         if (toolbar.currentType == ToolType::RESIZE) {
@@ -231,6 +251,9 @@ void kPen::setTool(ToolType t) {
             currentTool = std::make_unique<PickTool>(this, pickCb);
             break;
         }
+        case ToolType::TEXT:
+            currentTool = std::make_unique<TextTool>(this, [this]{ saveState(); });
+            break;
         case ToolType::RESIZE: break; // only created via activateResizeTool
         case ToolType::HAND: break;    // hand is space/handToggledOn only, no tool switch
     }
@@ -265,6 +288,10 @@ void kPen::saveState() {
 }
 
 void kPen::applyState(CanvasState& s) {
+    if (toolbar.currentType == ToolType::TEXT && currentTool) {
+        auto* tt = static_cast<TextTool*>(currentTool.get());
+        if (tt->isEditing()) tt->discardEdit();
+    }
     if (toolbar.currentType == ToolType::SELECT || toolbar.currentType == ToolType::RESIZE) {
         currentTool.reset(); // prevent setTool from deactivating+saving
         setTool(originalType);
@@ -312,6 +339,10 @@ void kPen::stampForRedo(AbstractTool* tool) {
 }
 
 void kPen::undo() {
+    if (toolbar.currentType == ToolType::TEXT && currentTool) {
+        auto* tt = static_cast<TextTool*>(currentTool.get());
+        if (tt->isEditing()) tt->discardEdit();
+    }
     if (toolbar.currentType == ToolType::SELECT) {
         auto* st = static_cast<SelectTool*>(currentTool.get());
         if (st->isSelectionActive()) {
@@ -490,6 +521,11 @@ void kPen::pasteFromClipboard() {
     if (w <= 0 || h <= 0 || pixels.empty()) return;
 
     // Commit any in-progress selection/resize before pasting
+    if (toolbar.currentType == ToolType::TEXT && currentTool) {
+        auto* tt = static_cast<TextTool*>(currentTool.get());
+        if (tt->isEditing())
+            withCanvas([&]{ tt->commitEdit(renderer); });
+    }
     if (toolbar.currentType == ToolType::SELECT) {
         auto* st = static_cast<SelectTool*>(currentTool.get());
         if (st->isSelectionActive()) {
@@ -794,6 +830,16 @@ void kPen::dispatchCommand(int code, bool& running, bool& needsRedraw, bool& ove
                     break;
                 }
             }
+            if (toolbar.currentType == ToolType::TEXT && currentTool) {
+                auto* tt = static_cast<TextTool*>(currentTool.get());
+                if (tt->isEditing()) {
+                    withCanvas([&]{ tt->commitEdit(renderer); });
+                    undo();
+                    needsRedraw = true;
+                    overlayDirty = true;
+                    break;
+                }
+            }
             undo();
             needsRedraw = true;
             break;
@@ -831,7 +877,7 @@ void kPen::dispatchCommand(int code, bool& running, bool& needsRedraw, bool& ove
 void kPen::processEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty) {
     if (e.type == SDL_QUIT) { handleQuit(running); return; }
     if (e.type == SDL_USEREVENT) { handleUserEvent(e, running, needsRedraw, overlayDirty); return; }
-    if (e.type == SDL_TEXTINPUT) { handleTextInput(e, needsRedraw); return; }
+    if (e.type == SDL_TEXTINPUT) { handleTextInput(e, needsRedraw, overlayDirty); return; }
     if (e.type == SDL_KEYDOWN) { handleKeyDown(e, running, needsRedraw, overlayDirty); return; }
     if (e.type == SDL_KEYUP) { handleKeyUp(e, needsRedraw); return; }
     if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_RESIZED) { handleWindowEvent(e, needsRedraw); return; }
@@ -896,10 +942,19 @@ void kPen::handleUserEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool&
     dispatchCommand(e.user.code, running, needsRedraw, overlayDirty);
 }
 
-void kPen::handleTextInput(SDL_Event& e, bool& needsRedraw) {
-    if (toolbar.onTextInput(e.text.text)) { needsRedraw = true; }
+// Handles text input events (typing in the text tool).
+void kPen::handleTextInput(SDL_Event& e, bool& needsRedraw, bool& overlayDirty) {
+    if (toolbar.onTextInput(e.text.text)) { needsRedraw = true; return; }
+    if (toolbar.currentType == ToolType::TEXT && currentTool) {
+        auto* tt = static_cast<TextTool*>(currentTool.get());
+        if (tt->onTextInput(e.text.text)) {
+            needsRedraw = true;
+            overlayDirty = true;
+        }
+    }
 }
 
+// Handles general key down (non-text input) events.
 void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty) {
     // Track shift for aspect-lock override
     if (e.key.keysym.sym == SDLK_LSHIFT || e.key.keysym.sym == SDLK_RSHIFT) {
@@ -918,7 +973,7 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
     if (handToggledOn && !(e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))) {
         switch (e.key.keysym.sym) {
             case SDLK_b: case SDLK_l: case SDLK_r: case SDLK_e: case SDLK_f: case SDLK_i:
-            case SDLK_s: case SDLK_o: case SDLK_h:
+            case SDLK_s: case SDLK_o: case SDLK_h: case SDLK_t:
             case SDLK_ESCAPE:
                 handToggledOn = false;
                 needsRedraw = true;
@@ -929,6 +984,22 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
     }
     if (handKeyConsumed) return;
 
+    // While typing with the text tool, ignore single-key tool shortcuts so SDL_TEXTINPUT
+    // can append the character (KEYDOWN is usually delivered before TEXTINPUT).
+    if (toolbar.currentType == ToolType::TEXT && currentTool) {
+        auto* tt = static_cast<TextTool*>(currentTool.get());
+        if (tt->isEditing() && !(e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))) {
+            switch (e.key.keysym.sym) {
+                case SDLK_b: case SDLK_l: case SDLK_r: case SDLK_e: case SDLK_f: case SDLK_i:
+                case SDLK_s: case SDLK_o: case SDLK_t: case SDLK_h:
+                case SDLK_SPACE: case SDLK_COMMA: case SDLK_PERIOD:
+                    return;
+                default:
+                    break;
+            }
+        }
+    }
+
     switch (e.key.keysym.sym) {
         case SDLK_ESCAPE: {
             if (toolbar.currentType == ToolType::LINE && currentTool) {
@@ -936,6 +1007,15 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
                 if (shape->isLineEditing()) {
                     withCanvas([&]{ shape->commitLine(renderer); });
                     saveState();
+                    needsRedraw = true;
+                    overlayDirty = true;
+                    break;
+                }
+            }
+            if (toolbar.currentType == ToolType::TEXT && currentTool) {
+                auto* tt = static_cast<TextTool*>(currentTool.get());
+                if (tt->isEditing()) {
+                    tt->discardEdit();
                     needsRedraw = true;
                     overlayDirty = true;
                     break;
@@ -991,6 +1071,19 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
                     needsRedraw = true;
                     overlayDirty = true;
                 }
+            } else if (toolbar.currentType == ToolType::TEXT && currentTool) {
+                auto* tt = static_cast<TextTool*>(currentTool.get());
+                // Plain Enter inserts a newline in the text box; Ctrl/Cmd+Enter commits.
+                if (tt->isEditing()) {
+                    if (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) {
+                        withCanvas([&]{ tt->commitEdit(renderer); });
+                        needsRedraw = true;
+                        overlayDirty = true;
+                    } else if (tt->onKeyDown(e.key.keysym.sym)) {
+                        needsRedraw = true;
+                        overlayDirty = true;
+                    }
+                }
             }
             break;
         }
@@ -1006,6 +1099,7 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
             setTool(ToolType::ERASER); needsRedraw = true; break;
         case SDLK_f: setTool(ToolType::FILL);   needsRedraw = true; break;
         case SDLK_i: setTool(ToolType::PICK);   needsRedraw = true; break;
+        case SDLK_t: setTool(ToolType::TEXT);   needsRedraw = true; break;
         case SDLK_h:
             if (!(e.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))) {
                 handToggledOn = !handToggledOn;
@@ -1015,6 +1109,14 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
         case SDLK_SPACE: spaceHeld = true; break;
         case SDLK_BACKSPACE:
         case SDLK_DELETE: {
+            if (toolbar.currentType == ToolType::TEXT && currentTool) {
+                auto* tt = static_cast<TextTool*>(currentTool.get());
+                if (tt->onKeyDown(e.key.keysym.sym)) {
+                    needsRedraw = true;
+                    overlayDirty = true;
+                    break;
+                }
+            }
             if (toolbar.currentType == ToolType::LINE && currentTool) {
                 auto* shape = static_cast<ShapeTool*>(currentTool.get());
                 if (shape->isLineEditing()) {
@@ -1030,15 +1132,25 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
             if (hadSelectionOrResize) overlayDirty = true;
             break;
         }
+        // `.` and `,` increase and decrease brush size, respectively, while
+        // using the text tool. This is only done when the text tool is not
+        // focused (user hasn't clicked on canvas with text tool yet), so that
+        // these keys aren't stolen for brush adjustment while typing. When
+        // brush size is adjusted, a redraw is triggered, refreshing the
+        // overlay when the current tool uses it.
         case SDLK_COMMA:  // , = brush size down
-            toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
-            toolbar.syncBrushSize();
+            if (!toolbar.isTextSizeFieldFocused()) {
+                toolbar.brushSize = std::max(1, toolbar.brushSize - 1);
+                toolbar.syncBrushSize();
+            }
             needsRedraw = true;
             if (currentTool->hasOverlayContent()) overlayDirty = true;
             break;
         case SDLK_PERIOD:  // . = brush size up
-            toolbar.brushSize = std::min(99, toolbar.brushSize + 1);
-            toolbar.syncBrushSize();
+            if (!toolbar.isTextSizeFieldFocused()) {
+                toolbar.brushSize = std::min(99, toolbar.brushSize + 1);
+                toolbar.syncBrushSize();
+            }
             needsRedraw = true;
             if (currentTool->hasOverlayContent()) overlayDirty = true;
             break;
@@ -1046,6 +1158,10 @@ void kPen::handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& o
         case SDLK_RIGHT:
         case SDLK_UP:
         case SDLK_DOWN: {
+            if (toolbar.currentType == ToolType::TEXT && currentTool) {
+                auto* tt = static_cast<TextTool*>(currentTool.get());
+                if (tt->isEditing()) break;
+            }
             int dx = 0, dy = 0;
             if (e.key.keysym.sym == SDLK_LEFT)  dx = -1;
             if (e.key.keysym.sym == SDLK_RIGHT) dx =  1;
@@ -1400,6 +1516,13 @@ void kPen::handleMouseButtonDown(SDL_Event& e, bool& needsRedraw, bool& overlayD
             commitActiveTool();
             needsRedraw = true;
             overlayDirty = true;
+        } else if (toolbar.currentType == ToolType::TEXT && currentTool) {
+            auto* tt = static_cast<TextTool*>(currentTool.get());
+            if (tt->isEditing()) {
+                withCanvas([&]{ tt->commitEdit(renderer); });
+                needsRedraw = true;
+                overlayDirty = true;
+            }
         }
     }
     if (canvasResizer.onMouseDown(e.button.x, e.button.y, canvasW, canvasH)) {
@@ -1504,6 +1627,10 @@ void kPen::handleMouseMotion(SDL_Event& e, bool& needsRedraw, bool& overlayDirty
 
     if (toolbar.currentType == ToolType::SELECT || toolbar.currentType == ToolType::RESIZE) {
         if (static_cast<TransformTool*>(currentTool.get())->isMutating())
+            undoManager.clearRedo();
+    } else if (toolbar.currentType == ToolType::TEXT && currentTool) {
+        auto* tt = static_cast<TextTool*>(currentTool.get());
+        if (tt->isEditing() && tt->isMutating())
             undoManager.clearRedo();
     }
 
@@ -1669,6 +1796,7 @@ void kPen::renderFrame(bool& overlayDirty) {
     currentTool->onPreviewRender(renderer, toolbar.brushSize, toolbar.brushColor);
     bool toolBusy = currentTool && (
         currentTool->isActive() ||
+        (toolbar.currentType == ToolType::TEXT && currentTool->hasOverlayContent()) ||
         ((toolbar.currentType == ToolType::SELECT || toolbar.currentType == ToolType::RESIZE) &&
          static_cast<TransformTool*>(currentTool.get())->isMutating())
     );
@@ -1853,13 +1981,14 @@ void kPen::run() {
             }
         }
 
-        bool toolBusy = currentTool && (
+        bool toolBusyIdle = currentTool && (
             currentTool->isActive() ||
+            (toolbar.currentType == ToolType::TEXT && currentTool->hasOverlayContent()) ||
             ((toolbar.currentType == ToolType::SELECT || toolbar.currentType == ToolType::RESIZE) &&
              static_cast<TransformTool*>(currentTool.get())->isMutating())
         );
 
-        if (toolBusy) {
+        if (toolBusyIdle) {
             Uint32 now = SDL_GetTicks();
             if (now - lastCursorUpdateTicks >= 33)
                 updateCursor(needsRedraw, overlayDirty), lastCursorUpdateTicks = now;
@@ -1890,6 +2019,20 @@ void kPen::run() {
                 (activeFingers > 0 || multiGestureActive || pinchActive ||
                  tapPending || twoFingerPivotSet || threeFingerPanMode)) {
                 resetGestureState();
+            }
+        }
+
+        if (toolbar.currentType == ToolType::TEXT && currentTool) {
+            auto* tt = static_cast<TextTool*>(currentTool.get());
+            if (tt->isEditing()) {
+                Uint32 now = SDL_GetTicks();
+                static Uint32 s_lastCaretPhase = 0;
+                Uint32 phase = now / 530;
+                if (phase != s_lastCaretPhase) {
+                    s_lastCaretPhase = phase;
+                    overlayDirty = true;
+                    needsRedraw = true;
+                }
             }
         }
 

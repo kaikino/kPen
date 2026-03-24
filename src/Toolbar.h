@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <string>
+#include <vector>
 #include "Tools.h"
 
 class kPen;
@@ -20,6 +22,8 @@ class Toolbar {
     static constexpr int BS_ROW1_H  = 20;
     static constexpr int BS_ROW2_H   = 14;
     static constexpr int BS_ROW_GAP  = 4;
+    /** Height of font/size/B/I row when Text tool is active (between brush row and size slider). */
+    static constexpr int TEXT_STYLE_ROW_H = 22;
 
     static constexpr int TRANSPARENT_PRESET_IDX = 0;
     static constexpr SDL_Color PRESETS[27] = {
@@ -43,6 +47,17 @@ class Toolbar {
     bool        squareBrush  = false;
     bool        squareEraser = false;
     bool        lassoSelect  = false;
+
+    /** System font paths (owned by kPen); null until kPen assigns after startup scan. */
+    std::vector<std::string>* fontPathList = nullptr;
+    int         textFontIndex = 0;
+    int         textFontPt    = 16;
+    bool        textBold      = false;
+    bool        textItalic    = false;
+    void        setFontPathList(std::vector<std::string>* paths);
+    std::string currentTextFontPath() const;
+    void        clampTextFontIndex();
+    bool        isTextSizeFieldFocused() const { return textSizeFocused; }
 
     SDL_Color   customColors[NUM_CUSTOM] = {
         {220,220,220,255},{180,180,180,255},{120,120,120,255},
@@ -92,6 +107,8 @@ class Toolbar {
     void syncCanvasSize(int w, int h);
     void syncBrushSize();
     void notifyClickOutside();
+    // Commit brush size field if focused (e.g. when switching to Text tool, which hides that field)
+    void defocusBrushSizeField();
     static SDL_Color hsvToRgb(float h, float s, float v);
     static void      rgbToHsv(SDL_Color c, float& h, float& s, float& v);
 
@@ -113,6 +130,18 @@ class Toolbar {
     char brushSizeBuf[3]    = {'8', 0, 0};
     mutable SDL_Rect brushSizeFieldRect = {0, 0, 0, 0};
     int brushSizeBufLen() const { return (int)std::strlen(brushSizeBuf); }
+
+    bool textSizeFocused    = false;
+    char textSizeBuf[4]     = {'1', '6', 0, 0};
+    mutable SDL_Rect textPrevRect = {0, 0, 0, 0};
+    mutable SDL_Rect textNextRect = {0, 0, 0, 0};
+    mutable SDL_Rect textPtFieldRect = {0, 0, 0, 0};
+    mutable SDL_Rect textBoldRect = {0, 0, 0, 0};
+    mutable SDL_Rect textItalicRect = {0, 0, 0, 0};
+    int textSizeBufLen() const { return (int)std::strlen(textSizeBuf); }
+    void syncTextSizeBuf();
+    void drawTextToolStyleRow(int rowY);
+    bool hitTextToolStyleMouseDown(int mx, int my);
 
     int colorWheelCX = 0, colorWheelCY = 0, colorWheelR = 0;
     SDL_Rect brightnessRect = {0, 0, 0, 0};
@@ -149,7 +178,8 @@ class Toolbar {
     int toolStartY()      const { return TB_PAD; }
     static constexpr int toolCellW()    { return (TB_W - TB_PAD) / 3; }
     static constexpr int contentWidth() { return TB_W - TB_PAD*2; }
-    int sliderSectionY()  const { return toolStartY() + 3*(ICON_SIZE+ICON_GAP) + 2 + BS_ROW1_H + BS_ROW_GAP; }
+    /** Y (content coordinates) of the brush-size slider track for the current tool mode. */
+    int sliderSectionY()  const;
     int sliderSectionH()  const { return BS_ROW2_H; }
     int swatchCellSize()  const { return (contentWidth() - 4) / 3; }
     int swatchCellStride() const { return swatchCellSize() + 2; }

@@ -3,6 +3,7 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include "FontCache.h"
 #include "Tools.h"
 #include "Toolbar.h"
 #include "CanvasResizer.h"
@@ -10,6 +11,10 @@
 #include "UndoManager.h"
 #include "ViewController.h"
 #include "menu/MacMenu.h"
+
+
+// kPen is the main application object, being responsible for the window, 
+// renderer, drawing surface, and most runtime behavior.
 
 class kPen : public ICoordinateMapper {
   public:
@@ -23,6 +28,11 @@ class kPen : public ICoordinateMapper {
     void getWindowCoords(int canX, int canY, int* wX, int* wY) override;
     int  getWindowSize(int canSize) override;
     void getCanvasSize(int* w, int* h) override { *w = canvasW; *h = canvasH; }
+
+    // TextTool stores a kPen* and reads toolbar text state and font cache (see
+    // TextTool.cc (52:58)), which are private fields in kPen that TextTool
+    // needs access to, without widening kPen's public surface.
+    friend class TextTool;
 
     // Resize canvas; scaleContent=true stretches pixels, false crops/pads. originX/Y = top-left shift in canvas px (negative = grew up/left).
     // Returns false if new texture creation failed (canvas/overlay unchanged).
@@ -53,6 +63,19 @@ class kPen : public ICoordinateMapper {
 
     UndoManager undoManager;
     ViewController view_;
+
+    // Helper to ensure that the SDL_ttf library shuts down only after
+    // FontCache destroys its TTF_Font* handles.
+    struct TtfQuitHelper {
+        ~TtfQuitHelper() { TTF_Quit(); }
+    } ttfQuitAfterFonts_;
+
+    // Owns opened SDL_ttf font handles for the text tool. Opening these fonts
+    // is performed in FontCache
+    FontCache                fontCache_;
+    // List built at startup, stores paths to font files from the font
+    // registry scan performed in FontRegistry
+    std::vector<std::string> systemFontPaths_;
 
     void commitActiveTool();
     void resetViewAndGestureState();
@@ -130,7 +153,7 @@ class kPen : public ICoordinateMapper {
     void processEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty);
     void handleQuit(bool& running);
     void handleUserEvent(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty);
-    void handleTextInput(SDL_Event& e, bool& needsRedraw);
+    void handleTextInput(SDL_Event& e, bool& needsRedraw, bool& overlayDirty);
     void handleKeyDown(SDL_Event& e, bool& running, bool& needsRedraw, bool& overlayDirty);
     void handleKeyUp(SDL_Event& e, bool& needsRedraw);
     void handleWindowEvent(SDL_Event& e, bool& needsRedraw);

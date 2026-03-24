@@ -50,6 +50,19 @@ endif()
 find_package(SDL2 REQUIRED)
 include_directories(${SDL2_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS}/SDL2)
 
+# SDL2_ttf (CMake config, vcpkg, or PkgConfig on Linux)
+set(KPEN_SDL2_TTF_TARGET "")
+find_package(SDL2_ttf QUIET CONFIG)
+if(TARGET SDL2_ttf::SDL2_ttf)
+    set(KPEN_SDL2_TTF_TARGET SDL2_ttf::SDL2_ttf)
+elseif(TARGET SDL2_ttf::SDL2_ttf-static)
+    set(KPEN_SDL2_TTF_TARGET SDL2_ttf::SDL2_ttf-static)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SDL2_TTF REQUIRED IMPORTED_TARGET SDL2_ttf)
+    set(KPEN_SDL2_TTF_TARGET PkgConfig::SDL2_TTF)
+endif()
+
 # Collect all .cc sources; add .mm only on Apple
 file(GLOB_RECURSE SRC_FILES "src/*.cc")
 
@@ -69,7 +82,12 @@ if(APPLE)
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_BINARY_DIR}/Info.plist"
     )
-    target_link_libraries(kPen SDL2::SDL2 "-framework AppKit")
+    target_link_libraries(kPen SDL2::SDL2 ${KPEN_SDL2_TTF_TARGET} "-framework AppKit")
+
+    get_target_property(KPEN_SDL2_TTF_DYLIB ${KPEN_SDL2_TTF_TARGET} IMPORTED_LOCATION)
+    if(NOT KPEN_SDL2_TTF_DYLIB)
+        get_target_property(KPEN_SDL2_TTF_DYLIB ${KPEN_SDL2_TTF_TARGET} IMPORTED_LOCATION_RELEASE)
+    endif()
 
     # Bundle SDL2 dylib so the .app is self-contained.
     # We copy the dylib into Frameworks/ and retarget the binary to load it from
@@ -91,6 +109,19 @@ if(APPLE)
             "$<TARGET_FILE:kPen>"
         COMMENT "Bundling SDL2 (${SDL2_DYLIB_NAME}) into kPen.app"
     )
+    if(KPEN_SDL2_TTF_DYLIB)
+        get_filename_component(SDL2_TTF_DYLIB_NAME "${KPEN_SDL2_TTF_DYLIB}" NAME)
+        add_custom_command(TARGET kPen POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${KPEN_SDL2_TTF_DYLIB}"
+                "$<TARGET_BUNDLE_DIR:kPen>/Contents/Frameworks/${SDL2_TTF_DYLIB_NAME}"
+            COMMAND install_name_tool -change
+                "${KPEN_SDL2_TTF_DYLIB}"
+                "@executable_path/../Frameworks/${SDL2_TTF_DYLIB_NAME}"
+                "$<TARGET_FILE:kPen>"
+            COMMENT "Bundling SDL2_ttf (${SDL2_TTF_DYLIB_NAME}) into kPen.app"
+        )
+    endif()
     # App icon
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/AppIcon.icns")
         add_custom_command(TARGET kPen POST_BUILD
@@ -109,10 +140,11 @@ else()
         target_link_libraries(kPen PRIVATE 
             $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
             $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
+            ${KPEN_SDL2_TTF_TARGET}
             winhttp
         )
     else()
-        target_link_libraries(kPen SDL2::SDL2)
+        target_link_libraries(kPen SDL2::SDL2 ${KPEN_SDL2_TTF_TARGET})
     endif()
 endif()
 
