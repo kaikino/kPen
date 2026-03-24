@@ -107,6 +107,8 @@ class Toolbar {
     void syncCanvasSize(int w, int h);
     void syncBrushSize();
     void notifyClickOutside();
+    // Commit brush size field if focused (e.g. when switching to Text tool, which hides that field)
+    void defocusBrushSizeField();
     static SDL_Color hsvToRgb(float h, float s, float v);
     static void      rgbToHsv(SDL_Color c, float& h, float& s, float& v);
 

@@ -55,8 +55,6 @@ int Toolbar::sliderSectionY() const {
     int ty = toolStartY() - scrollY;
     int brushRow = ty + 3 * (ICON_SIZE + ICON_GAP) + 2;
     int afterBrush = brushRow + BS_ROW1_H + BS_ROW_GAP;
-    if (currentType == ToolType::TEXT)
-        return afterBrush + TEXT_STYLE_ROW_H + BS_ROW_GAP;
     return afterBrush;
 }
 
@@ -641,63 +639,65 @@ void Toolbar::draw(bool handActive, int winW, int winH) {
     }
     int brushRowY = ty + 3*(ICON_SIZE+ICON_GAP) + 2;
 
-    SDL_Rect bsField = { TB_PAD, brushRowY, BS_FIELD_W, BS_ROW1_H };
-    brushSizeFieldRect = bsField;
-    bool bsFocused = brushSizeFocused;
-    SDL_SetRenderDrawColor(renderer, bsFocused ? 45 : 38, bsFocused ? 45 : 38, bsFocused ? 55 : 45, 255);
-    SDL_RenderFillRect(renderer, &bsField);
-    SDL_SetRenderDrawColor(renderer, bsFocused ? 70 : 55, bsFocused ? 130 : 55, bsFocused ? 220 : 62, 255);
-    SDL_RenderDrawRect(renderer, &bsField);
-    SDL_SetRenderDrawColor(renderer, 220, 220, 230, 255);
-    int bsLen = brushSizeBufLen();
-    int textW = bsLen * 8 - 2;
-    int textX = bsField.x + (bsField.w - textW) / 2;
-    int textY = bsField.y + (BS_ROW1_H - 10) / 2;
-    drawDigitString(textX, textY, brushSizeBuf, bsLen);
-    if (bsFocused) {
-        int curX = textX + bsLen * 8;
-        SDL_SetRenderDrawColor(renderer, 200, 200, 220, 255);
-        SDL_RenderDrawLine(renderer, curX, bsField.y + 2, curX, bsField.y + BS_ROW1_H - 3);
-    }
-
-    int previewAreaX = TB_PAD + BS_FIELD_W + BS_GAP;
-    int previewAreaW = contentWidth() - BS_FIELD_W - BS_GAP;
-    int previewCX = previewAreaX + previewAreaW / 2;
-    int previewCY = brushRowY + BS_ROW1_H / 2;
-    int maxR = BS_ROW1_H / 2 - 1;
-    int dotR = std::max(1, (int)((std::min(brushSize, 25) / 25.f) * maxR + 0.5f));
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-    bool previewSquare = (currentType == ToolType::BRUSH   && squareBrush) ||
-                         (currentType == ToolType::ERASER  && squareEraser);
-    if (previewSquare) {
-        SDL_Rect sq = { previewCX - dotR, previewCY - dotR, dotR * 2 + 1, dotR * 2 + 1 };
-        SDL_RenderFillRect(renderer, &sq);
+    int wTop;
+    if (currentType == ToolType::TEXT) {
+        brushSizeFieldRect = { 0, 0, 0, 0 };
+        drawTextToolStyleRow(brushRowY);
+        wTop = brushRowY + TEXT_STYLE_ROW_H + BS_ROW_GAP + 8;
     } else {
-        for (int py = -dotR; py <= dotR; py++)
-            for (int px = -dotR; px <= dotR; px++)
-                if (px*px + py*py <= dotR*dotR)
-                    SDL_RenderDrawPoint(renderer, previewCX+px, previewCY+py);
+        SDL_Rect bsField = { TB_PAD, brushRowY, BS_FIELD_W, BS_ROW1_H };
+        brushSizeFieldRect = bsField;
+        bool bsFocused = brushSizeFocused;
+        SDL_SetRenderDrawColor(renderer, bsFocused ? 45 : 38, bsFocused ? 45 : 38, bsFocused ? 55 : 45, 255);
+        SDL_RenderFillRect(renderer, &bsField);
+        SDL_SetRenderDrawColor(renderer, bsFocused ? 70 : 55, bsFocused ? 130 : 55, bsFocused ? 220 : 62, 255);
+        SDL_RenderDrawRect(renderer, &bsField);
+        SDL_SetRenderDrawColor(renderer, 220, 220, 230, 255);
+        int bsLen = brushSizeBufLen();
+        int textW = bsLen * 8 - 2;
+        int textX = bsField.x + (bsField.w - textW) / 2;
+        int textY = bsField.y + (BS_ROW1_H - 10) / 2;
+        drawDigitString(textX, textY, brushSizeBuf, bsLen);
+        if (bsFocused) {
+            int curX = textX + bsLen * 8;
+            SDL_SetRenderDrawColor(renderer, 200, 200, 220, 255);
+            SDL_RenderDrawLine(renderer, curX, bsField.y + 2, curX, bsField.y + BS_ROW1_H - 3);
+        }
+
+        int previewAreaX = TB_PAD + BS_FIELD_W + BS_GAP;
+        int previewAreaW = contentWidth() - BS_FIELD_W - BS_GAP;
+        int previewCX = previewAreaX + previewAreaW / 2;
+        int previewCY = brushRowY + BS_ROW1_H / 2;
+        int maxR = BS_ROW1_H / 2 - 1;
+        int dotR = std::max(1, (int)((std::min(brushSize, 25) / 25.f) * maxR + 0.5f));
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        bool previewSquare = (currentType == ToolType::BRUSH   && squareBrush) ||
+                             (currentType == ToolType::ERASER  && squareEraser);
+        if (previewSquare) {
+            SDL_Rect sq = { previewCX - dotR, previewCY - dotR, dotR * 2 + 1, dotR * 2 + 1 };
+            SDL_RenderFillRect(renderer, &sq);
+        } else {
+            for (int py = -dotR; py <= dotR; py++)
+                for (int px = -dotR; px <= dotR; px++)
+                    if (px*px + py*py <= dotR*dotR)
+                        SDL_RenderDrawPoint(renderer, previewCX+px, previewCY+py);
+        }
+
+        int sliderY = sliderSectionY();
+        int sX = TB_PAD, sW = contentWidth(), sH = BS_ROW2_H;
+        int trackY = sliderY + sH/2;
+        SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
+        SDL_RenderDrawLine(renderer, sX, trackY,   sX+sW, trackY);
+        SDL_RenderDrawLine(renderer, sX, trackY+1, sX+sW, trackY+1);
+        int thumbX = sX + (int)((std::min(brushSize, 25)-1)/24.f * sW);
+        SDL_Rect thumb = {thumbX-5, sliderY, 10, sH};
+        SDL_SetRenderDrawColor(renderer, 200, 200, 210, 255);
+        SDL_RenderFillRect(renderer, &thumb);
+        SDL_SetRenderDrawColor(renderer, 120, 120, 130, 255);
+        SDL_RenderDrawRect(renderer, &thumb);
+
+        wTop = brushRowY + BS_ROW1_H + BS_ROW_GAP + BS_ROW2_H + 8;
     }
-
-    int textStyleY = brushRowY + BS_ROW1_H + BS_ROW_GAP;
-    if (currentType == ToolType::TEXT)
-        drawTextToolStyleRow(textStyleY);
-
-    // Row 2: full-width slider
-    int sliderY = sliderSectionY();
-    int sX = TB_PAD, sW = contentWidth(), sH = BS_ROW2_H;
-    int trackY = sliderY + sH/2;
-    SDL_SetRenderDrawColor(renderer, 60, 60, 68, 255);
-    SDL_RenderDrawLine(renderer, sX, trackY,   sX+sW, trackY);
-    SDL_RenderDrawLine(renderer, sX, trackY+1, sX+sW, trackY+1);
-    int thumbX = sX + (int)((std::min(brushSize, 25)-1)/24.f * sW);
-    SDL_Rect thumb = {thumbX-5, sliderY, 10, sH};
-    SDL_SetRenderDrawColor(renderer, 200, 200, 210, 255);
-    SDL_RenderFillRect(renderer, &thumb);
-    SDL_SetRenderDrawColor(renderer, 120, 120, 130, 255);
-    SDL_RenderDrawRect(renderer, &thumb);
-
-    int wTop = brushRowY + BS_ROW1_H + BS_ROW_GAP + BS_ROW2_H + 8;
     int availH = winH - wTop - TB_PAD;
     int wheelDiam = std::min(contentWidth(), availH - 20);
     if (wheelDiam < 10) return;
@@ -891,6 +891,16 @@ void Toolbar::notifyClickOutside() {
     }
 }
 
+void Toolbar::defocusBrushSizeField() {
+    if (!brushSizeFocused) return;
+    int v = 0;
+    for (int i = 0; i < brushSizeBufLen(); i++) v = v * 10 + (brushSizeBuf[i] - '0');
+    brushSize = std::max(1, std::min(99, v > 0 ? v : brushSize));
+    snprintf(brushSizeBuf, sizeof(brushSizeBuf), "%d", brushSize);
+    brushSizeFocused = false;
+    SDL_StopTextInput();
+}
+
 bool Toolbar::isInteractive(int x, int y) const {
     if (!inToolbar(x, y)) return false;
 
@@ -906,21 +916,20 @@ bool Toolbar::isInteractive(int x, int y) const {
         }
     }
 
-    SDL_Rect bsExp = { brushSizeFieldRect.x - 2, brushSizeFieldRect.y - 4,
-                       brushSizeFieldRect.w + 4, brushSizeFieldRect.h + 8 };
     SDL_Point winPt = { x, y };
-    if (SDL_PointInRect(&winPt, &bsExp)) return true;
-
-    if (currentType == ToolType::TEXT) {
+    if (currentType != ToolType::TEXT) {
+        SDL_Rect bsExp = { brushSizeFieldRect.x - 2, brushSizeFieldRect.y - 4,
+                           brushSizeFieldRect.w + 4, brushSizeFieldRect.h + 8 };
+        if (SDL_PointInRect(&winPt, &bsExp)) return true;
+        int sTop = sliderSectionY();
+        SDL_Rect sliderArea = { 0, sTop - 4, TB_W, sliderSectionH() + 8 };
+        if (SDL_PointInRect(&winPt, &sliderArea)) return true;
+    } else {
         if (SDL_PointInRect(&winPt, &textPrevRect) || SDL_PointInRect(&winPt, &textNextRect) ||
             SDL_PointInRect(&winPt, &textPtFieldRect) || SDL_PointInRect(&winPt, &textBoldRect) ||
             SDL_PointInRect(&winPt, &textItalicRect))
             return true;
     }
-
-    int sTop = sliderSectionY();
-    SDL_Rect sliderArea = { 0, sTop - 4, TB_W, sliderSectionH() + 8 };
-    if (SDL_PointInRect(&winPt, &sliderArea)) return true;
 
     // Color wheel
     float dx = x - colorWheelCX, dy2 = y - colorWheelCY;
@@ -960,7 +969,7 @@ bool Toolbar::onMouseDown(int x, int y) {
 
     int ty = toolStartY() - scrollY;
 
-    if (brushSizeFocused) {
+    if (brushSizeFocused && currentType != ToolType::TEXT) {
         SDL_Rect bsExp = { brushSizeFieldRect.x - 2, brushSizeFieldRect.y - 4,
                            brushSizeFieldRect.w + 4, brushSizeFieldRect.h + 8 };
         SDL_Point bsPt = { x, y };
@@ -1031,14 +1040,12 @@ bool Toolbar::onMouseDown(int x, int y) {
     if (hitTextToolStyleMouseDown(x, y))
         return true;
 
-    // Slider (row 2, full-width) + brush size field (row 1, left)
-    {
+    if (currentType != ToolType::TEXT) {
         int sTop = sliderSectionY();
         int sH = sliderSectionH();
-
         SDL_Rect sliderArea = { 0, sTop - 4, TB_W, sH + 8 };
         SDL_Point pt2 = { x, y };
-        
+
         if (SDL_PointInRect(&pt2, &sliderArea)) {
             if (brushSizeFocused) { brushSizeFocused = false; SDL_StopTextInput(); }
             if (textSizeFocused) {
@@ -1053,7 +1060,6 @@ bool Toolbar::onMouseDown(int x, int y) {
             updateSliderFromMouse(x);
             return true;
         }
-        // Brush size field (row 1, screen-space rect cached by draw())
         SDL_Rect bsExp = { brushSizeFieldRect.x - 2, brushSizeFieldRect.y - 4,
                            brushSizeFieldRect.w + 4, brushSizeFieldRect.h + 8 };
         if (SDL_PointInRect(&pt2, &bsExp)) {

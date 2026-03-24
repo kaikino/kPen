@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
 #include <functional>
 #include <string>
 #include <vector>
@@ -244,32 +245,43 @@ class ShapeTool : public AbstractTool {
     void getLineEndpoints(int& x0, int& y0, int& x1, int& y1) const;
 };
 
-class TextTool : public AbstractTool {
+/** Text placement: drag a box (or click for default size), type wrapped UTF-8, resize/rotate like ResizeTool. */
+class TextTool : public TransformTool {
     kPen*       pen_ = nullptr;
     std::string buffer;
-    int         anchorX = 0, anchorY = 0;
+    int         caretByte = 0;
     bool        editing_ = false;
     int         cachedBrushSize = 8;
     SDL_Color   cachedColor     = {0, 0, 0, 255};
     std::function<void()> onAfterStamp;
+
     void        stopEditing();
     bool        stampToCanvas(SDL_Renderer* r);
-    void        drawUtf8Line(SDL_Renderer* r, bool forOverlay);
+    void        renderTextOntoCanvas(SDL_Renderer* canvasRenderer, SDL_Color fg, bool forOverlay) const;
+    void        placeCaretFromCanvas(int cX, int cY);
+    void        beginEditingWithRect(SDL_Rect box);
+    void        clampBoundsToCanvas();
+    static void applyShiftSquare(int startX, int startY, int& curX, int& curY);
+    bool        buildLayoutLines(TTF_Font* font, int wrapPx, std::vector<std::pair<int, int>>& lines) const;
     static constexpr int kMaxBytes = 1024;
+    static constexpr int kPad = 4;
+    static constexpr int kDefaultBoxW = 200;
+    static constexpr int kDefaultBoxH = 100;
+    static constexpr int kMinBoxW = 24;
+    static constexpr int kMinBoxH = 24;
   public:
     TextTool(kPen* pen, std::function<void()> onAfterStamp);
     void onMouseDown(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
+    void onMouseMove(int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     bool onMouseUp  (int cX, int cY, SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onPreviewRender(SDL_Renderer* r, int brushSize, SDL_Color color) override;
     void onOverlayRender(SDL_Renderer* r) override;
-    bool hasOverlayContent() override { return editing_; }
+    bool hasOverlayContent() override { return isDrawing || editing_; }
     void deactivate(SDL_Renderer* r) override;
     bool isEditing() const { return editing_; }
     void commitEdit(SDL_Renderer* r);
     void discardEdit();
-    /** Returns true if any character was appended. */
     bool onTextInput(const char* text);
-    /** Backspace/Delete while editing; returns true if consumed. */
     bool onKeyDown(SDL_Keycode key);
 };
 
